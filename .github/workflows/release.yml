@@ -1,14 +1,19 @@
 # Build and attest the confidential content plane. WO-07 sections 8.1 and 9.2.
 #
 # =============================================================================
-# THIS WORKFLOW IS INERT AND IS SUPPOSED TO BE
+# THIS WORKFLOW IS ARMED, AS OF THE COMMIT THAT ARMED IT
 # =============================================================================
 #
-# The repository it names does not exist yet. Every value an owner must supply
-# is spelled `FILL-ME-...` and the `guard` job greps for that marker and fails
-# closed before anything is built, pushed or signed. Filling the placeholders in
-# is the act that arms it, and it is deliberately one visible commit rather than
-# a setting somewhere.
+# It shipped inert. Every value an owner had to supply was a placeholder and the
+# `guard` job failed closed before anything was built, pushed or signed. The
+# commit that filled those three values in is the act that armed it, and it is
+# deliberately one visible commit on top of the reviewed tree rather than a
+# setting somewhere, so that turning publication on appears in this history next
+# to what it turned on.
+#
+# `finalize.yml` and `verify-chain.yml` are STILL inert, correctly: their pins
+# name things that do not exist until this workflow has run once, and until the
+# DNS cutover.
 #
 # The failure is loud on purpose. A workflow that silently no-ops when it is
 # misconfigured teaches everyone to ignore it, and this one signs things.
@@ -52,12 +57,12 @@ permissions: {}
 
 env:
   # ---------------------------------------------------------------------------
-  # PLACEHOLDERS. Every one is listed in docs/publication/PUBLICATION_PLACEHOLDERS.md.
+  # FILLED 2026-08-26 by the arming commit. These three are the owner decision:
   # Do not guess these. A wrong registry path publishes to somewhere unintended.
   # ---------------------------------------------------------------------------
-  PUBLIC_REPO: FILL-ME-public-repo-owner/FILL-ME-public-repo-name
-  REGISTRY: FILL-ME-registry-host
-  IMAGE_NAME: FILL-ME-registry-namespace/FILL-ME-image-name
+  PUBLIC_REPO: anonrouter/confidential-content-plane
+  REGISTRY: ghcr.io
+  IMAGE_NAME: anonrouter/confidential-content-plane
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -79,10 +84,27 @@ jobs:
       - name: Refuse to run with unfilled placeholders
         run: |
           set -euo pipefail
-          if grep -rn 'FILL-ME' .github/workflows/; then
+          # ITS OWN FILE, and only the value positions. Both narrowings fix
+          # defects that arming this for the first time exposed.
+          #
+          # 1. The original searched `.github/workflows/` for the bare marker
+          #    while containing that marker three times itself — in the grep, in
+          #    the echo below, and in this file's header. It matched its own
+          #    source, so it could never pass however completely the workflow had
+          #    been filled in.
+          # 2. It also scanned the sibling workflows, whose `job_workflow_ref`
+          #    and `job_workflow_sha` pins CANNOT be known until this workflow
+          #    has run once and printed them. Between them the two made the
+          #    documented ordering impossible to execute: step 2 required step 3.
+          #
+          # The pattern matches a YAML env assignment whose value begins with the
+          # marker, which is the only place a placeholder ever appears. Prose,
+          # comments and this grep itself all start with something other than an
+          # uppercase key followed by a colon, so none of them can match.
+          if grep -nE '^[[:space:]]*[A-Z_]+:[[:space:]]*FILL-ME' .github/workflows/release.yml; then
             echo ""
-            echo "REFUSING: the workflows above still carry FILL-ME placeholders."
-            echo "See docs/publication/PUBLICATION_PLACEHOLDERS.md for what each one is."
+            echo "REFUSING: the values above are still placeholders."
+            echo "Each one is a value only the repository owner can decide."
             echo "This workflow signs artifacts. It must not run half-configured."
             exit 1
           fi

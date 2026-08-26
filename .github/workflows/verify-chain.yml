@@ -47,9 +47,9 @@ on:
 permissions: {}
 
 env:
-  PUBLIC_REPO: FILL-ME-public-repo-owner/FILL-ME-public-repo-name
-  REGISTRY: FILL-ME-registry-host
-  IMAGE_NAME: FILL-ME-registry-namespace/FILL-ME-image-name
+  PUBLIC_REPO: anonrouter/confidential-content-plane
+  REGISTRY: ghcr.io
+  IMAGE_NAME: anonrouter/confidential-content-plane
   RELEASE_WORKFLOW_REF: FILL-ME-release-job-workflow-ref
   RELEASE_WORKFLOW_SHA: FILL-ME-release-job-workflow-sha
   OIDC_ISSUER: https://token.actions.githubusercontent.com
@@ -77,9 +77,18 @@ jobs:
       - name: Refuse to run with unfilled placeholders
         run: |
           set -euo pipefail
-          if grep -rn 'FILL-ME' .github/workflows/; then
+          # Its own file, and only the value positions. See the long note in
+          # release.yml.
+          #
+          # This workflow is STILL correctly inert, and for two separate reasons:
+          # the two release identity pins are unknown until release.yml has run,
+          # and PRODUCTION_ORIGIN and MEASUREMENT_POLICY describe things that do
+          # not exist until the DNS cutover.
+          if grep -nE '^[[:space:]]*[A-Z_]+:[[:space:]]*FILL-ME' .github/workflows/verify-chain.yml; then
             echo ""
-            echo "REFUSING: unfilled placeholders. See docs/publication/PUBLICATION_PLACEHOLDERS.md."
+            echo "REFUSING: the values above are still placeholders. They come from the"
+            echo "first release run's job summary, which prints job_workflow_ref and"
+            echo "job_workflow_sha; do not construct them by hand."
             exit 1
           fi
 

@@ -24,8 +24,9 @@
 # same issuer, each pinned by ref AND by its own commit. A moved tag on either
 # must fail verification.
 #
-# THIS WORKFLOW IS INERT. See the header of release.yml: the `guard` job greps
-# for FILL-ME and refuses.
+# THIS WORKFLOW IS INERT, and stays that way after release.yml was armed. Its
+# two identity pins are read off the FIRST release run's job summary, so they
+# cannot exist before that run; the `guard` job refuses until they are filled.
 #
 # Actions are pinned by full commit SHA, never by tag, for the reason given at
 # length in release.yml: a tag authenticates a name, a commit fixes an
@@ -51,9 +52,9 @@ on:
 permissions: {}
 
 env:
-  PUBLIC_REPO: FILL-ME-public-repo-owner/FILL-ME-public-repo-name
-  REGISTRY: FILL-ME-registry-host
-  IMAGE_NAME: FILL-ME-registry-namespace/FILL-ME-image-name
+  PUBLIC_REPO: anonrouter/confidential-content-plane
+  REGISTRY: ghcr.io
+  IMAGE_NAME: anonrouter/confidential-content-plane
   # The identity release.yml signs under. BOTH are required: the ref says which
   # workflow file at a movable tag, the SHA fixes the workflow's own commit.
   # Read them off the first release run's job summary; do not guess.
@@ -75,9 +76,19 @@ jobs:
       - name: Refuse to run with unfilled placeholders
         run: |
           set -euo pipefail
-          if grep -rn 'FILL-ME' .github/workflows/; then
+          # Its own file, and only the value positions. See the long note in
+          # release.yml: the directory-wide search for the bare marker matched
+          # its own source and could never pass, and it also refused on sibling
+          # workflows whose pins are unknowable until release.yml has run.
+          #
+          # This workflow is STILL correctly inert: RELEASE_WORKFLOW_REF and
+          # RELEASE_WORKFLOW_SHA are placeholders in this file until the first
+          # release run prints them, so this guard fails here and should.
+          if grep -nE '^[[:space:]]*[A-Z_]+:[[:space:]]*FILL-ME' .github/workflows/finalize.yml; then
             echo ""
-            echo "REFUSING: unfilled placeholders. See docs/publication/PUBLICATION_PLACEHOLDERS.md."
+            echo "REFUSING: the values above are still placeholders. They come from the"
+            echo "first release run's job summary, which prints job_workflow_ref and"
+            echo "job_workflow_sha; do not construct them by hand."
             exit 1
           fi
           if [ "${{ github.repository }}" != "${PUBLIC_REPO}" ]; then
