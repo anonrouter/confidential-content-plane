@@ -1,0 +1,267 @@
+# Sign the release manifest, after deployment. WO-07 section 8.2.
+#
+# =============================================================================
+# WHY THIS IS A SECOND WORKFLOW AND NOT A LATER STEP OF release.yml
+# =============================================================================
+#
+# The image can be signed at build time. The release manifest cannot.
+#
+# The manifest carries the MEASURED Compose hash and the app id, and neither
+# exists until Phala has deployed the workload: the platform injects its KMS
+# identity, pre-launch script, storage mode and feature switches at deploy time,
+# which is exactly why the requested and measured Compose hashes differ. So the
+# manifest is finalized in a later moment, from evidence produced by the running
+# deployment.
+#
+# The two resolutions that were rejected, named so nobody reaches for them:
+#
+#   - Sign the manifest with an operator-held key. Rejected: it reintroduces the
+#     single human-held signing capability this whole design exists to avoid.
+#   - Sign it at build time with placeholders filled in later. Rejected: a
+#     signature over values that were not yet known is a signature over nothing.
+#
+# So there are two pinned workflow identities in the same repository, under the
+# same issuer, each pinned by ref AND by its own commit. A moved tag on either
+# must fail verification.
+#
+# THIS WORKFLOW IS INERT. See the header of release.yml: the `guard` job greps
+# for FILL-ME and refuses.
+#
+# Actions are pinned by full commit SHA, never by tag, for the reason given at
+# length in release.yml: a tag authenticates a name, a commit fixes an
+# implementation, and these jobs can mint our signing identity.
+
+name: finalize
+
+on:
+  # Never automatic. Finalization consumes evidence from a live deployment and
+  # signs a document that authorizes it; it happens when a human has the
+  # evidence in hand.
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "The content-plane-v* tag whose image was deployed"
+        required: true
+        type: string
+      evidence_run_id:
+        description: "Run id of verify-chain.yml that captured nonce-bound live evidence"
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  PUBLIC_REPO: FILL-ME-public-repo-owner/FILL-ME-public-repo-name
+  REGISTRY: FILL-ME-registry-host
+  IMAGE_NAME: FILL-ME-registry-namespace/FILL-ME-image-name
+  # The identity release.yml signs under. BOTH are required: the ref says which
+  # workflow file at a movable tag, the SHA fixes the workflow's own commit.
+  # Read them off the first release run's job summary; do not guess.
+  RELEASE_WORKFLOW_REF: FILL-ME-release-job-workflow-ref
+  RELEASE_WORKFLOW_SHA: FILL-ME-release-job-workflow-sha
+  OIDC_ISSUER: https://token.actions.githubusercontent.com
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Refuse to run with unfilled placeholders
+        run: |
+          set -euo pipefail
+          if grep -rn 'FILL-ME' .github/workflows/; then
+            echo ""
+            echo "REFUSING: unfilled placeholders. See docs/publication/PUBLICATION_PLACEHOLDERS.md."
+            exit 1
+          fi
+          if [ "${{ github.repository }}" != "${PUBLIC_REPO}" ]; then
+            echo "REFUSING: this is ${{ github.repository }}, not ${PUBLIC_REPO}."
+            exit 1
+          fi
+
+  finalize:
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read          # download the evidence artifact from another run
+      id-token: write        # keyless signing, no operator-held key
+      attestations: write
+    steps:
+      - name: Check out the SAME tag the image was built from
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+
+      - name: Install cosign
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Fetch the live evidence and the pre-deployment manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ inputs.evidence_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name live-evidence --dir ./evidence
+          test -s ./evidence/evidence.json
+          test -s ./evidence/predeploy-manifest.json
+
+      # -----------------------------------------------------------------------
+      # RE-VERIFY BEFORE SIGNING ANYTHING. All four checks, in this order.
+      #
+      # The manifest is the document a third party trusts. If this workflow
+      # signed whatever it was handed, the signature would attest only that
+      # GitHub Actions ran, which is not a claim anyone needs.
+      # -----------------------------------------------------------------------
+
+      - name: 1. The image provenance verifies against the pinned identity
+        run: |
+          set -euo pipefail
+          digest=$(jq -r '.image.digest' ./evidence/predeploy-manifest.json)
+          ref="${REGISTRY}/${IMAGE_NAME}@${digest}"
+
+          # Pinned identity, both halves. `--certificate-identity` is an exact
+          # match and not a prefix: verifying against whatever identity the
+          # bundle happens to carry proves only that someone signed it.
+          cosign verify \
+            --certificate-oidc-issuer "${OIDC_ISSUER}" \
+            --certificate-identity "${RELEASE_WORKFLOW_REF}" \
+            "$ref"
+
+          cosign verify-attestation \
+            --type slsaprovenance1 \
+            --certificate-oidc-issuer "${OIDC_ISSUER}" \
+            --certificate-identity "${RELEASE_WORKFLOW_REF}" \
+            "$ref" > provenance.json
+
+          # The workflow COMMIT, separately. cosign's identity flags pin the
+          # ref; the build-signer digest in the certificate is what pins the
+          # implementation, and a tag can be moved between the two.
+          #
+          # CONFIRM THIS EXTRACTION ON THE FIRST RUN. The Fulcio claim encoding
+          # under the 1.3.6.1.4.1.57264.1.* arc is what decides the path below,
+          # and WO-07 section 8.1 requires reading the current specification
+          # rather than trusting any document's recollection of it. If the path
+          # is wrong this fails closed, which is the correct direction.
+          got=$(jq -r '.payload' provenance.json | base64 -d \
+            | jq -r '.predicate.runDetails.builder.id // "ABSENT"')
+          echo "builder id: $got"
+          case "$got" in
+            *"${RELEASE_WORKFLOW_SHA}"*) ;;
+            *)
+              echo "REFUSING: provenance does not name the pinned workflow commit ${RELEASE_WORKFLOW_SHA}."
+              echo "Either the workflow changed under the tag, or the claim is encoded elsewhere."
+              echo "Do not relax this check to make it pass. Re-derive it from the Fulcio spec."
+              exit 1 ;;
+          esac
+
+      - name: 2 and 3. The served app_compose hashes to the measured Compose, and names this commit
+        run: |
+          set -euo pipefail
+          # finalize-phala-release.mjs is the same tool the private monorepo
+          # uses, published here so the manifest is produced by something a
+          # reader can inspect rather than by a step nobody can see. It refuses
+          # a dirty tree, refuses a compose-hash mismatch, refuses a release_id
+          # that names a different commit, and re-checks the third-party
+          # provenance ledger for a claimed binding with no evidence.
+          node scripts/finalize-phala-release.mjs \
+            --manifest ./evidence/predeploy-manifest.json \
+            --evidence ./evidence/evidence.json \
+            --out release-manifest.json
+
+          # The commit the deployment names must be the commit this run checked
+          # out, and it must resolve publicly. A release_id pointing at a commit
+          # nobody can fetch turns the whole chain back into an assertion.
+          release_commit=$(jq -r '.release_id' release-manifest.json | sed 's/.*@//')
+          case "${{ github.sha }}" in
+            "${release_commit}"*) ;;
+            *) echo "REFUSING: release_id names ${release_commit}, this tag is ${{ github.sha }}."; exit 1 ;;
+          esac
+          git cat-file -e "${{ github.sha }}^{commit}"
+
+      - name: 4. The evidence is fresh and bound to a nonce we chose
+        run: |
+          set -euo pipefail
+          # Staleness is the cheap attack: replaying a genuine quote from a
+          # deployment that has since changed. The nonce is what makes the
+          # evidence about THIS check rather than about some past one, and
+          # verify-chain.yml records the nonce it sent.
+          nonce_sent=$(jq -r '.nonce' ./evidence/evidence.json)
+          nonce_seen=$(jq -r '.binding.nonce // .report_data // "ABSENT"' ./evidence/evidence.json)
+          if [ "$nonce_seen" = "ABSENT" ]; then
+            echo "REFUSING: the evidence carries no nonce binding."
+            exit 1
+          fi
+          case "$nonce_seen" in
+            *"${nonce_sent}"*) ;;
+            *) echo "REFUSING: the quote is not bound to the nonce we sent."; exit 1 ;;
+          esac
+
+          issued=$(jq -r '.issued_at_ms' ./evidence/evidence.json)
+          now=$(( $(date +%s) * 1000 ))
+          age=$(( now - issued ))
+          echo "evidence age: ${age} ms"
+          # 300000 ms, the same ceiling the committed measurement policies use.
+          # Kept identical on purpose: two freshness windows that disagree mean
+          # one of them is decorative.
+          if [ "$age" -gt 300000 ] || [ "$age" -lt 0 ]; then
+            echo "REFUSING: evidence age ${age} ms is outside the 300000 ms window."
+            exit 1
+          fi
+
+      - name: Confirm the manifest still names the third-party gaps
+        run: |
+          set -euo pipefail
+          # WO-07 section 2.2: an unproven link travels with the release or the
+          # release reads as a complete chain. This is a re-check and not the
+          # enforcement; finalize-phala-release.mjs builds the block from the
+          # committed ledger. It is here because the failure it guards against
+          # is silent, and a silent failure in this direction is the one that
+          # damages the claim.
+          gaps=$(jq -r '.third_party_provenance.recorded_gaps | length' release-manifest.json)
+          ledger=$(jq -r '[.components[] | select(.plaintextCapable and .binding.status == "NONE")] | length' \
+            deploy/provenance/plaintext-capable-components.json)
+          echo "manifest gaps: ${gaps}, ledger gaps: ${ledger}"
+          if [ "$gaps" != "$ledger" ]; then
+            echo "REFUSING: the manifest names ${gaps} gaps and the ledger records ${ledger}."
+            exit 1
+          fi
+
+      - name: Sign the release manifest, keyless
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          # A detached blob signature over the manifest bytes. The manifest is
+          # distributed WITH the release and shipped to the verifying client,
+          # never fetched from the origin it authorizes: an origin that can
+          # serve its own authorization can authorize anything.
+          cosign sign-blob \
+            --bundle release-manifest.cosign.bundle \
+            release-manifest.json
+
+      - name: Publish the manifest and its signature as artifacts
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-manifest
+          path: |
+            release-manifest.json
+            release-manifest.cosign.bundle
+          if-no-files-found: error

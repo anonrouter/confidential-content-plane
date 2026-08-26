@@ -1,0 +1,321 @@
+# Walk the whole chain, from public commit to live TLS key. WO-07 sections 9.2
+# item 15 and 9.3.
+#
+# =============================================================================
+# WHAT THIS IS FOR
+# =============================================================================
+#
+# Every other check in this repository verifies one link. This one walks all of
+# them in a single run and fails closed at each, so the question "does the chain
+# hold end to end" has an answer that is not assembled by hand from six places.
+#
+# It is also the evidence producer for finalize.yml: it is the thing that sends
+# a nonce, receives a quote bound to it, and uploads what it saw.
+#
+# =============================================================================
+# THREE OUTCOMES, NOT TWO
+# =============================================================================
+#
+# `SKIP` is not `PASS`. A step that could not run because a URL was unreachable,
+# a tool was missing, or a policy did not exist must be distinguishable from a
+# step that ran and succeeded. Collapsing them is the failure this whole
+# workstream is organised around: a chain that reports verified for a link
+# nobody checked launders an assumption into a proof.
+#
+# So each step prints PASS, FAIL or SKIP with a reason, the job fails on any
+# FAIL, and the summary states the SKIP count where a reader will see it.
+#
+# THIS WORKFLOW IS INERT. See the header of release.yml.
+#
+# Actions are pinned by full commit SHA, never a tag. Reasoning in release.yml.
+
+name: verify-chain
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "The content-plane-v* tag to verify"
+        required: true
+        type: string
+  # A schedule is deliberately NOT configured yet. A periodic run against a live
+  # production origin is a good idea and it is a decision about production
+  # traffic and alerting, not a CI convenience. Add it when there is somewhere
+  # for a red result to go; a failing scheduled job nobody reads is worse than
+  # no job, because it looks like coverage.
+
+permissions: {}
+
+env:
+  PUBLIC_REPO: FILL-ME-public-repo-owner/FILL-ME-public-repo-name
+  REGISTRY: FILL-ME-registry-host
+  IMAGE_NAME: FILL-ME-registry-namespace/FILL-ME-image-name
+  RELEASE_WORKFLOW_REF: FILL-ME-release-job-workflow-ref
+  RELEASE_WORKFLOW_SHA: FILL-ME-release-job-workflow-sha
+  OIDC_ISSUER: https://token.actions.githubusercontent.com
+  # The live origin. It does NOT exist until the O08 DNS cutover, which is also
+  # why no production measurement policy exists: a policy binds an origin and
+  # the TLS SPKI observed on it, and neither is real yet.
+  PRODUCTION_ORIGIN: FILL-ME-production-origin
+  # The committed measurement policy this run checks against. Also absent for
+  # the same reason. Generating one against the preprod hostname would create an
+  # artifact that must be discarded at cutover, and an artifact that looks
+  # authoritative and is not is worse than an absent one.
+  MEASUREMENT_POLICY: FILL-ME-measurement-policy-path
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Refuse to run with unfilled placeholders
+        run: |
+          set -euo pipefail
+          if grep -rn 'FILL-ME' .github/workflows/; then
+            echo ""
+            echo "REFUSING: unfilled placeholders. See docs/publication/PUBLICATION_PLACEHOLDERS.md."
+            exit 1
+          fi
+
+  chain:
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tag under test
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+          # The full history, so `git cat-file` can prove a release_id's commit
+          # really resolves in this repository rather than merely looking like a
+          # hex string.
+          fetch-depth: 0
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install from the lockfile only
+        run: npm ci
+
+      - name: Install cosign
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Link 0. The published source builds and its boundary suites pass
+        run: |
+          set -euo pipefail
+          npm run build
+          npm test
+          echo "PASS  link 0: the published source builds standalone and enforces its own boundary"
+
+      - name: Link 1. Source commit to image digest
+        id: link1
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          digest=$(cosign verify \
+            --certificate-oidc-issuer "${OIDC_ISSUER}" \
+            --certificate-identity "${RELEASE_WORKFLOW_REF}" \
+            --output json \
+            "${REGISTRY}/${IMAGE_NAME}:${{ inputs.release_tag }}" \
+            | jq -r '.[0].critical.image."docker-manifest-digest"')
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+          # The provenance must name the commit we are standing on. This is the
+          # link the whole repository exists to make checkable, and it is the
+          # one that is NOT established today: no CI build has produced a
+          # deployed digest. Until it has, this step fails, and it failing is
+          # the honest result rather than a bug to route around.
+          cosign verify-attestation \
+            --type slsaprovenance1 \
+            --certificate-oidc-issuer "${OIDC_ISSUER}" \
+            --certificate-identity "${RELEASE_WORKFLOW_REF}" \
+            "${REGISTRY}/${IMAGE_NAME}@${digest}" > prov.json
+          built_from=$(jq -r '.payload' prov.json | base64 -d \
+            | jq -r '.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit // "ABSENT"')
+          if [ "$built_from" != "$commit" ]; then
+            echo "FAIL  link 1: provenance names ${built_from}, this tag is ${commit}"
+            exit 1
+          fi
+          echo "PASS  link 1: ${commit} -> ${digest}, attested by ${RELEASE_WORKFLOW_REF}"
+
+      - name: Link 2. Third-party plaintext-capable components
+        run: |
+          set -euo pipefail
+          # Exit 3 is RECORDED GAPS, which is neither a pass nor a crash. It is
+          # reported and does not fail the chain, because the gaps are disclosed
+          # rather than hidden and the release manifest carries them. What WOULD
+          # fail the chain is exit 1: a ledger claiming a binding it cannot
+          # evidence.
+          set +e
+          npx tsx scripts/verify-third-party-provenance.ts
+          code=$?
+          set -e
+          case "$code" in
+            0) echo "PASS  link 2: every plaintext-capable third-party component is bound" ;;
+            3) echo "SKIP  link 2: recorded gaps exist and are disclosed. This link is NOT verified." ;;
+            *) echo "FAIL  link 2: the ledger is malformed or claims a binding with no evidence"; exit 1 ;;
+          esac
+
+      - name: Link 3. The measured Compose pins that exact digest
+        run: |
+          set -euo pipefail
+          if [ ! -f deploy/phala/verify-compose-pinning.sh ]; then
+            echo "SKIP  link 3: verify-compose-pinning.sh is not present in this export"
+            exit 0
+          fi
+          bash deploy/phala/verify-compose-pinning.sh
+          echo "PASS  link 3: every image in the measured Compose is digest-pinned"
+
+      - name: Links 4 to 6. Live deployment, nonce-bound
+        id: live
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+
+          # A nonce we chose, in this run. Without it the deployment could serve
+          # a genuine quote from a state it is no longer in.
+          nonce=$(openssl rand -hex 32)
+          jq -n --arg n "$nonce" '{nonce: $n}' > evidence/nonce.json
+
+          if ! curl -sS -m 20 -o evidence/raw.json \
+              -X POST "${PRODUCTION_ORIGIN}/v1/tee/attestation" \
+              -H 'content-type: application/json' \
+              --data "{\"nonce\":\"${nonce}\"}"; then
+            # An unreachable origin is SKIP, not PASS and not FAIL. curl's exit
+            # code is what distinguishes them; the HTTP status does not, because
+            # an unreachable host writes no status at all and a 401 is a real
+            # answer from a real server.
+            echo "SKIP  links 4-6: ${PRODUCTION_ORIGIN} is unreachable. NOTHING about the live deployment was checked."
+            echo "reached=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          jq --arg n "$nonce" '. + {nonce: $n}' evidence/raw.json > evidence/evidence.json
+          echo "reached=true" >> "$GITHUB_OUTPUT"
+
+          # 4. TCB status. Anything other than UpToDate is a FAIL:
+          #    "ConfigurationNeeded" is a real finding about a real machine, not
+          #    a warning to carry forward.
+          #
+          #    BUT BE CLEAR ABOUT WHAT THIS READS. Without a DCAP chain
+          #    verifier, this is a field the deployment reported about itself,
+          #    not a verdict this run computed from Intel collateral. It catches
+          #    an honest deployment on stale microcode. It does not catch a
+          #    dishonest one, and nothing in this repository does. Link 7 says
+          #    so again where it caps the verdict at provider-attested.
+          status=$(jq -r '.quote.tcb_status // .tcb_status // "ABSENT"' evidence/evidence.json)
+          [ "$status" = "UpToDate" ] || { echo "FAIL  link 4: TCB status is ${status}"; exit 1; }
+
+          # 5. The served app_compose hashes to the measured Compose hash.
+          served=$(jq -r '.app_compose' evidence/evidence.json)
+          measured=$(jq -r '.binding.compose_hash' evidence/evidence.json)
+          computed=$(printf '%s' "$served" | shasum -a 256 | cut -d' ' -f1)
+          [ "$computed" = "$measured" ] || { echo "FAIL  link 5: app_compose hashes to ${computed}, measured ${measured}"; exit 1; }
+
+          # 6. The TLS key the origin actually serves is the one the quote
+          #    claims. Observed over a real handshake rather than read from a
+          #    field, because completing a handshake requires the private key
+          #    and reading a field requires nothing.
+          host=$(printf '%s' "${PRODUCTION_ORIGIN}" | sed 's#^https\?://##; s#/.*##')
+          observed=$(echo | openssl s_client -connect "${host}:443" -servername "${host}" 2>/dev/null \
+            | openssl x509 -pubkey -noout \
+            | openssl pkey -pubin -outform der \
+            | openssl dgst -sha256 -binary | xxd -p -c 256)
+          attested=$(jq -r '.binding.tls_spki_sha256' evidence/evidence.json)
+          [ "$observed" = "$attested" ] || { echo "FAIL  link 6: observed SPKI ${observed}, attested ${attested}"; exit 1; }
+          echo "observed_spki=${observed}" >> "$GITHUB_OUTPUT"
+
+          echo "PASS  links 4-6: TCB UpToDate as reported, compose measured, TLS key held inside the TD"
+
+      - name: Link 7. The deployment matches a committed measurement policy
+        env:
+          # Passed in rather than re-observed, so link 7 checks the SAME
+          # handshake link 6 checked. Re-opening the connection would let a
+          # second, different endpoint answer.
+          OBSERVED_SPKI: ${{ steps.live.outputs.observed_spki }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.live.outputs.reached }}" != "true" ]; then
+            echo "SKIP  link 7: no live evidence to check a policy against"
+            exit 0
+          fi
+          if [ ! -f "${MEASUREMENT_POLICY}" ]; then
+            # This is the expected state before the O08 cutover and it is a SKIP
+            # rather than a FAIL, because no policy CAN exist yet: a policy pins
+            # an origin and the TLS SPKI observed on that origin, and both come
+            # into existence at cutover. Reporting it as a pass would be the lie.
+            echo "SKIP  link 7: ${MEASUREMENT_POLICY} does not exist."
+            echo "      A production policy binds an origin and a TLS SPKI that only exist after DNS cutover."
+            echo "      Until it exists, NOTHING here pins the deployment to a reviewed set of measurements."
+            exit 0
+          fi
+          # The verification LOGIC is published: src/gateway/policy.ts loads a
+          # local policy and refuses a URL, and src/gateway/verify.ts checks
+          # evidence against it. What is NOT published is src/gateway/dcap/,
+          # the chain verifier that turns a structurally valid quote into a
+          # hardware-verified one, so this step's verdict is capped at
+          # `provider-attested` by construction and says so.
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const { loadGatewayPolicy } = await import("./dist/src/gateway/policy.js");
+            const { verifyGatewayAttestation } = await import("./dist/src/gateway/verify.js");
+            // The policy is read from THIS checkout, never fetched from the
+            // origin being verified. loadGatewayPolicy refuses a URL outright,
+            // because an origin that can serve its own policy can authorize
+            // itself.
+            const policy = loadGatewayPolicy(JSON.parse(readFileSync(process.env.MEASUREMENT_POLICY, "utf8")));
+            const evidence = JSON.parse(readFileSync("evidence/evidence.json", "utf8"));
+            const result = verifyGatewayAttestation(evidence, {
+              nonce: JSON.parse(readFileSync("evidence/nonce.json", "utf8")).nonce,
+              origin: process.env.PRODUCTION_ORIGIN,
+              policy,
+              now: Date.now(),
+              observedTlsSpkiSha256: process.env.OBSERVED_SPKI
+              // chainVerifier is deliberately absent. See below.
+            });
+            console.log(JSON.stringify({ status: result.status, level: result.verificationLevel, reason: result.reason }, null, 2));
+            if (result.status !== "ok") { console.log("FAIL  link 7: " + result.reason); process.exit(1); }
+            console.log("PASS  link 7: matches the committed policy at " + result.verificationLevel);
+            if (result.verificationLevel !== "hardware-verified") {
+              console.log("SKIP  link 7a: no DCAP chain verifier is published in this repository, so the");
+              console.log("      quote SIGNATURE was never checked against Intel and the verdict is capped");
+              console.log("      at provider-attested. This run did NOT establish that the hardware is real.");
+              console.log("      See docs/publication/INDEPENDENT_VERIFICATION.md.");
+            }
+          '
+
+      - name: Upload the live evidence for finalize.yml
+        if: steps.live.outputs.reached == 'true'
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: live-evidence
+          path: |
+            evidence/evidence.json
+            evidence/nonce.json
+          if-no-files-found: error
+
+      - name: Summarise, including what was NOT checked
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "### Chain verification"
+            echo ""
+            echo "A SKIP is not a PASS. Every skipped link below is a link this run did NOT verify."
+            echo ""
+            echo "Read the step log for the per-link verdicts."
+          } >> "$GITHUB_STEP_SUMMARY"

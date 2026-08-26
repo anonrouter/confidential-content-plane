@@ -1,0 +1,342 @@
+# Build and attest the confidential content plane. WO-07 sections 8.1 and 9.2.
+#
+# =============================================================================
+# THIS WORKFLOW IS INERT AND IS SUPPOSED TO BE
+# =============================================================================
+#
+# The repository it names does not exist yet. Every value an owner must supply
+# is spelled `FILL-ME-...` and the `guard` job greps for that marker and fails
+# closed before anything is built, pushed or signed. Filling the placeholders in
+# is the act that arms it, and it is deliberately one visible commit rather than
+# a setting somewhere.
+#
+# The failure is loud on purpose. A workflow that silently no-ops when it is
+# misconfigured teaches everyone to ignore it, and this one signs things.
+#
+# =============================================================================
+# WHY EVERY ACTION IS PINNED TO A FULL COMMIT SHA AND NEVER A TAG
+# =============================================================================
+#
+# A tag is a mutable pointer. `actions/checkout@v7` and even `@v7.0.1` resolve
+# through a ref that the upstream owner can delete and recreate against
+# different content, and a third party who compromises that repository can do
+# the same. An action runs inside this job, with this job's `GITHUB_TOKEN` and,
+# more importantly here, with the ability to request the OIDC token that mints
+# our signing identity. Pinning the ref would authenticate a name; pinning the
+# commit fixes the implementation.
+#
+# This is the same distinction WO-07 section 8.1 makes about `job_workflow_ref`
+# versus `job_workflow_sha`, applied to our own dependencies rather than only to
+# the identity a verifier checks. Making it in one direction and not the other
+# would be pointless.
+#
+# Each pin records the tag it was resolved from, so the version is reviewable.
+# Re-resolve with:
+#   gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.sha'
+# and dereference if `.object.type` is `tag` rather than `commit`.
+
+name: release
+
+on:
+  # A TAG, not a branch. WO-07 section 8.1 requires the signing identity be
+  # pinned to a tag ref, so that a push to the default branch cannot mint a
+  # release identity. The tag is also what a verifier resolves.
+  push:
+    tags:
+      - "content-plane-v*"
+  # Kept so the guard can be exercised deliberately without cutting a tag.
+  workflow_dispatch:
+
+# Default to nothing. Each job widens only what it needs.
+permissions: {}
+
+env:
+  # ---------------------------------------------------------------------------
+  # PLACEHOLDERS. Every one is listed in docs/publication/PUBLICATION_PLACEHOLDERS.md.
+  # Do not guess these. A wrong registry path publishes to somewhere unintended.
+  # ---------------------------------------------------------------------------
+  PUBLIC_REPO: FILL-ME-public-repo-owner/FILL-ME-public-repo-name
+  REGISTRY: FILL-ME-registry-host
+  IMAGE_NAME: FILL-ME-registry-namespace/FILL-ME-image-name
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Fail closed before anything irreversible happens.
+  # ---------------------------------------------------------------------------
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out, without leaving a credential in the git config
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # The later jobs never push. Leaving a token in `.git/config` would
+          # make every subsequent step a potential write path for no benefit.
+          persist-credentials: false
+
+      - name: Refuse to run with unfilled placeholders
+        run: |
+          set -euo pipefail
+          if grep -rn 'FILL-ME' .github/workflows/; then
+            echo ""
+            echo "REFUSING: the workflows above still carry FILL-ME placeholders."
+            echo "See docs/publication/PUBLICATION_PLACEHOLDERS.md for what each one is."
+            echo "This workflow signs artifacts. It must not run half-configured."
+            exit 1
+          fi
+
+      - name: Refuse to run in a repository this workflow was not written for
+        run: |
+          set -euo pipefail
+          # The signing identity a verifier pins includes the source repository.
+          # Building the same source in a fork would mint a DIFFERENT identity,
+          # and a verifier pinned to ours would correctly reject it. Better to
+          # fail here than to publish an artifact nobody can verify.
+          if [ "${{ github.repository }}" != "${PUBLIC_REPO}" ]; then
+            echo "REFUSING: this is ${{ github.repository }}, not ${PUBLIC_REPO}."
+            exit 1
+          fi
+
+      - name: Refuse a ref that is not a tag
+        run: |
+          set -euo pipefail
+          # Belt and braces against the trigger list being widened later. The
+          # pinned identity ends in a tag ref; a branch build would produce an
+          # artifact whose identity no verifier policy accepts.
+          case "${{ github.ref }}" in
+            refs/tags/*) ;;
+            *) echo "REFUSING: ${{ github.ref }} is not a tag ref."; exit 1 ;;
+          esac
+
+  # ---------------------------------------------------------------------------
+  # Build, push, then attest. In that order, and re-checked after each.
+  # ---------------------------------------------------------------------------
+  build:
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Push the image.
+      packages: write
+      # The ONLY reason this exists: mint the OIDC token Fulcio exchanges for a
+      # short-lived signing certificate. There is no operator-held key at any
+      # point, for any artifact, which is the property WO-07 section 8.1 is
+      # protecting and the reason a long-lived secret is never introduced here.
+      id-token: write
+      # actions/attest-build-provenance writes the attestation.
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out the exact tagged commit
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install from the lockfile only
+        # `npm ci` and not `npm install`, so the dependency set is the committed
+        # one. WO-07 Gate 2 requires locked dependency builds, and an install
+        # that can resolve a newer version makes the published lockfile a
+        # description rather than a constraint.
+        run: npm ci
+
+      - name: Run the boundary suites before building anything
+        # The tests are the enforcement. Building and signing an image whose
+        # boundary suites fail would produce a signed artifact asserting a
+        # property nobody checked, which is worse than an unsigned one.
+        run: npm test
+
+      - name: Set up Buildx
+        # docker/setup-buildx-action v4.3.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Log in to the registry
+        # docker/login-action v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push a SINGLE-PLATFORM Docker v2 manifest
+        id: build
+        # docker/build-push-action v7.3.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          push: true
+          # linux/amd64 only, and never a multi-platform build.
+          #
+          # THE IMAGE-FORMAT TRAP, WO-07 section 6.1, which has already bitten
+          # once: enabling inline BuildKit provenance or SBOM attestations turns
+          # the push into an OCI image INDEX. Phala's registry serves that index
+          # by digest and then returns 404 for the child manifest it points at,
+          # so the reference resolves one level and dead-ends, and the CVM fails
+          # with `manifest unknown`. Both are therefore disabled here and the
+          # equivalents are published DETACHED, keyed to the digest, in the steps
+          # below. This is not a preference; it is the only shape that deploys.
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+
+      - name: Re-resolve the digest and confirm it is still a v2 manifest
+        # WO-07 section 9.2 test 10. Asserting the format from the build output
+        # would be asserting what we asked for. This reads back what the
+        # registry actually serves for that digest, which is what a CVM will
+        # pull.
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+          raw=$(docker buildx imagetools inspect --raw "$ref")
+          media=$(printf '%s' "$raw" | jq -r '.mediaType')
+          echo "mediaType: $media"
+          if [ "$media" != "application/vnd.docker.distribution.manifest.v2+json" ]; then
+            echo "REFUSING: $ref is $media, not a single-platform Docker v2 manifest."
+            echo "An OCI index here is the failure mode that produces 'manifest unknown' in the CVM."
+            exit 1
+          fi
+          # A v2 manifest has no `manifests` array. If one appears, the check
+          # above was matched by an index that merely declared the wrong type.
+          if printf '%s' "$raw" | jq -e '.manifests' >/dev/null 2>&1; then
+            echo "REFUSING: the manifest carries a child list."
+            exit 1
+          fi
+
+      - name: Install cosign
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Sign the image, keyless
+        # No key material is created, stored or read. cosign exchanges this
+        # job's OIDC token for a short-lived Fulcio certificate, signs, and logs
+        # the entry in Rekor. The certificate expires in minutes; the Rekor
+        # entry is what makes the signature checkable afterwards, which is why
+        # WO-07 section 8.1 requires an inclusion proof and refuses an unlogged
+        # signature.
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+
+      - name: Attach SLSA provenance, detached
+        # actions/attest-build-provenance v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          # Detached, keyed to the digest, exactly as section 9.2 item 9
+          # requires. Pushing it to the registry as a separate artifact rather
+          # than inline is what keeps the image itself a v2 manifest.
+          push-to-registry: true
+
+      - name: Generate an SBOM
+        # anchore/sbom-action v0.24.0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          # The image is what ships. An SBOM of the source tree would describe
+          # something nobody runs.
+
+      - name: Attest the SBOM, detached and keyless
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cosign attest \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
+            "${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+
+      - name: Record the identity this build actually signed under
+        # WHY THIS STEP EXISTS. A verifier must pin `job_workflow_ref` AND
+        # `job_workflow_sha`: the first says which workflow file, at a ref a tag
+        # can move; the second fixes the workflow's own commit, so the build
+        # LOGIC is pinned as well as the source it consumed. Two different
+        # commits are being pinned and conflating them is the mistake.
+        #
+        # The claims are read out of the OIDC token here rather than assumed,
+        # because WO-07 section 8.1 is explicit that the claim encoding must be
+        # confirmed against the current Fulcio specification at implementation
+        # time and not copied from any document, including that one. This step
+        # is how the owner sees what the token really carried on the first run.
+        #
+        # The token is a bearer credential for this job's identity. It is
+        # decoded in-process and only the two non-secret claims are echoed; the
+        # token itself is never written to a file, an output or an artifact.
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" | jq -r '.value')
+          payload=$(printf '%s' "$token" | cut -d. -f2)
+          # base64url, plus the padding `base64 -d` needs.
+          #
+          # Written as a full `if` rather than `[ ... ] && ...` on purpose: under
+          # `set -e`, a trailing test that evaluates false makes the whole line
+          # the last command with a non-zero status and aborts the step. That
+          # would fail the build for the ordinary case of a payload whose length
+          # is already a multiple of four.
+          pad=$(( ${#payload} % 4 ))
+          if [ "$pad" -ne 0 ]; then
+            payload="${payload}$(printf '=%.0s' $(seq $((4 - pad))))"
+          fi
+          claims=$(printf '%s' "$payload" | tr '_-' '/+' | base64 -d 2>/dev/null)
+          ref=$(printf '%s' "$claims" | jq -r '.job_workflow_ref // "ABSENT"')
+          sha=$(printf '%s' "$claims" | jq -r '.job_workflow_sha // "ABSENT"')
+          {
+            echo "### Signing identity for this build"
+            echo ""
+            echo "Pin BOTH of these in the verification policy."
+            echo ""
+            echo "| Claim | Value |"
+            echo "| --- | --- |"
+            echo "| \`job_workflow_ref\` | \`${ref}\` |"
+            echo "| \`job_workflow_sha\` | \`${sha}\` |"
+            echo "| source commit | \`${{ github.sha }}\` |"
+            echo "| image digest | \`${{ steps.build.outputs.digest }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ref" = "ABSENT" ] || [ "$sha" = "ABSENT" ]; then
+            echo "REFUSING: the OIDC token does not carry job_workflow_ref and job_workflow_sha."
+            echo "The verification policy of WO-07 section 8.1 cannot be expressed without them."
+            echo "Read the current Fulcio claim specification and re-derive the policy before publishing this build."
+            exit 1
+          fi
+
+      - name: Write the build record
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg repo "${{ github.repository }}" \
+            --arg commit "${{ github.sha }}" \
+            --arg tag "${{ github.ref_name }}" \
+            --arg image "${REGISTRY}/${IMAGE_NAME}" \
+            --arg digest "${{ steps.build.outputs.digest }}" \
+            '{
+               note: "Build record only. This is NOT a release manifest: the measured Compose hash and app id do not exist until the workload is deployed. See finalize.yml.",
+               source_repository: $repo,
+               source_commit: $commit,
+               tag: $tag,
+               image: $image,
+               digest: $digest
+             }' > build-record.json
+
+      - name: Upload the build record
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: build-record
+          path: |
+            build-record.json
+            sbom.spdx.json
+          if-no-files-found: error

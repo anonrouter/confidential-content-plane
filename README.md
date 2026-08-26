@@ -1,0 +1,137 @@
+# AnonRouter confidential content plane
+
+Every component that can touch prompt or response plaintext inside the Intel
+TDX trust domain, and the tests that enforce the boundary.
+
+## What this repository is for, and what it is not
+
+Attestation proves **which code ran**. It never proves what that code does.
+This repository exists so the second question has an answer a stranger can
+check by reading rather than by trusting: this is the source, and these are
+the tests that hold the boundary it describes.
+
+**It does not, by itself, prove that the image running in the trust domain was
+built from these bytes.** That is a separate artifact, a source-to-digest
+binding, and it is produced by a CI build that signs its output against a
+pinned OIDC identity. Until such a build has produced a digest equal to the one
+a deployment is measured against, the honest statement is:
+
+> This repository shows what the code says. It does not yet show what the
+> deployment ran.
+
+Running `npm ci && npm run build` here produces **an** image. Nothing in this
+repository asserts that it equals any deployed digest, and you should not
+assume it does. The build is deterministic in its inputs, which is a
+precondition for that binding and is not the binding.
+
+## The boundary, component by component
+
+For every component that can touch a prompt, a reader can either read the
+source here or follow a reference to pinned upstream source. Which applies:
+
+| Component | Can touch plaintext | Where the source is |
+| --- | --- | --- |
+| `relay` | full request and response bodies, transiently | here |
+| classifier (in-process on the relay) | the truncated latest user turn | here |
+| `compat` broker | full bodies **and** the caller's static `ar_` key | here |
+| `<provider>-worker` | full bodies plus one provider credential | here |
+| `edge` (in-CVM L7 router) | full bodies, after TLS terminates in-TD | here (configuration); **its base image is UPSTREAM, see the gaps below** |
+| `<provider>-egress` | ciphertext only (SNI passthrough) | here (configuration) |
+| `gateway-attestation` | **no content at all** | here |
+| `dstack-ingress` | ciphertext, then the plaintext stream in transit | **UPSTREAM, Phala. Apache-2.0. See the gaps below** |
+
+The `relay`, `compat`, `worker` and `gateway-attestation` roles are all the
+same first-party image, selected by `RUNTIME_ROLE`. Its **base image** is
+upstream and is one of the gaps below: it runs every line of code in this
+repository, so it is plaintext-capable whatever the code above it does.
+
+### The 3 unproven links, stated rather than rounded up
+
+3 plaintext-capable components in this deployment are not built from this
+source, and for each of them the source-to-digest binding is **NOT established**: `caddy-edge-base`, `dstack-ingress`, `node-base-image`.
+
+A binding means one of exactly two things, and neither has been done for any
+of them:
+
+- **Rebuild.** Build the component in our public CI from pinned upstream source
+  and confirm the digest equals the deployed one. A near miss is not a partial
+  pass, and a laptop build is a rehearsal rather than evidence, because the
+  point is that a reader can check it without trusting whoever ran it.
+- **Verified upstream provenance.** Verify an upstream signature against a
+  **pinned** upstream identity, both certificate identity and OIDC issuer, over
+  the digest actually deployed.
+
+**`caddy-edge-base`** Base image of the in-CVM L7 edge, which proxies customer plaintext after TLS terminates inside the trust domain. Deployed at `caddy:2.11.4-alpine@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a3411ad798f7a423a`.
+
+The registry publishes an **unsigned** in-toto SLSA statement whose subject is that exact
+digest, naming upstream commit `fba2853501d36e8a72f946ac8cb7ff64d07e48f2`
+(`2.11/alpine`). That is useful and it is **not a binding**:
+its trust root is whoever can push to that registry repository, not an identity we pinned.
+It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
+the image in service came from that commit.
+
+**`dstack-ingress`** Terminates customer TLS inside the trust domain. This is the serving path, not an optional one: every request arrives through it. Deployed at `dstacktee/dstack-ingress:2.2@sha256:d05a7b343c37c1cca1bba8dbf7e8f3c6d2118158af2d41c455103796db4f67f0`.
+
+The upstream source is pinned to commit `b1a90408c314b3bccf8aa529585c01de2fe0fa56` and verified file by
+file against that commit's tree (`sha256:e1ebefae81cee3e5018a508cabf62860746c295f11c72861a766a1bdc67073bb`), licence read and
+confirmed `Apache-2.0`. That is **not a binding** either. A source pin says
+which bytes we intend to build. A binding says the running image came from them. Only the
+second is what is missing.
+
+**`node-base-image`** Base image of the content-plane image; runs every line of code that handles plaintext. Deployed at `node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066`.
+
+The registry publishes an **unsigned** in-toto SLSA statement whose subject is that exact
+digest, naming upstream commit `bc0a422bce0f729dd85790639d9f1918143f1235`
+(`22/bookworm-slim`). That is useful and it is **not a binding**:
+its trust root is whoever can push to that registry repository, not an identity we pinned.
+It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
+the image in service came from that commit.
+
+This is stated here, in the README, because a transparency chain that quietly
+rounds an unverifiable link up to "verified" is worse than no chain: it
+launders an assumption into an apparent proof. Someone told the chain is
+incomplete can reason about the residual risk. Someone told it is complete
+cannot.
+
+The machine-readable version of the same statement is
+`deploy/provenance/plaintext-capable-components.json`, published here, and it
+is what the signed release manifest carries. **This section is generated from
+that file**, so the two cannot drift: `tests/unit/third-party-provenance.test.ts`,
+also published here, fails if this README names fewer gaps than the ledger
+records or lets a source pin read as a binding. Run `npm test` and check.
+
+## What is deliberately NOT here
+
+The control plane: accounts, authentication, API keys, billing, payments,
+admin and the database. None of it can touch a prompt, and none of it is
+reachable from the entry point this image runs. That is enforced, not asserted:
+`tests/unit/content-plane-closure.test.ts` computes the module graph from
+`src/contentPlane.ts` and fails if any control-plane module becomes reachable,
+at runtime or at compile time.
+
+The **content-free control RPC schemas** ARE here, in
+`src/routes/internal/rpcSchemas.ts`, even though the server that serves them
+runs elsewhere. They are the boundary contract, and publishing them is what
+lets a reader check the boundary carries no prompt field rather than take it
+on trust. `tests/unit/rpc-boundary-contract.test.ts` enforces it.
+
+Some enforcement suites stay in the private monorepo because they assert
+against files this repository deliberately does not contain. They are listed,
+with the reason for each, in `EXPORT-MANIFEST.json` under `monorepoOnlySuites`,
+so the reduction is visible rather than silent.
+
+## Verifying
+
+```
+npm ci
+npm run build      # single-platform linux/amd64 Docker v2 manifest
+npm test           # the boundary and privacy suites
+```
+
+That checks this repository against itself. Verifying a **live deployment**
+against it is a different procedure with different limits, and the limits are
+the important part. See `docs/publication/INDEPENDENT_VERIFICATION.md`.
+
+## Licence
+
+Apache-2.0. See LICENSE and NOTICE.

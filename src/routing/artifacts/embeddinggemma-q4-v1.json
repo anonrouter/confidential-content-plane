@@ -1,0 +1,416 @@
+{
+  "version": 1,
+  "model_id": "onnx-community/embeddinggemma-300m-ONNX",
+  "model_revision": "5090578d9565bb06545b4552f76e6bc2c93e4a66",
+  "dtype": "q4",
+  "input_prefix": "task: classification | query: ",
+  "dimensions": 768,
+  "k_task": 5,
+  "k_complexity": 3,
+  "vote_temperature": 20,
+  "confidence_threshold": 0.55,
+  "vector_file": "embeddinggemma-q4-v1.f32",
+  "vector_sha256": "a840649a9e31e05ebc6666978207dc34860bcce23fc0dac4b3d9471143fd9325",
+  "items": [
+    {
+      "index": 0,
+      "task": "general",
+      "complexity": "low"
+    },
+    {
+      "index": 1,
+      "task": "general",
+      "complexity": "low"
+    },
+    {
+      "index": 2,
+      "task": "general",
+      "complexity": "low"
+    },
+    {
+      "index": 3,
+      "task": "general",
+      "complexity": "low"
+    },
+    {
+      "index": 4,
+      "task": "general",
+      "complexity": "low"
+    },
+    {
+      "index": 5,
+      "task": "general",
+      "complexity": "high"
+    },
+    {
+      "index": 6,
+      "task": "general",
+      "complexity": "high"
+    },
+    {
+      "index": 7,
+      "task": "general",
+      "complexity": "high"
+    },
+    {
+      "index": 8,
+      "task": "general",
+      "complexity": "high"
+    },
+    {
+      "index": 9,
+      "task": "general",
+      "complexity": "high"
+    },
+    {
+      "index": 10,
+      "task": "coding",
+      "complexity": "low"
+    },
+    {
+      "index": 11,
+      "task": "coding",
+      "complexity": "low"
+    },
+    {
+      "index": 12,
+      "task": "coding",
+      "complexity": "low"
+    },
+    {
+      "index": 13,
+      "task": "coding",
+      "complexity": "low"
+    },
+    {
+      "index": 14,
+      "task": "coding",
+      "complexity": "low"
+    },
+    {
+      "index": 15,
+      "task": "coding",
+      "complexity": "high"
+    },
+    {
+      "index": 16,
+      "task": "coding",
+      "complexity": "high"
+    },
+    {
+      "index": 17,
+      "task": "coding",
+      "complexity": "high"
+    },
+    {
+      "index": 18,
+      "task": "coding",
+      "complexity": "high"
+    },
+    {
+      "index": 19,
+      "task": "coding",
+      "complexity": "high"
+    },
+    {
+      "index": 20,
+      "task": "math",
+      "complexity": "low"
+    },
+    {
+      "index": 21,
+      "task": "math",
+      "complexity": "low"
+    },
+    {
+      "index": 22,
+      "task": "math",
+      "complexity": "low"
+    },
+    {
+      "index": 23,
+      "task": "math",
+      "complexity": "low"
+    },
+    {
+      "index": 24,
+      "task": "math",
+      "complexity": "low"
+    },
+    {
+      "index": 25,
+      "task": "math",
+      "complexity": "high"
+    },
+    {
+      "index": 26,
+      "task": "math",
+      "complexity": "high"
+    },
+    {
+      "index": 27,
+      "task": "math",
+      "complexity": "high"
+    },
+    {
+      "index": 28,
+      "task": "math",
+      "complexity": "high"
+    },
+    {
+      "index": 29,
+      "task": "math",
+      "complexity": "high"
+    },
+    {
+      "index": 30,
+      "task": "research",
+      "complexity": "low"
+    },
+    {
+      "index": 31,
+      "task": "research",
+      "complexity": "low"
+    },
+    {
+      "index": 32,
+      "task": "research",
+      "complexity": "low"
+    },
+    {
+      "index": 33,
+      "task": "research",
+      "complexity": "low"
+    },
+    {
+      "index": 34,
+      "task": "research",
+      "complexity": "low"
+    },
+    {
+      "index": 35,
+      "task": "research",
+      "complexity": "high"
+    },
+    {
+      "index": 36,
+      "task": "research",
+      "complexity": "high"
+    },
+    {
+      "index": 37,
+      "task": "research",
+      "complexity": "high"
+    },
+    {
+      "index": 38,
+      "task": "research",
+      "complexity": "high"
+    },
+    {
+      "index": 39,
+      "task": "research",
+      "complexity": "high"
+    },
+    {
+      "index": 40,
+      "task": "writing",
+      "complexity": "low"
+    },
+    {
+      "index": 41,
+      "task": "writing",
+      "complexity": "low"
+    },
+    {
+      "index": 42,
+      "task": "writing",
+      "complexity": "low"
+    },
+    {
+      "index": 43,
+      "task": "writing",
+      "complexity": "low"
+    },
+    {
+      "index": 44,
+      "task": "writing",
+      "complexity": "low"
+    },
+    {
+      "index": 45,
+      "task": "writing",
+      "complexity": "high"
+    },
+    {
+      "index": 46,
+      "task": "writing",
+      "complexity": "high"
+    },
+    {
+      "index": 47,
+      "task": "writing",
+      "complexity": "high"
+    },
+    {
+      "index": 48,
+      "task": "writing",
+      "complexity": "high"
+    },
+    {
+      "index": 49,
+      "task": "writing",
+      "complexity": "high"
+    },
+    {
+      "index": 50,
+      "task": "translation",
+      "complexity": "low"
+    },
+    {
+      "index": 51,
+      "task": "translation",
+      "complexity": "low"
+    },
+    {
+      "index": 52,
+      "task": "translation",
+      "complexity": "low"
+    },
+    {
+      "index": 53,
+      "task": "translation",
+      "complexity": "low"
+    },
+    {
+      "index": 54,
+      "task": "translation",
+      "complexity": "low"
+    },
+    {
+      "index": 55,
+      "task": "translation",
+      "complexity": "high"
+    },
+    {
+      "index": 56,
+      "task": "translation",
+      "complexity": "high"
+    },
+    {
+      "index": 57,
+      "task": "translation",
+      "complexity": "high"
+    },
+    {
+      "index": 58,
+      "task": "translation",
+      "complexity": "high"
+    },
+    {
+      "index": 59,
+      "task": "translation",
+      "complexity": "high"
+    },
+    {
+      "index": 60,
+      "task": "summarization",
+      "complexity": "low"
+    },
+    {
+      "index": 61,
+      "task": "summarization",
+      "complexity": "low"
+    },
+    {
+      "index": 62,
+      "task": "summarization",
+      "complexity": "low"
+    },
+    {
+      "index": 63,
+      "task": "summarization",
+      "complexity": "low"
+    },
+    {
+      "index": 64,
+      "task": "summarization",
+      "complexity": "low"
+    },
+    {
+      "index": 65,
+      "task": "summarization",
+      "complexity": "high"
+    },
+    {
+      "index": 66,
+      "task": "summarization",
+      "complexity": "high"
+    },
+    {
+      "index": 67,
+      "task": "summarization",
+      "complexity": "high"
+    },
+    {
+      "index": 68,
+      "task": "summarization",
+      "complexity": "high"
+    },
+    {
+      "index": 69,
+      "task": "summarization",
+      "complexity": "high"
+    },
+    {
+      "index": 70,
+      "task": "analysis",
+      "complexity": "low"
+    },
+    {
+      "index": 71,
+      "task": "analysis",
+      "complexity": "low"
+    },
+    {
+      "index": 72,
+      "task": "analysis",
+      "complexity": "low"
+    },
+    {
+      "index": 73,
+      "task": "analysis",
+      "complexity": "low"
+    },
+    {
+      "index": 74,
+      "task": "analysis",
+      "complexity": "low"
+    },
+    {
+      "index": 75,
+      "task": "analysis",
+      "complexity": "high"
+    },
+    {
+      "index": 76,
+      "task": "analysis",
+      "complexity": "high"
+    },
+    {
+      "index": 77,
+      "task": "analysis",
+      "complexity": "high"
+    },
+    {
+      "index": 78,
+      "task": "analysis",
+      "complexity": "high"
+    },
+    {
+      "index": 79,
+      "task": "analysis",
+      "complexity": "high"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "name": "anonrouter-confidential-content-plane",
+  "version": "0.0.0",
+  "private": false,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "The AnonRouter confidential content plane: every component that can touch prompt or response plaintext inside the Intel TDX trust domain.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/contentPlane.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/credential-provider-node": "^3.972.76",
+    "@fastify/cors": "^10.0.2",
+    "@fastify/helmet": "^12.0.1",
+    "@huggingface/transformers": "^3.7.6",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
+    "@phala/dstack-sdk": "^0.5.8",
+    "@smithy/hash-node": "^4.4.16",
+    "@smithy/protocol-http": "^5.5.16",
+    "@smithy/signature-v4": "^5.6.12",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.17.0",
+    "fastify": "^5.2.1",
+    "pino": "^9.5.0",
+    "ulid": "^2.3.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@smithy/types": "^4.16.1",
+    "ioredis": "^5.4.2",
+    "pg": "^8.13.1"
+  },
+  "overrides": {
+    "sharp": "^0.35.4"
+  },
+  "compileTimeOnlyDependencies": {
+    "@smithy/types": "^4.16.1",
+    "ioredis": "^5.4.2",
+    "pg": "^8.13.1"
+  }
+}

@@ -1,0 +1,309 @@
+// WO-07 section 2.2: report the source-to-digest binding of every
+// plaintext-capable component that is not our source.
+//
+// WHAT THIS DOES AND, MORE IMPORTANTLY, WHAT IT DOES NOT
+//
+// It validates the committed ledger and reports the state of every binding. It
+// does NOT establish one. Establishing a binding means either rebuilding the
+// component from pinned upstream source and comparing digests (option A) or
+// verifying an upstream signature against a pinned identity (option B), and
+// both need network access, a registry and a builder. None of that happens
+// here.
+//
+// That distinction is the whole design. The failure mode this gate exists to
+// prevent is a chain that reports "verified" for a link nobody checked, so a
+// check that could not run must be loudly distinguishable from a check that
+// passed. Hence three exit codes, not two:
+//
+//   0  every plaintext-capable component has an established binding
+//   1  the ledger is malformed, or claims a binding it has no evidence for
+//   3  the ledger is well formed and there are RECORDED GAPS
+//
+// Exit 3 is not a crash and not a pass. It is the honest state of this
+// workstream today, and a release manifest is required to carry it.
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
+
+export const LEDGER_PATH = "deploy/provenance/plaintext-capable-components.json";
+
+/**
+ * Evidence shapes. These are what make a claimed binding checkable by someone
+ * who did not run the build.
+ */
+const rebuildEvidence = z.object({
+  method: z.literal("rebuild"),
+  /** The upstream commit the rebuild used. A tag is not enough: tags move. */
+  sourceCommit: z.string().regex(/^[0-9a-f]{40}$/, "sourceCommit must be a full 40-character commit SHA"),
+  /** The digest the rebuild produced, which must equal the deployed digest. */
+  rebuiltDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  /** Who built it, pinned by workflow ref and the commit of the workflow itself. */
+  builderWorkflowRef: z.string().min(1),
+  builderWorkflowSha: z.string().regex(/^[0-9a-f]{40}$/),
+  verifiedAt: z.string().datetime()
+});
+
+const attestationEvidence = z.object({
+  method: z.literal("attestation"),
+  /** The upstream identity the signature was verified against, pinned. */
+  certificateIdentity: z.string().min(1),
+  certificateOidcIssuer: z.string().url(),
+  /** The digest the attestation covers. */
+  attestedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  /** Digest of the attestation bundle itself, so the record is reproducible. */
+  bundleSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  verifiedAt: z.string().datetime()
+});
+
+/**
+ * A verified pin of the upstream SOURCE.
+ *
+ * Deliberately separate from `binding`, and deliberately unable to satisfy it.
+ * Pinning the source proves which bytes we intend to build; a binding proves
+ * the running image came from them. Collapsing the two into one field is
+ * exactly the rounding-up this gate exists to prevent, so they cannot be
+ * confused here: a component can have a complete, verified source pin and still
+ * be a RECORDED GAP, which is precisely the state dstack-ingress is in.
+ */
+const sourcePinSchema = z.object({
+  repository: z.string().min(1),
+  path: z.string().min(1).optional(),
+  commit: z.string().regex(/^[0-9a-f]{40}$/, "sourcePin.commit must be a full 40-character commit SHA"),
+  treeDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  license: z.string().min(1),
+  verifiedAt: z.string().datetime(),
+  buildInputs: z.record(z.string().nullable()).optional(),
+  evidenceFile: z.string().min(1).optional()
+});
+
+/**
+ * Registry-published provenance, which is DELIBERATELY NOT A BINDING.
+ *
+ * Docker Official Images attach an unsigned in-toto SLSA statement to the image
+ * index whose subject is the exact digest we deploy, naming the upstream repo and
+ * commit it was built from. That is genuinely useful and genuinely insufficient.
+ *
+ * Insufficient because it is unsigned: the trust root is whoever can push to that
+ * registry repository, not an identity we pinned. It cannot satisfy `binding`,
+ * and the schema below makes that structural rather than a matter of discipline —
+ * there is no status value it can produce.
+ *
+ * Useful because it names the exact commit to rebuild from and compare. It turns
+ * a gap nobody can act on into one with a defined next step, which is what
+ * separates a recorded gap from an admission of ignorance.
+ */
+const registryProvenanceSchema = z.object({
+  method: z.literal("registry-provenance"),
+  attestedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  attestationManifest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  /** Digest of the statement blob, so this record is reproducible by anyone. */
+  statementSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  predicateType: z.string().url(),
+  builderId: z.string().min(1),
+  configSourceUri: z.string().min(1),
+  sourceCommit: z.string().regex(/^[0-9a-f]{40}$/),
+  sourcePath: z.string().nullable(),
+  /** Always false. Present so a future signed variant is a visible change. */
+  signed: z.literal(false),
+  fetchedAt: z.string().datetime()
+});
+
+const componentSchema = z
+  .object({
+    id: z.string().min(1),
+    role: z.string().min(1),
+    plaintextCapable: z.boolean(),
+    upstream: z.object({
+      project: z.string().min(1),
+      sourceUrl: z.string().url(),
+      license: z.string().min(1),
+      redistributable: z.boolean()
+    }),
+    pinned: z.object({
+      image: z.string().nullable(),
+      digest: z.string().regex(/^sha256:[0-9a-f]{64}$/).nullable(),
+      revision: z.string().nullable()
+    }),
+    sourcePin: sourcePinSchema.nullable().optional(),
+    registryProvenance: registryProvenanceSchema.nullable().optional(),
+    binding: z.object({
+      status: z.enum(["REBUILT", "ATTESTED", "NONE"]),
+      evidence: z.union([rebuildEvidence, attestationEvidence]).nullable()
+    }),
+    note: z.union([z.string(), z.array(z.string())]).optional()
+  })
+  .superRefine((component, ctx) => {
+    const { status, evidence } = component.binding;
+
+    // Registry provenance must describe the digest we actually deploy. Provenance
+    // for a different digest is provenance for a different image, and recording
+    // it here would be worse than recording nothing.
+    if (component.registryProvenance && component.pinned.digest
+      && component.registryProvenance.attestedDigest !== component.pinned.digest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: registryProvenance attests a different digest than the pinned one`
+      });
+    }
+
+    // A claimed binding with no evidence is the exact failure this gate exists
+    // to catch, so it is a schema error rather than a warning.
+    if (status === "NONE" && evidence !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${component.id}: status NONE must not carry evidence` });
+      return;
+    }
+    if (status === "NONE") return;
+
+    if (evidence === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: status ${status} claims a binding but carries no evidence`
+      });
+      return;
+    }
+    const expected = status === "REBUILT" ? "rebuild" : "attestation";
+    if (evidence.method !== expected) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: status ${status} requires ${expected} evidence, found ${evidence.method}`
+      });
+      return;
+    }
+
+    // The binding must be to the digest actually deployed. Evidence about some
+    // other digest is evidence about some other image.
+    if (component.pinned.digest === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: status ${status} requires a pinned digest to bind to`
+      });
+      return;
+    }
+    const bound = evidence.method === "rebuild" ? evidence.rebuiltDigest : evidence.attestedDigest;
+    if (bound !== component.pinned.digest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: evidence covers ${bound}, but the pinned digest is ${component.pinned.digest}`
+      });
+    }
+
+    // If we pinned a source, a rebuild claim must be a rebuild OF THAT SOURCE.
+    // Otherwise the ledger could pin one commit, build another, and read as
+    // consistent.
+    if (evidence.method === "rebuild" && component.sourcePin && evidence.sourceCommit !== component.sourcePin.commit) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: rebuilt from ${evidence.sourceCommit}, but the pinned source is ${component.sourcePin.commit}`
+      });
+    }
+  });
+
+export const ledgerSchema = z.object({
+  $comment: z.union([z.string(), z.array(z.string())]).optional(),
+  schemaVersion: z.literal(1),
+  components: z.array(componentSchema).min(1)
+});
+
+export type Ledger = z.infer<typeof ledgerSchema>;
+export type Component = z.infer<typeof componentSchema>;
+
+export function parseLedger(raw: string): Ledger {
+  return ledgerSchema.parse(JSON.parse(raw));
+}
+
+export function loadLedger(root = process.cwd()): Ledger {
+  return parseLedger(readFileSync(`${root}/${LEDGER_PATH}`, "utf8"));
+}
+
+/**
+ * The components a release manifest must name as unproven.
+ *
+ * Only plaintext-capable ones: a component that cannot see a prompt is out of
+ * scope for this gate, and widening it would bury the entries that matter.
+ */
+export function recordedGaps(ledger: Ledger): Component[] {
+  return ledger.components.filter((c) => c.plaintextCapable && c.binding.status === "NONE");
+}
+
+export function establishedBindings(ledger: Ledger): Component[] {
+  return ledger.components.filter((c) => c.plaintextCapable && c.binding.status !== "NONE");
+}
+
+function report(ledger: Ledger): number {
+  const lines: string[] = [];
+  const say = (line = "") => lines.push(line);
+
+  say("WO-07 third-party plaintext-capable provenance");
+  say(`  ledger: ${LEDGER_PATH}`);
+  say("");
+
+  const plaintext = ledger.components.filter((c) => c.plaintextCapable);
+  const gaps = recordedGaps(ledger);
+  const bound = establishedBindings(ledger);
+
+  say(`${plaintext.length} plaintext-capable third-party component(s)`);
+  say("");
+
+  for (const component of bound) {
+    const evidence = component.binding.evidence;
+    say(`  BOUND  ${component.id}  (${component.binding.status})`);
+    say(`         digest ${component.pinned.digest}`);
+    if (evidence?.method === "rebuild") {
+      say(`         rebuilt from ${component.upstream.project}@${evidence.sourceCommit}`);
+      say(`         by ${evidence.builderWorkflowRef}@${evidence.builderWorkflowSha}`);
+    } else if (evidence?.method === "attestation") {
+      say(`         attested by ${evidence.certificateIdentity} via ${evidence.certificateOidcIssuer}`);
+    }
+  }
+
+  for (const component of gaps) {
+    say(`  GAP    ${component.id}`);
+    say(`         ${component.role}`);
+    say(`         upstream ${component.upstream.project} (${component.upstream.license})`);
+    say(`         pinned   ${component.pinned.image ?? "not deployed"}${component.pinned.digest ? `@${component.pinned.digest}` : ""}`);
+    if (component.sourcePin) {
+      say(`         source   ${component.sourcePin.repository}@${component.sourcePin.commit}`);
+      say(`                  tree ${component.sourcePin.treeDigest}`);
+      say("                  SOURCE PINNED AND VERIFIED, NOT REBUILT. Still a gap:");
+      say("                  nothing yet ties a running image to these bytes.");
+    }
+    if (component.registryProvenance) {
+      const rp = component.registryProvenance;
+      say(`         registry ${rp.configSourceUri}`);
+      say(`                  built by ${rp.builderId}, statement ${rp.statementSha256.slice(0, 16)}…`);
+      say("                  UNSIGNED registry provenance. NOT a binding: its trust root is");
+      say("                  registry push access, not a pinned identity. It does name the");
+      say(`                  exact commit to rebuild and compare: ${rp.sourceCommit}`);
+    }
+  }
+
+  say("");
+  say("This tool did NOT rebuild anything and did NOT verify a signature.");
+  say("It reports the committed ledger. Establishing a binding needs a builder,");
+  say("a registry and network access, none of which are used here, so a check");
+  say("that has not run can never be mistaken for one that passed.");
+  say("");
+
+  if (gaps.length === 0) {
+    say("RESULT: every plaintext-capable third-party component has an established binding");
+    process.stdout.write(`${lines.join("\n")}\n`);
+    return 0;
+  }
+
+  say(`RESULT: ${gaps.length} RECORDED GAP(S), which the release manifest and the public`);
+  say("        documentation must both name. This is not a pass and not a failure:");
+  say("        it is the honest state of the chain.");
+  process.stdout.write(`${lines.join("\n")}\n`);
+  return 3;
+}
+
+const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (invokedDirectly) {
+  try {
+    process.exit(report(loadLedger()));
+  } catch (error) {
+    process.stderr.write(`third-party provenance ledger is invalid:\n${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
+}

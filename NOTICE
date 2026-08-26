@@ -1,0 +1,9 @@
+AnonRouter confidential content plane
+Copyright the AnonRouter authors
+
+This product includes software developed by the AnonRouter project.
+
+Third-party components that can touch plaintext inside the trust domain are
+NOT vendored here. They are referenced by pinned upstream source, with
+attribution intact, and are listed in README.md with the binding that ties
+the running bytes to that source. See WO-07 section 2.2.

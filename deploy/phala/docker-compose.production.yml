@@ -1,0 +1,477 @@
+# AnonRouter confidential data plane: PRODUCTION-SHAPED artifact.
+#
+# This is the compose a real deployment would use. It is NOT the POC file: the
+# differences are the point of having both.
+#
+#   - NO mock provider. Its presence in an attested manifest would leave a
+#     verifier unable to tell which upstream answered a request; its absence is
+#     itself evidence.
+#   - The worker reaches the REAL provider, named as a literal so a verifier can
+#     see the only upstream this build can talk to.
+#   - The provider credential is an encrypted environment value written to
+#     tmpfs, present in exactly one container and never on disk.
+#   - dstack-ingress obtains a PUBLICLY TRUSTED certificate by ACME DNS-01 from
+#     inside the trust domain, so stock clients need no custom CA and the private
+#     key still never leaves the TD.
+#
+# DEPLOY ON THE PRODUCTION OS IMAGE, NOT THE DEVELOPMENT ONE:
+#
+#   --image dstack-0.5.9
+#   os_image_hash bd369a8c2f9edb2b52dad48ac8e0b32dde5f1337c423a506b48d07403a7d8033
+#
+# Verified on prod5: the production image runs this topology and passthrough
+# behaves identically. The operational consequence, measured rather than
+# assumed, is that SSH is NOT available on a non-dev image. Container health and
+# configuration must therefore be established from attestation evidence and
+# external behaviour, not from `phala ssh`. Any runbook that reaches inside the
+# CVM to check something will not work here, and that is the correct trade.
+#
+# GATEWAY_TRANSPORT is a measured literal and the TLS fingerprint is not an
+# input at all: the attestation service observes its own terminator over a real
+# handshake. No unmeasured environment value can upgrade the privacy claim.
+#
+# Rendered by build-release.sh. Deploy the rendered file, never this template.
+
+x-hardened: &hardened
+  restart: unless-stopped
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "20m"
+      max-file: "2"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Public TLS terminates here, inside this measured TD. Phala's external
+  # gateway forwards raw TCP for the custom domain; it never receives the
+  # certificate private key, session keys, or decrypted application traffic.
+  # dstack-ingress generates and renews the certificate through DNS-01. Its
+  # named volumes survive container restarts, preventing needless reissuance.
+  # ---------------------------------------------------------------------------
+  ingress:
+    image: dstacktee/dstack-ingress:2.2@sha256:d05a7b343c37c1cca1bba8dbf7e8f3c6d2118158af2d41c455103796db4f67f0
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    environment:
+      # Route 53 lets us delegate only the confidential-inference subdomain
+      # while leaving anonrouter.ai on its current nameservers. The source IAM
+      # identity can do only sts:AssumeRole; the assumed role is restricted to
+      # the delegated hosted zone. This provider is a MEASURED literal.
+      DNS_PROVIDER: route53
+      DOMAIN: ${GATEWAY_DOMAIN}
+      TARGET_ENDPOINT: edge:8080
+      GATEWAY_DOMAIN: _.${DSTACK_GATEWAY_DOMAIN}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL}
+      SET_CAA: "true"
+      AWS_ROLE_ARN: ${ACME_ROUTE53_ROLE_ARN}
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${ACME_ROUTE53_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${ACME_ROUTE53_SECRET_ACCESS_KEY}
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - cert-data:/etc/letsencrypt
+      - evidences:/evidences
+    networks:
+      - cvm-edge
+      - cvm-internet
+
+  # ---------------------------------------------------------------------------
+  # L7 path routing behind dstack-ingress. It has no routable network and sees
+  # plaintext only after TLS has terminated inside this same trust domain.
+  # ---------------------------------------------------------------------------
+  edge:
+    <<: *hardened
+    # The STOCK caddy image cannot start under this policy: its binary carries
+    # cap_net_bind_service=ep as a FILE capability, and execve refuses to honour
+    # it when the bounding set is empty, so the container dies with "operation
+    # not permitted" before Caddy runs. That is the one platform behaviour
+    # anonrouter-tee-poc-diag found genuinely unsupported. This image is
+    # identical except that the capability is stripped at build time, and the
+    # Dockerfile fails the build if the strip did not take.
+    #
+    # Pushed as a SINGLE-PLATFORM v2 manifest with provenance and SBOM
+    # attestations disabled. The first attempt pushed a normal buildx OCI image
+    # index, and the CVM failed with `manifest unknown`: this registry serves
+    # the index by digest but 404s the child manifest the index points at, so
+    # the reference resolves one level and then dead-ends. Verified here by
+    # fetching the manifest and every blob by digest before redeploying.
+    image: ghcr.io/anonrouter/anonrouter-edge-ingress@sha256:4645b36c84da7484e5521e6a5ad0185e8730840192429623097e32eaadd0ef0f
+    platform: linux/amd64
+    volumes:
+      - evidences:/evidences:ro
+    tmpfs:
+      # noexec is dropped ONLY here because the generated key material lives in
+      # /tmp; nosuid and nodev remain, and nothing is executed from it.
+      - /tmp:size=16m,nosuid,nodev
+      - /config:size=8m,nosuid,nodev
+      - /data:size=8m,nosuid,nodev
+    mem_limit: 96m
+    networks:
+      - cvm-edge
+      - cvm-relay
+      - cvm-attest
+      - cvm-compat
+
+  # ---------------------------------------------------------------------------
+  # The content tier. Holds prompts and responses transiently in memory and
+  # writes neither. No database, no Valkey, no account identity, no provider
+  # credential, and no routable network.
+  # ---------------------------------------------------------------------------
+  relay:
+    <<: *hardened
+    image: ${ANONROUTER_IMAGE}
+    platform: linux/amd64
+    environment:
+      NODE_ENV: production
+      RUNTIME_ROLE: relay
+      PORT: "3000"
+      HOST: 0.0.0.0
+      LOG_LEVEL: info
+      # ONE, not two, even though Phala's gateway and our edge are both in
+      # front. src/config.ts caps this at 1 and refuses to boot a production
+      # HTTP role with any other value, deliberately: each additional trusted
+      # hop lets a caller influence request.ip by prepending addresses to
+      # X-Forwarded-For. The honest consequence is that with two real hops and
+      # one trusted, request.ip is the address Phala's gateway reports rather
+      # than the true client, so IP-derived signals are not trustworthy in this
+      # topology. Nothing under test here depends on them.
+      TRUST_PROXY_HOPS: "1"
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      ALLOW_INLINE_TICKET: "false"
+      IMAGE_GENERATION_ENABLED: "false"
+      # 2 vCPU / 4 GB on tdx.medium. The classifier does not fit alongside the
+      # relay, worker, compat broker and attestation service.
+      ROUTER_ENABLED: "false"
+      REQUEST_BODY_LIMIT_BYTES: "10000000"
+      # Plain HTTP to control-egress, which originates the mutually
+      # authenticated TLS connection outward. Same TD, internal network.
+      # A LITERAL, so no environment value can move the content tier's control
+      # plane. Resolves to the egress sidecar by network alias.
+      CONTROL_RPC_URL: http://control.anonrouter.internal:8444
+      WORKER_RPC_URL: http://venice-worker:3000
+      # Undeployed providers: these names do not resolve, so their routes fail
+      # at dispatch instead of silently falling back to another provider.
+      FIREWORKS_WORKER_RPC_URL: http://fireworks-worker:3000
+      BEDROCK_WORKER_RPC_URL: http://bedrock-worker:3000
+      DEEPINFRA_WORKER_RPC_URL: http://deepinfra-worker:3000
+      CHUTES_WORKER_RPC_URL: http://chutes-worker:3000
+      TINFOIL_WORKER_RPC_URL: http://tinfoil-worker:3000
+      NEAR_WORKER_RPC_URL: http://near-worker:3000
+      RELAY_RPC_TOKEN: ${RELAY_RPC_TOKEN}
+      WORKER_RPC_TOKEN: ${WORKER_RPC_TOKEN}
+      COMPAT_RPC_TOKEN: ${COMPAT_RPC_TOKEN}
+      # ALLOW_COMPAT_MODE, not COMPAT_MODE_ENABLED. The latter is not a config
+      # key at all: nothing in src reads it, so it parsed cleanly, changed
+      # nothing, and left compatibility mode at its default of OFF. The broker
+      # then rejected every OpenAI-compatible request with compat_unavailable
+      # before it ever called control.
+      ALLOW_COMPAT_MODE: "true"
+      # WAN deadlines. The measured Falkenstein-to-prod5 RTT is ~154 ms, so
+      # same-host defaults would expire mid-request.
+      CONTROL_RPC_TIMEOUT_MS: "15000"
+      WORKER_RPC_TIMEOUT_MS: "620000"
+      # The relay does NOT serve attestation: it has no dstack socket, and the
+      # edge routes that path to the isolated service below.
+      GATEWAY_ATTESTATION_ENABLED: "false"
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    mem_limit: 768m
+    oom_score_adj: 300
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+    networks:
+      - cvm-relay
+      - cvm-worker-rpc
+      - cvm-control-egress
+
+  # ---------------------------------------------------------------------------
+  # OpenAI-compatibility broker. Accepts a static ar_ key from a stock client,
+  # mints a ticket through control, and forwards to the relay.
+  #
+  # It sees plaintext, which is why it lives inside the TD rather than on
+  # Hetzner. It holds no provider credential and no database.
+  # ---------------------------------------------------------------------------
+  compat:
+    <<: *hardened
+    image: ${ANONROUTER_IMAGE}
+    platform: linux/amd64
+    environment:
+      NODE_ENV: production
+      RUNTIME_ROLE: compat
+      PORT: "3000"
+      HOST: 0.0.0.0
+      LOG_LEVEL: info
+      TRUST_PROXY_HOPS: "1"
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      # ALLOW_COMPAT_MODE, not COMPAT_MODE_ENABLED. The latter is not a config
+      # key at all: nothing in src reads it, so it parsed cleanly, changed
+      # nothing, and left compatibility mode at its default of OFF. The broker
+      # then rejected every OpenAI-compatible request with compat_unavailable
+      # before it ever called control.
+      ALLOW_COMPAT_MODE: "true"
+      COMPAT_RPC_TOKEN: ${COMPAT_RPC_TOKEN}
+      # A LITERAL, so no environment value can move the content tier's control
+      # plane. Resolves to the egress sidecar by network alias.
+      CONTROL_RPC_URL: http://control.anonrouter.internal:8444
+      # In-TD hop to the relay. Never leaves the Trust Domain.
+      RELAY_INGRESS_URL: http://relay:3000
+      CONTROL_RPC_TIMEOUT_MS: "15000"
+      RELAY_FORWARD_TIMEOUT_MS: "650000"
+      GATEWAY_ATTESTATION_ENABLED: "false"
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    mem_limit: 512m
+    oom_score_adj: 300
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+    networks:
+      - cvm-compat
+      - cvm-relay
+      - cvm-control-egress
+
+  # ---------------------------------------------------------------------------
+  # Gateway attestation. The ONLY AnonRouter service that mounts the dstack
+  # socket, as a separate container precisely so the relay does not hold an
+  # app-wide key oracle: anything that reaches the socket can derive every key
+  # the app uses and mint a quote over arbitrary report data.
+  # ---------------------------------------------------------------------------
+  attest:
+    <<: *hardened
+    image: ${ANONROUTER_IMAGE}
+    platform: linux/amd64
+    environment:
+      NODE_ENV: production
+      RUNTIME_ROLE: gateway-attestation
+      PORT: "3000"
+      HOST: 0.0.0.0
+      LOG_LEVEL: info
+      TRUST_PROXY_HOPS: "1"
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      GATEWAY_ATTESTATION_ENABLED: "true"
+      GATEWAY_PUBLIC_ORIGIN: ${GATEWAY_PUBLIC_ORIGIN}
+      GATEWAY_RELEASE_ID: ${GATEWAY_RELEASE_ID}
+      # A MEASURED LITERAL, deliberately not an environment value. An
+      # unmeasured switch that turns on a privacy claim is worth nothing: a
+      # verifier reading the attested manifest can see for itself that this
+      # deployment terminates its own TLS.
+      GATEWAY_TRANSPORT: in-tee-tls
+      # The address the attestation service completes a real TLS handshake
+      # against, so the SPKI it publishes is the one edge actually served.
+      #
+      # There is deliberately NO way to hand it a fingerprint. That used to be
+      # GATEWAY_TLS_SPKI_SHA256, an unmeasured environment value, which let a
+      # deployer claim in-tee-tls while naming a certificate whose private key
+      # sat on another machine: the client observes that SPKI, the quote repeats
+      # it, every check agrees, and the trust domain has attested to owning a
+      # key it never saw. A handshake cannot be completed without the key, so
+      # observing one is proof of possession rather than a claim of it.
+      GATEWAY_TLS_TERMINATOR: ingress:443
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks:
+      - cvm-attest
+      # Observation only: attest completes a TLS handshake against edge to read
+      # the SPKI it is about to publish.
+      - cvm-edge
+
+  # ---------------------------------------------------------------------------
+  # Venice worker. Holds exactly one deployment-scoped, inference-only provider
+  # credential. Reaches the network only through the SNI-allowlisted proxies.
+  # ---------------------------------------------------------------------------
+  venice-worker:
+    <<: *hardened
+    image: ${ANONROUTER_IMAGE}
+    platform: linux/amd64
+    environment:
+      NODE_ENV: production
+      RUNTIME_ROLE: venice-worker
+      PORT: "3000"
+      HOST: 0.0.0.0
+      LOG_LEVEL: info
+      # A LITERAL, so a verifier reading the attested manifest can see exactly
+      # which upstream this build can reach. The worker has no other route out.
+      VENICE_BASE_URL: https://api.venice.ai/api/v1
+      # The provider credential arrives as an ENCRYPTED environment value and is
+      # written to tmpfs by the entrypoint below, because the split-role worker
+      # requires a file and rejects a plain variable. It exists only in
+      # TDX-encrypted memory, only in this container, and never on disk.
+      VENICE_INFERENCE_KEY_FILE: /tmp/venice-key
+      WORKER_RPC_TOKEN: ${WORKER_RPC_TOKEN}
+      # Measured identity + dedicated capability. Control binds this token to
+      # Venice/eu-ams-1 and selects only the key manifest advertised here.
+      CONFIDENTIAL_DEPLOYMENT_ID: eu-ams-1
+      METADATA_RPC_DEPLOYMENT_TOKEN: ${METADATA_RPC_TOKEN_VENICE}
+      CONTROL_METADATA_URL: http://control.anonrouter.internal:8444
+      # No writable volume for the operator keyset overlay, so key lifecycle is
+      # boot-secret-only and POST /internal/venice/keys fails.
+      CATALOG_SYNC_ENABLED: "false"
+      # Deliberately not named VENICE_INFERENCE_KEY: config rejects an
+      # ambiguous plain-variable + file credential combination. The encoded
+      # delivery value is removed before the application process starts.
+      VENICE_KEY_B64: ${VENICE_KEY_B64}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        printf '%s' "$$VENICE_KEY_B64" | base64 -d > /tmp/venice-key
+        # Refuse to start rather than dispatch with an empty credential.
+        test -s /tmp/venice-key
+        unset VENICE_KEY_B64
+        exec npm run start
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    mem_limit: 448m
+    oom_score_adj: 300
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks:
+      - cvm-worker-rpc
+      - cvm-worker-egress
+      - cvm-control-egress
+
+  # ---------------------------------------------------------------------------
+  # The worker's ONLY route to its provider: a TCP/SNI gateway that forwards
+  # api.venice.ai:443 and refuses everything else. End-to-end TLS, so it carries
+  # ciphertext and terminates nothing. The network alias makes the worker's DNS
+  # land here rather than on the Internet.
+  #
+  # This is what replaces the POC's mock provider. A production manifest must
+  # not contain a mock at all, and the worker must not have a default route.
+  # ---------------------------------------------------------------------------
+  venice-egress:
+    <<: *hardened
+    image: ghcr.io/anonrouter/anonrouter-venice-egress@sha256:c45085418a14a8e74e6de6e91574801e2bbd28d752dd5f550af4873ea7bd71ec
+    platform: linux/amd64
+    cap_add:
+      - NET_BIND_SERVICE
+    user: "99:99"
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    mem_limit: 96m
+    networks:
+      cvm-worker-egress:
+        aliases:
+          - api.venice.ai
+      cvm-internet: {}
+
+  # ---------------------------------------------------------------------------
+  # The relay's, compat broker's and worker's only route to Hetzner control,
+  # and the mTLS client for the durable control listener.
+  #
+  # WHY THE SIDECAR ORIGINATES mTLS RATHER THAN THE RELAY
+  #
+  # src/inference/controlClient.ts calls control with plain `fetch()` and no
+  # dispatcher, and undici is not a direct dependency, so the application cannot
+  # present a client certificate without new code and a new dependency shipped
+  # in every content process. HAProxy can originate it natively in one narrow
+  # measured sidecar.
+  #
+  # The honest cost: the relay-to-egress hop is plain HTTP rather than TLS. Both
+  # ends are inside the same Trust Domain on an `internal: true` network with no
+  # route out, and what crosses is content-free authorization metadata whose
+  # field set is pinned by tests/unit/rpc-boundary-contract.test.ts. TLS to the
+  # outside world begins here and is mutually authenticated.
+  #
+  # The client private key arrives as an encrypted Phala environment value and
+  # is written to tmpfs at start. It exists only in TDX-encrypted memory and
+  # never touches disk.
+  #
+  # The control hostname is a LITERAL in this measured file, so changing
+  # CONTROL_RPC_URL (an unmeasured env value) cannot widen where the content
+  # tier is able to talk.
+  # ---------------------------------------------------------------------------
+  control-egress:
+    <<: *hardened
+    image: ghcr.io/anonrouter/anonrouter-control-egress@sha256:bacb13dc01b99a1ef89c93de3cb52cff40870dde231361cf232e101b5043f4d8
+    platform: linux/amd64
+    cap_add:
+      - NET_BIND_SERVICE
+    user: "99:99"
+    environment:
+      TEE_CONTROL_CLIENT_PEM_B64: ${TEE_CONTROL_CLIENT_PEM_B64}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        printf '%s' "$$TEE_CONTROL_CLIENT_PEM_B64" | base64 -d > /tmp/tee-control-client.pem
+        # Refuse to start rather than fall back to an unauthenticated
+        # connection: a missing client certificate must be a hard failure.
+        grep -q 'BEGIN EC PRIVATE KEY\|BEGIN PRIVATE KEY' /tmp/tee-control-client.pem
+        grep -q 'BEGIN CERTIFICATE' /tmp/tee-control-client.pem
+        unset TEE_CONTROL_CLIENT_PEM_B64
+        exec haproxy -f /usr/local/etc/haproxy/haproxy.cfg
+    tmpfs:
+      - /tmp:size=8m,nosuid,nodev
+    mem_limit: 96m
+    networks:
+      cvm-control-egress:
+        aliases:
+          - control.anonrouter.internal
+      cvm-internet: {}
+
+volumes:
+  # ACME account/certificate state and the public attestation bundle persist on
+  # the CVM's encrypted disk across restarts. Neither volume is shared outside
+  # this trust domain.
+  cert-data:
+  evidences:
+
+networks:
+  # ingress -> edge and attest -> ingress certificate observation.
+  cvm-edge:
+    internal: true
+  # edge -> relay.
+  cvm-relay:
+    internal: true
+  # edge -> compat broker.
+  cvm-compat:
+    internal: true
+  # edge -> attestation service. Nothing else reaches it.
+  cvm-attest:
+    internal: true
+  # relay -> worker.
+  cvm-worker-rpc:
+    internal: true
+  # worker -> the SNI-allowlisted provider gateway ONLY. Internal, so the
+  # worker itself has no default route: everything it sends leaves through a
+  # gateway that accepts exactly one destination name.
+  cvm-worker-egress:
+    internal: true
+  # relay/compat/worker -> control egress sidecar ONLY. No default route: the
+  # sidecar has the Internet path, the content tier does not.
+  cvm-control-egress:
+    internal: true
+  # The routable network. Attached only to dstack-ingress and the two narrow
+  # egress sidecars; no relay, compat broker, or credential worker joins it.
+  cvm-internet: {}
