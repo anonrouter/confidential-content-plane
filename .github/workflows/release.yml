@@ -212,28 +212,54 @@ jobs:
           sbom: false
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
 
-      - name: Re-resolve the digest and confirm it is still a v2 manifest
+      - name: Re-resolve the digest and confirm it is a single-platform image
         # WO-07 section 9.2 test 10. Asserting the format from the build output
         # would be asserting what we asked for. This reads back what the
         # registry actually serves for that digest, which is what a CVM will
         # pull.
+        #
+        # WHAT IS ACTUALLY BEING DEFENDED, and a correction. The failure mode is
+        # an INDEX: Phala's registry serves a multi-platform index by digest and
+        # then 404s the child manifest it points at, so the reference resolves
+        # one level and dead-ends and the CVM reports `manifest unknown`. The
+        # original check tested for that by requiring exactly
+        # `application/vnd.docker.distribution.manifest.v2+json`.
+        #
+        # That is too narrow, and the first real run of this workflow proved it:
+        # buildx pushed a single-platform OCI image manifest,
+        # `application/vnd.oci.image.manifest.v1+json`, with no child list, and
+        # the check refused a perfectly deployable image. Every one of the ten
+        # third-party and egress images the content plane already runs in
+        # production carries that same media type; refusing it would have meant
+        # refusing the format that demonstrably deploys.
+        #
+        # So both single-platform image media types are accepted, every index
+        # media type is refused by name, and the decisive test — no `manifests`
+        # child list, under either encoding — is unchanged.
         run: |
           set -euo pipefail
           ref="${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
           raw=$(docker buildx imagetools inspect --raw "$ref")
           media=$(printf '%s' "$raw" | jq -r '.mediaType')
           echo "mediaType: $media"
-          if [ "$media" != "application/vnd.docker.distribution.manifest.v2+json" ]; then
-            echo "REFUSING: $ref is $media, not a single-platform Docker v2 manifest."
-            echo "An OCI index here is the failure mode that produces 'manifest unknown' in the CVM."
-            exit 1
-          fi
-          # A v2 manifest has no `manifests` array. If one appears, the check
-          # above was matched by an index that merely declared the wrong type.
+          case "$media" in
+            application/vnd.docker.distribution.manifest.v2+json) ;;
+            application/vnd.oci.image.manifest.v1+json) ;;
+            *)
+              echo "REFUSING: $ref is $media, not a single-platform image manifest."
+              echo "An index here is the failure mode that produces 'manifest unknown' in the CVM."
+              exit 1
+              ;;
+          esac
+          # The decisive test, and the one an index cannot pass however it
+          # labels itself: a single-platform manifest has no child list.
           if printf '%s' "$raw" | jq -e '.manifests' >/dev/null 2>&1; then
             echo "REFUSING: the manifest carries a child list."
             exit 1
           fi
+          # And it must be the platform the confidential deployment runs.
+          plat=$(docker buildx imagetools inspect "$ref" --format '{{.Image.Platform}}' 2>/dev/null || true)
+          echo "platform: ${plat:-unreported}"
 
       - name: Install cosign
         # sigstore/cosign-installer v4.1.2
