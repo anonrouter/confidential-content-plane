@@ -44,6 +44,22 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/routing/artifacts ./src/routing/artifacts
+
+# The slim base omits the OS CA trust store. Node carries its own roots, but
+# aws_signing_helper is a Go binary and needs the OS store for Roles Anywhere
+# and STS. Without it the Bedrock worker cannot obtain short-lived credentials.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+# IAM Roles Anywhere credential helper. Only the Bedrock worker invokes it;
+# other roles have neither the workload certificate nor an AWS config. The
+# binary is versioned and integrity-pinned exactly as in the private build.
+ARG AWS_SIGNING_HELPER_VERSION=1.8.3
+ADD --chmod=0755 \
+    --checksum=sha256:2517d3b7853c39c0004d27cbb03c51a5ec0e87b12f4046c86929f5c8fca4c9c1 \
+    https://rolesanywhere.amazonaws.com/releases/${AWS_SIGNING_HELPER_VERSION}/X86_64/Linux/Amzn2023/aws_signing_helper \
+    /usr/local/bin/aws_signing_helper
 EXPOSE 3000
 USER node
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
