@@ -191,9 +191,28 @@ export function contentTierCorsOptions(config: ContentPlaneConfig) {
  * envelopes instead of the AnonRouter shape); it is set ONCE so no override
  * warning fires.
  */
+/**
+ * `observe` runs against the bare instance BEFORE any route is registered.
+ *
+ * It exists for one caller: the front-door route inventory, which installs an
+ * `onRoute` hook. That hook only fires for routes registered after it, so an
+ * observer handed the finished server would report a shorter table than the
+ * server actually serves, which is the precise failure the inventory exists to
+ * prevent. Reading the router afterwards is not an alternative:
+ * `printRoutes({ commonPrefix: false })` still emits a prefix TREE, so a child
+ * segment appears without its full path and a parser silently drops routes.
+ *
+ * It is deliberately not a hook and not a decoration: nothing in the request
+ * path can reach it, and a caller that does not pass it changes nothing.
+ */
+export interface BaseServerOptions {
+  errorHandler?: (error: unknown, request: FastifyRequest, reply: FastifyReply) => void;
+  observe?: (server: FastifyInstance) => void;
+}
+
 export async function createBaseServer(
   config: AppConfig,
-  options: { errorHandler?: (error: unknown, request: FastifyRequest, reply: FastifyReply) => void } = {}
+  options: BaseServerOptions = {}
 ): Promise<FastifyInstance> {
   const server = Fastify({
     logger: createLoggerOptions(config),
@@ -207,6 +226,8 @@ export async function createBaseServer(
       : false,
     disableRequestLogging: true
   });
+
+  options.observe?.(server);
 
   server.decorate("config", config);
 

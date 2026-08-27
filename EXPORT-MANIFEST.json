@@ -57,8 +57,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "b3401bead32d139d7f47def9303ec8cd5b0a9941b00e72883672179a917d405e",
-      "bytes": 2625
+      "sha256": "20dffbdd261cd898d55990983b5756e2892b017e151beb9dc59b43983e0745d1",
+      "bytes": 3514
     },
     {
       "path": "LICENSE",
@@ -242,8 +242,8 @@
     },
     {
       "path": "src/httpBase.ts",
-      "sha256": "965b374547b1596b06b33b4b951c25398542932968453d9b6f59661cd488087b",
-      "bytes": 11173
+      "sha256": "11121d103f5405085a8c27603cd9ed32e460542dfad645e8258917bc305c8184",
+      "bytes": 12085
     },
     {
       "path": "src/ids.ts",
@@ -657,8 +657,8 @@
     },
     {
       "path": "src/roles.ts",
-      "sha256": "aa9197bd8a0659ca72751dec4f4f261a02cdcbff4f8f2bfb2371234b8e21a90a",
-      "bytes": 17974
+      "sha256": "b9debe358d41b042cc5e82ef64bfdb2242010ae9408c556a3ad382fe3ab9c714",
+      "bytes": 18145
     },
     {
       "path": "src/routes/chat.ts",

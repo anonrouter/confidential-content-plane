@@ -9,7 +9,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "./config.js";
-import { createBaseServer, workerErrorHandler } from "./httpBase.js";
+import { createBaseServer, workerErrorHandler, type BaseServerOptions } from "./httpBase.js";
 import { HttpControlClient } from "./inference/controlClient.js";
 import {
   HttpProviderAttemptAcknowledger,
@@ -50,8 +50,11 @@ import { CompatControlClient } from "./compat/controlClient.js";
 import { compatErrorHandler, registerCompatIngressGuard, registerCompatRoutes } from "./compat/broker.js";
 
 /** The relay: only the chat route, talking to control + worker over RPC. */
-export async function buildRelayServer(config: AppConfig): Promise<FastifyInstance> {
-  const server = await createBaseServer(config);
+export async function buildRelayServer(
+  config: AppConfig,
+  options: BaseServerOptions = {}
+): Promise<FastifyInstance> {
+  const server = await createBaseServer(config, options);
   // The relay verifies provider attestation evidence and decides whether a
   // per-request signature binding exists. Without this decoration
   // `server.verifierRegistry?.forProvider(...)` in src/routes/chat.ts is
@@ -165,9 +168,12 @@ export async function buildRelayServer(config: AppConfig): Promise<FastifyInstan
  * ONLY control (mint) and the relay (forward) — never the DB, provider egress,
  * payments, or admin.
  */
-export async function buildCompatServer(config: AppConfig): Promise<FastifyInstance> {
+export async function buildCompatServer(
+  config: AppConfig,
+  options: BaseServerOptions = {}
+): Promise<FastifyInstance> {
   // OpenAI-shaped error envelope for every failure (set once by createBaseServer).
-  const server = await createBaseServer(config, { errorHandler: compatErrorHandler });
+  const server = await createBaseServer(config, { ...options, errorHandler: compatErrorHandler });
   server.decorate(
     "compatControlClient",
     new CompatControlClient(config.internal.controlRpcUrl, config.internal.compatRpcToken, config.internal.controlRpcTimeoutMs)
@@ -192,8 +198,11 @@ export async function buildCompatServer(config: AppConfig): Promise<FastifyInsta
  * never receives request content. Its single route is credential-free by
  * design: a client verifies the enclave BEFORE trusting it with anything.
  */
-export async function buildGatewayAttestationServer(config: AppConfig): Promise<FastifyInstance> {
-  const server = await createBaseServer(config);
+export async function buildGatewayAttestationServer(
+  config: AppConfig,
+  options: BaseServerOptions = {}
+): Promise<FastifyInstance> {
+  const server = await createBaseServer(config, options);
   // The flood guard is not optional here. Every call makes the guest agent mint
   // a fresh TDX quote, and that socket is a single serialized resource: an
   // unauthenticated caller could otherwise starve attestation for everyone.
