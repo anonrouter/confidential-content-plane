@@ -55,9 +55,9 @@ RUN apt-get update \
 # IAM Roles Anywhere credential helper. Only the Bedrock worker invokes it;
 # other roles have neither the workload certificate nor an AWS config. The
 # binary is versioned and integrity-pinned exactly as in the private build.
-ARG AWS_SIGNING_HELPER_VERSION=1.8.3
+ARG AWS_SIGNING_HELPER_VERSION=1.8.4
 ADD --chmod=0755 \
-    --checksum=sha256:2517d3b7853c39c0004d27cbb03c51a5ec0e87b12f4046c86929f5c8fca4c9c1 \
+    --checksum=sha256:b7568acd6e1517a4e1adaee68d52bfd6284a0e5305677166cd83d43a07c815c9 \
     https://rolesanywhere.amazonaws.com/releases/${AWS_SIGNING_HELPER_VERSION}/X86_64/Linux/Amzn2023/aws_signing_helper \
     /usr/local/bin/aws_signing_helper
 EXPOSE 3000
