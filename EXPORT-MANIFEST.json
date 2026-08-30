@@ -26,14 +26,14 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 157,
+  "copiedSourceFiles": 158,
   "generatedFiles": 7,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "dstack-ingress",
     "node-base-image"
   ],
-  "fileCount": 164,
+  "fileCount": 165,
   "files": [
     {
       "path": ".dockerignore",
@@ -57,8 +57,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "20dffbdd261cd898d55990983b5756e2892b017e151beb9dc59b43983e0745d1",
-      "bytes": 3514
+      "sha256": "6cc32b93cdcff19b438a293bdad8c92d2ecbf48ea29f1a8fe3c0e03ef9fc8b1d",
+      "bytes": 3692
     },
     {
       "path": "LICENSE",
@@ -134,6 +134,11 @@
       "path": "scripts/phala-usw/contentPlaneClosure.ts",
       "sha256": "1806ef78da3ae2bf2d14ab58b90339b007759926c2f30f0b926f32d1c6113439",
       "bytes": 5498
+    },
+    {
+      "path": "scripts/prepare-router-model.mjs",
+      "sha256": "7950956c6a8c694a00047a018a35f9db181cbb73734c752b2da6f04ff67a6216",
+      "bytes": 3110
     },
     {
       "path": "scripts/verify-third-party-provenance.ts",

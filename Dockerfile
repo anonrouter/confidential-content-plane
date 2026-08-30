@@ -32,7 +32,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+RUN npm run build \
+  && node scripts/prepare-router-model.mjs --cache-dir=/opt/anonrouter-router-model --download-only
 
 FROM node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066 AS production
 ENV NODE_ENV=production \
@@ -44,6 +45,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/routing/artifacts ./src/routing/artifacts
+COPY --from=build /opt/anonrouter-router-model /opt/anonrouter-router-model
 
 # The slim base omits the OS CA trust store. Node carries its own roots, but
 # aws_signing_helper is a Go binary and needs the OS store for Roles Anywhere
