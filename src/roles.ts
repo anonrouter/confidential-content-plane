@@ -42,7 +42,8 @@ import { registerTeeReceiptRoutes } from "./routes/teeReceipt.js";
 import { registerOpaqueE2eeRoutes } from "./routes/opaqueE2ee.js";
 import { registerEmbeddingRoutes } from "./routes/embeddings.js";
 import { registerImageRoutes } from "./routes/image.js";
-import { registerDisabledImageRoute } from "./routes/mediaDisabled.js";
+import { registerSpeechRoutes } from "./routes/speech.js";
+import { registerDisabledImageRoute, registerDisabledSpeechRoute } from "./routes/mediaDisabled.js";
 import { registerWorkerRpcRoutes } from "./routes/internal/worker.js";
 import { registerCredentialAdminRoutes } from "./routes/internal/credentialAdmin.js";
 import { registerRelayIngressGuard } from "./relay/ingress.js";
@@ -155,6 +156,13 @@ export async function buildRelayServer(
     await registerImageRoutes(server);
   } else {
     await registerDisabledImageRoute(server);
+  }
+  // Split text-to-speech: identical boundary to image. Independently flagged so
+  // either media surface can be rolled back without the other.
+  if (config.internal.speechGenerationEnabled) {
+    await registerSpeechRoutes(server);
+  } else {
+    await registerDisabledSpeechRoute(server);
   }
   return server;
 }

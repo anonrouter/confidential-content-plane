@@ -146,7 +146,8 @@ services:
       TRUST_PROXY_HOPS: "1"
       CORS_ORIGIN: ${CORS_ORIGIN}
       ALLOW_INLINE_TICKET: "false"
-      IMAGE_GENERATION_ENABLED: "false"
+      IMAGE_GENERATION_ENABLED: "true"
+      SPEECH_GENERATION_ENABLED: "true"
       # 2 vCPU / 4 GB on tdx.medium. The classifier does not fit alongside the
       # relay, worker, compat broker and attestation service.
       ROUTER_ENABLED: "false"

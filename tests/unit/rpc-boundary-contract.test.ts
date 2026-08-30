@@ -73,6 +73,11 @@ const EXPECTED_FIELDS: Record<keyof typeof CONTROL_RPC_SCHEMAS, string[]> = {
     "providerReasoningKey",
     "reasoningKey",
     "requestId",
+    // Speech-only counterparts of the image trio. A character COUNT, a voice
+    // id and a container name: the priced provider work, never the text.
+    "speechCharacterCount",
+    "speechResponseFormat",
+    "speechVoice",
     "stream"
   ],
   "/internal/control/attestation-attempt": ["deploymentId", "dispatchToken", "externalModelId", "providerName"],

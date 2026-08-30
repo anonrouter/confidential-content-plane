@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 // Side-effect import: declares the content-plane Fastify decorations for every
 // role built through this module. See src/contentDecorators.ts (D-22).
 import "./contentDecorators.js";
+import { corsAllowlist } from "./config.js";
 import type { AppConfig } from "./config.js";
 import type { ContentPlaneConfig } from "./contentPlaneConfig.js";
 import { createLoggerOptions } from "./logger.js";
@@ -142,9 +143,7 @@ export function rawStreamCorsHeaders(
   config: ContentPlaneConfig
 ): Record<string, string> {
   if (!requestOrigin) return {};
-  const allowed = config.env === "production"
-    ? config.server.corsOrigin.split(",").map((o) => o.trim()).filter(Boolean)
-    : null;
+  const allowed = config.env === "production" ? corsAllowlist(config.server.corsOrigin) : null;
   // null means "not production": reflect, matching `origin: true` below.
   if (allowed !== null && !allowed.includes(requestOrigin)) return {};
   return {
@@ -173,7 +172,10 @@ export function rawStreamCorsHeaders(
  */
 export function contentTierCorsOptions(config: ContentPlaneConfig) {
   return {
-    origin: config.env === "production" ? config.server.corsOrigin.split(",") : true,
+    // Trimmed for the same reason as the control plane's list: the comparison
+    // against an Origin header is byte-exact, and an untrimmed split silently
+    // produces an entry that matches nothing.
+    origin: config.env === "production" ? corsAllowlist(config.server.corsOrigin) : true,
     credentials: false,
     exposedHeaders: [...CONTENT_TIER_EXPOSED_HEADERS],
     allowedHeaders: [...CONTENT_TIER_ALLOWED_HEADERS],

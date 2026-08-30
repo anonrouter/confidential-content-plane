@@ -13,6 +13,7 @@ import type {
 import type { EmbeddingProviderRequest, EmbeddingProviderResult } from "./embeddings.js";
 import { normalizeEmbeddingResponse } from "./embeddings.js";
 import { parseJsonResponse, requireStreamBody } from "./http.js";
+import { ProviderError } from "../security/errors.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
 
 // 1x1 transparent PNG — a deterministic placeholder for tests and local dev.
@@ -147,6 +148,29 @@ export class MockProviderAdapter implements ProviderAdapter {
   }
 
   async speech(request: SpeechProviderRequest): Promise<SpeechProviderResult> {
-    return { audio: Buffer.from(`mock-audio:${request.input.slice(0, 32)}`), mimeType: "audio/mpeg" };
+    const init: RequestInit = {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-request-id": request.requestId },
+      body: JSON.stringify({
+        model: request.model.externalModelId,
+        input: request.input,
+        ...(request.voice ? { voice: request.voice } : {}),
+        response_format: request.responseFormat ?? "mp3"
+      }),
+      signal: request.signal
+    };
+    // Mirror the real adapter: honor cancellation and commit the durable dispatch
+    // fence before the provider call so the split path is faithfully exercised.
+    request.signal?.throwIfAborted();
+    await request.onProviderAttempt?.();
+    request.signal?.throwIfAborted();
+    const response = await fetch(`${this.baseUrl}/audio/speech`, init);
+    if (!response.ok) {
+      throw new ProviderError("provider_error", "Mock provider speech failed", response.status);
+    }
+    return {
+      audio: Buffer.from(await response.arrayBuffer()),
+      mimeType: response.headers.get("content-type") ?? "audio/mpeg"
+    };
   }
 }

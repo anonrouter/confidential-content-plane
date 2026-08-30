@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { routingConfigSchema } from "../../providers/types.js";
+import { routingConfigSchema, SPEECH_MAX_INPUT_CHARS, SPEECH_MAX_VOICE_CHARS } from "../../providers/types.js";
 import { OPAQUE_RECEIPT_ID_PATTERN } from "../../inference/contentReceipts.js";
 // Handler-free, like everything else this module is allowed to import: the
 // formats and the capability constants are pure definitions over node:crypto.
@@ -68,7 +68,7 @@ export const authorizeSchema = z
   .object({
     redemption: z.string().min(1).max(256),
     requestId: z.string().min(1).max(256),
-    operation: z.enum(["chat", "embeddings", "image"]).optional().default("chat"),
+    operation: z.enum(["chat", "embeddings", "image", "speech"]).optional().default("chat"),
     modelPublicId: z.string().min(1).max(256),
     automatic: z.boolean(),
     stream: z.boolean(),
@@ -170,7 +170,7 @@ export const providerDispatchAttemptSchema = z.object({
   deploymentId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional().default("primary"),
   dispatchToken: z.string().min(1).max(256),
   requestId: z.string().min(1).max(256),
-  operation: z.enum(["chat", "embeddings", "image"]),
+  operation: z.enum(["chat", "embeddings", "image", "speech"]),
   providerName: z.string().min(1).max(64),
   externalModelId: z.string().min(1).max(256),
   stream: z.boolean(),
@@ -182,7 +182,12 @@ export const providerDispatchAttemptSchema = z.object({
   // can reject any post-authorization size/format tampering at the fence.
   imageWidth: z.number().int().positive().max(8192).optional(),
   imageHeight: z.number().int().positive().max(8192).optional(),
-  imageResponseFormat: z.string().max(32).optional()
+  imageResponseFormat: z.string().max(32).optional(),
+  // Speech-only equivalents. The character count is the priced unit, so control
+  // matches it against the grant to reject post-authorization tampering.
+  speechCharacterCount: z.number().int().positive().max(SPEECH_MAX_INPUT_CHARS).optional(),
+  speechVoice: z.string().max(SPEECH_MAX_VOICE_CHARS).optional(),
+  speechResponseFormat: z.string().max(32).optional()
 }).strict();
 export const attestationAttemptSchema = z.object({
   deploymentId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional().default("primary"),

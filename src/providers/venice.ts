@@ -531,17 +531,24 @@ export class VeniceProviderAdapter implements ProviderAdapter {
   }
 
   async speech(request: SpeechProviderRequest): Promise<SpeechProviderResult> {
-    return this.guarded("speech", request.model.externalModelId, undefined, async () => {
+    return this.guarded("speech", request.model.externalModelId, request.signal, async () => {
+      // Same discipline as generateImage: the durable provider-attempt fence
+      // MUST commit before any upstream fetch, so a transport failure before it
+      // stays a zero-cost abort and after it control captures the authorized
+      // price. The fence also names the credential to use.
+      request.signal?.throwIfAborted();
+      const dispatchAuth = await request.onProviderAttempt?.();
+      request.signal?.throwIfAborted();
       const response = await mediaFetch(`${this.baseUrl}/audio/speech`, {
         method: "POST",
-        headers: this.headers(request.requestId),
+        headers: this.headers(request.requestId, undefined, dispatchAuth?.providerKeyId),
         body: JSON.stringify({
           model: request.model.externalModelId,
           input: request.input,
           ...(request.voice ? { voice: request.voice } : {}),
-          response_format: "mp3"
+          response_format: request.responseFormat ?? "mp3"
         })
-      });
+      }, request.signal);
 
       if (!response.ok) throw await providerHttpError(response);
       const audio = Buffer.from(await response.arrayBuffer());

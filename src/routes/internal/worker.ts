@@ -4,9 +4,20 @@ import { AppError } from "../../security/errors.js";
 import { parseBody } from "../helpers.js";
 import { serializeWorkerStream } from "../../inference/workerClient.js";
 import type { WorkerChatRequest } from "../../inference/rpc.js";
-import type { WorkerEmbeddingRequest, WorkerImageRequest, WorkerOpaqueE2eeRequest } from "../../inference/rpc.js";
+import type {
+  WorkerEmbeddingRequest,
+  WorkerImageRequest,
+  WorkerOpaqueE2eeRequest,
+  WorkerSpeechRequest
+} from "../../inference/rpc.js";
 import { embeddingRequestSchema } from "../../providers/embeddings.js";
-import { IMAGE_MAX_DIMENSION, IMAGE_MIN_DIMENSION } from "../../providers/types.js";
+import {
+  IMAGE_MAX_DIMENSION,
+  IMAGE_MIN_DIMENSION,
+  SPEECH_DEFAULT_RESPONSE_FORMAT,
+  SPEECH_MAX_INPUT_CHARS,
+  SPEECH_MAX_VOICE_CHARS
+} from "../../providers/types.js";
 import { requireServiceToken } from "./serviceAuth.js";
 import { abortOnClientDisconnect, isAbortError } from "../../inference/disconnect.js";
 import { writeWithBackpressure } from "../../inference/backpressure.js";
@@ -84,6 +95,19 @@ const imageSchema = z.object({
   responseFormat: z.literal("b64_json"),
   // The prompt is the only content the worker receives; it never reaches control.
   prompt: z.string().min(1).max(10_000)
+}).strict();
+
+const speechSchema = z.object({
+  dispatchToken: z.string().min(1).max(256),
+  requestId: z.string().min(1).max(256),
+  providerName: z.string().min(1).max(64),
+  externalModelId: z.string().min(1).max(256),
+  voice: z.string().min(1).max(SPEECH_MAX_VOICE_CHARS).optional(),
+  responseFormat: z.literal(SPEECH_DEFAULT_RESPONSE_FORMAT),
+  // The input text is the only content the worker receives; it never reaches
+  // control. The same bound the public route enforces is re-applied here so a
+  // compromised relay cannot enlarge the priced character count.
+  input: z.string().min(1).max(SPEECH_MAX_INPUT_CHARS)
 }).strict();
 
 /**
@@ -185,6 +209,18 @@ export async function registerWorkerRpcRoutes(server: FastifyInstance) {
     // The base64 result is returned as a JSON reply; it is never logged and
     // never crosses the worker -> control fence.
     return server.workerClient.generateImage(body, signal);
+  });
+
+  server.post(`${workerBase}/speech`, { preHandler: guard }, async (request, reply) => {
+    const signal = abortOnClientDisconnect(request, reply);
+    const body = parseBody(speechSchema, request.body) as WorkerSpeechRequest;
+    assertWorkerProvider(body.providerName);
+    if (!server.workerClient.generateSpeech) {
+      throw new AppError(503, "provider_unavailable", "Speech worker is unavailable");
+    }
+    // Base64 audio is returned as a JSON reply, exactly as image bytes are: it
+    // is never logged and never crosses the worker -> control fence.
+    return server.workerClient.generateSpeech(body, signal);
   });
 
   // Operator key lifecycle. Only this credential-holding process ever touches

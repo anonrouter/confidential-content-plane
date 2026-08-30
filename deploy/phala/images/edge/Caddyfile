@@ -32,36 +32,6 @@
 		respond 404
 	}
 
-	# /v1/audio/speech IS RETIRED, and this is the enforcement point.
-	#
-	# DECISIONS_CONTENT_PLANE.md records it as one of three endpoints retired
-	# outright because they join content to identity. The application agrees --
-	# there is no relay route, no speech worker in any compose file, and no
-	# "speech" member of InferenceOperation, so no ticket for it can even be
-	# minted -- but until now the edge expressed that only as a fall-through to
-	# the catch-all 404 at the bottom of this file.
-	#
-	# A fall-through is not a decision. It is indistinguishable from a typo'd URL,
-	# and it survives only as long as nobody adds a broader matcher above it. This
-	# says no explicitly, first, before any other matcher can claim the path.
-	#
-	# 503 media_disabled, NOT 404, because that is what every application path
-	# already returns for this endpoint (src/routes/mediaDisabled.ts:26). A client
-	# that branches on `type == "media_disabled"` behaves the same whether it
-	# reached the edge or the app. Changing the answer to 404 at the edge would be
-	# a silent API break dressed up as hardening.
-	#
-	# The refusal happens HERE so the body stops at the edge. Caddy answers from
-	# this matcher without proxying, so no request body reaches control, and on a
-	# deployment whose catch-all proxies to control (deploy/caddy/Caddyfile) that
-	# is the entire point: the user's text would otherwise arrive on the accounts
-	# host alongside their session cookie.
-	@speech_retired path /v1/audio/speech /v1/audio/speech/*
-	handle @speech_retired {
-		header Content-Type application/json
-		respond `{"error":{"message":"Media generation is not enabled on this deployment","type":"media_disabled"}}` 503
-	}
-
 	# CORS preflight must be ROUTED, not 404ed, or the browser reports a
 	# CORS failure for a request the relay never saw. @fastify/cors owns the
 	# allowlist, not this file.
@@ -78,7 +48,7 @@
 	# against this path passed while the browser could not read it.
 	@preflight {
 		method OPTIONS
-		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/models /v1/images/generations
+		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/models /v1/images/generations /v1/audio/speech
 	}
 	handle @preflight {
 		reverse_proxy relay:3000
@@ -190,7 +160,7 @@
 
 	# Trailing-slash variants are not canonical routes; refuse rather than
 	# let a proxy normalize them into one.
-	@relay_noncanonical path /v1/chat/completions/* /v1/e2ee/chat/completions/* /v1/embeddings/* /v1/tee/attestation/* /v1/images/generations/* /v1/credentials/*/*
+	@relay_noncanonical path /v1/chat/completions/* /v1/e2ee/chat/completions/* /v1/embeddings/* /v1/tee/attestation/* /v1/images/generations/* /v1/audio/speech/* /v1/credentials/*/*
 	handle @relay_noncanonical {
 		respond 404
 	}
@@ -206,25 +176,12 @@
 		reverse_proxy compat:3000
 	}
 
-	# /v1/images/generations IS IN THIS LIST, and adding it is a fail-closed change.
-	#
-	# It works on the live Hetzner edge (deploy/caddy/Caddyfile:241) and on the dev
-	# CVM edge (Caddyfile.cvm:91) and was absent only here, so moving the hostname
-	# to this edge would have turned a documented answer into a bare 404 from a
-	# proxy -- a routing regression that looks like a client bug.
-	#
-	# It does NOT switch image generation on. IMAGE_GENERATION_ENABLED is "false"
-	# on this relay (docker-compose.prod5-xl.yml:151) and on control, so the relay
-	# registers registerDisabledImageRoute, which refuses in `onRequest` BEFORE the
-	# body is parsed, and control refuses to mint an image ticket at all. The
-	# request now reaches a service that says 503 media_disabled -- exactly what
-	# Hetzner says today -- instead of a proxy that says 404. Enabling it is three
-	# further coordinated changes (control flag, relay flag + its generator, then
-	# this file), and because the relay enforces the flag server-side, an edge-only
-	# change cannot open it by accident.
+	# Both media surfaces are ticket-authenticated relay routes. The edge strips
+	# reusable credentials below, so only the single-use ticket and request body
+	# enter the attested content tier. Neither is a static-key compat route.
 	@relay {
 		method POST GET
-		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/models /v1/images/generations
+		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/models /v1/images/generations /v1/audio/speech
 	}
 	handle @relay {
 		reverse_proxy relay:3000 {

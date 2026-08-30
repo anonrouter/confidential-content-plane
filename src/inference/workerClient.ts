@@ -12,7 +12,8 @@ import {
   type ModelRecord,
   type ProviderDispatchAuthorization,
   type ProviderRequest,
-  type ProviderSignatureBinding
+  type ProviderSignatureBinding,
+  type SpeechProviderRequest
 } from "../providers/types.js";
 import type { EmbeddingProviderRequest } from "../providers/embeddings.js";
 import { AppError, ProviderError } from "../security/errors.js";
@@ -33,6 +34,8 @@ import type {
   WorkerEmbeddingResult,
   WorkerImageRequest,
   WorkerImageResult,
+  WorkerSpeechRequest,
+  WorkerSpeechResult,
   WorkerOpaqueE2eeRequest,
   WorkerOpaqueE2eeResult,
   ProviderDispatchAttempt,
@@ -153,6 +156,43 @@ function toImageProviderRequest(
       imageWidth: request.width,
       imageHeight: request.height,
       imageResponseFormat: request.responseFormat
+    }, signal)
+  };
+}
+
+/**
+ * Speech mirrors image: single-shot, no chat token/output semantics, and the
+ * bound provider-work facts are the exact character count, voice, and container
+ * the ticket authorized (and control priced). The worker re-reports them so
+ * control can reject any post-authorization tampering at the durable fence.
+ */
+function toSpeechProviderRequest(
+  request: WorkerSpeechRequest,
+  providerAttemptFence: ProviderAttemptFence,
+  signal?: AbortSignal
+): SpeechProviderRequest {
+  return {
+    requestId: request.requestId,
+    model: stubModel(request, "tts"),
+    input: request.input,
+    voice: request.voice,
+    responseFormat: request.responseFormat,
+    signal,
+    onProviderAttempt: () => providerAttemptFence({
+      dispatchToken: request.dispatchToken,
+      requestId: request.requestId,
+      operation: "speech",
+      providerName: request.providerName,
+      externalModelId: request.externalModelId,
+      stream: false,
+      effectiveMaxOutputTokens: 0,
+      reasoningKey: "default",
+      providerReasoningKey: "default",
+      // The count the worker is actually about to send, not a value it was
+      // told: this is what makes the fence a real check on the charge.
+      speechCharacterCount: request.input.length,
+      speechVoice: request.voice,
+      speechResponseFormat: request.responseFormat
     }, signal)
   };
 }
@@ -316,6 +356,17 @@ export class InProcessWorkerClient implements WorkerClient {
       blurred: result.blurred,
       contentViolation: result.contentViolation
     };
+  }
+
+  async generateSpeech(request: WorkerSpeechRequest, signal?: AbortSignal): Promise<WorkerSpeechResult> {
+    const adapter = this.registry.adapterFor(request.providerName);
+    if (!adapter.speech) {
+      throw new AppError(503, "provider_unavailable", "Provider does not support speech generation");
+    }
+    const result = await adapter.speech(toSpeechProviderRequest(request, this.providerAttemptFence, signal));
+    // Audio crosses the worker -> relay RPC as base64 in JSON, exactly as image
+    // bytes do. It is never logged and never reaches the control plane.
+    return { audioBase64: result.audio.toString("base64"), mimeType: result.mimeType };
   }
 
   async stream(request: WorkerChatRequest, signal?: AbortSignal): Promise<WorkerStreamResult> {
@@ -652,6 +703,17 @@ export class HttpWorkerClient implements WorkerClient {
     return (await response.json()) as WorkerImageResult;
   }
 
+  async generateSpeech(request: WorkerSpeechRequest, signal?: AbortSignal): Promise<WorkerSpeechResult> {
+    const response = await fetch(this.endpoint("speech"), {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(request),
+      signal
+    });
+    if (!response.ok) throw await workerProviderError(response, "worker_speech_failed");
+    return (await response.json()) as WorkerSpeechResult;
+  }
+
   async stream(request: WorkerChatRequest, signal?: AbortSignal): Promise<WorkerStreamResult> {
     const response = await this.send(this.endpoint("stream"), request, signal);
     if (!response.ok) throw await workerProviderError(response, "worker_stream_failed");
@@ -728,6 +790,10 @@ export class RoutedWorkerClient implements WorkerClient {
 
   generateImage(request: WorkerImageRequest, signal?: AbortSignal) {
     return this.forProvider(request.providerName).generateImage(request, signal);
+  }
+
+  generateSpeech(request: WorkerSpeechRequest, signal?: AbortSignal) {
+    return this.forProvider(request.providerName).generateSpeech(request, signal);
   }
 
   stream(request: WorkerChatRequest, signal?: AbortSignal) {

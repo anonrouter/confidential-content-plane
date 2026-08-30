@@ -17,6 +17,15 @@ export const IMAGE_DEFAULT_SIZE = "1024x1024";
 export const IMAGE_DEFAULT_RESPONSE_FORMAT = "b64_json";
 
 /**
+ * Canonical speech bounds shared by the ticket mint and the relay route. The
+ * character cap is the billing bound as well as the request bound: speech is
+ * priced per character, so this is the maximum a single generation can cost.
+ */
+export const SPEECH_MAX_INPUT_CHARS = 20_000;
+export const SPEECH_MAX_VOICE_CHARS = 64;
+export const SPEECH_DEFAULT_RESPONSE_FORMAT = "mp3";
+
+/**
  * Parse an OpenAI-style "WIDTHxHEIGHT" size into bounded integer dimensions.
  * Every image surface (ticket mint, relay body validation, monolith route)
  * must derive width/height with this exact function so a bound ticket and a
@@ -495,9 +504,9 @@ export type ImageGenerationRequestBody = z.infer<typeof imageGenerationRequestSc
 export const speechRequestSchema = z
   .object({
     model: z.string().min(1).max(256),
-    input: z.string().min(1).max(20_000),
-    voice: z.string().min(1).max(64).optional(),
-    response_format: z.literal("mp3").optional().default("mp3")
+    input: z.string().min(1).max(SPEECH_MAX_INPUT_CHARS),
+    voice: z.string().min(1).max(SPEECH_MAX_VOICE_CHARS).optional(),
+    response_format: z.literal(SPEECH_DEFAULT_RESPONSE_FORMAT).optional().default(SPEECH_DEFAULT_RESPONSE_FORMAT)
   })
   .strict();
 
@@ -534,6 +543,16 @@ export interface SpeechProviderRequest {
   model: ModelRecord;
   input: string;
   voice?: string;
+  responseFormat?: string;
+  /** In-memory cancellation only; aborts the upstream fetch on disconnect/timeout. */
+  signal?: AbortSignal;
+  /**
+   * Worker-only durable dispatch fence, identical in discipline to image. The
+   * adapter MUST await this immediately before the upstream speech fetch, so a
+   * transport failure before it stays a zero-cost abort. The response may name
+   * which provider credential this dispatch must use.
+   */
+  onProviderAttempt?: () => Promise<ProviderDispatchAuthorization | void>;
 }
 
 export interface SpeechProviderResult {

@@ -4,8 +4,8 @@
     "src/contentPlane.ts"
   ],
   "note": "Candidate export for owner review. NOT published. The source set is the compile-time module closure of the content-plane entry point, so it cannot disagree with what the image actually runs. `files` is every file in the export except this manifest, which cannot contain its own hash; it therefore includes the generated build inputs.",
-  "runtimeClosureFiles": 109,
-  "compileClosureFiles": 117,
+  "runtimeClosureFiles": 110,
+  "compileClosureFiles": 118,
   "controlPlaneLeakage": [],
   "excludedTestSuites": [],
   "monorepoOnlySuites": [
@@ -26,14 +26,14 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 156,
+  "copiedSourceFiles": 157,
   "generatedFiles": 7,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "dstack-ingress",
     "node-base-image"
   ],
-  "fileCount": 163,
+  "fileCount": 164,
   "files": [
     {
       "path": ".dockerignore",
@@ -42,18 +42,18 @@
     },
     {
       "path": ".github/workflows/finalize.yml",
-      "sha256": "8b00b88f11ce1ee067eb7c22340abf8bf090777ab701938dfe251109c3b58727",
-      "bytes": 12180
+      "sha256": "72317871694ca678bf735d87884fb5f9bf6f8e4e7849dbc4545fed17fa5b7bb6",
+      "bytes": 13013
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "9b7b48b0adbfeeafa739224cb1cab0db37f37676bf416c38f534898ea372d328",
-      "bytes": 16229
+      "sha256": "4836ee5cd34251fe893cf8253ea4e5919695db0de743e4b8acfcb6425c8bdf38",
+      "bytes": 19148
     },
     {
       "path": ".github/workflows/verify-chain.yml",
-      "sha256": "7ecab2827e5752aedebc75b733f8be38b97f4ccfe5bc8c1685c9d24a0fdd41b0",
-      "bytes": 15805
+      "sha256": "e73c22bc362c143c003b2a9b08d5cfd01386e99bcad5fe29d3b6da301294a8e8",
+      "bytes": 16363
     },
     {
       "path": "Dockerfile",
@@ -77,8 +77,8 @@
     },
     {
       "path": "deploy/phala/docker-compose.production.yml",
-      "sha256": "a816fcbcd93e5712d010f76e8e2ab0be96ac6383cc9c60f170b871f658f81e02",
-      "bytes": 21195
+      "sha256": "e1dbdaf48276771edea5a5b00085d5437838fd1979c050ccf10669d89494e699",
+      "bytes": 21234
     },
     {
       "path": "deploy/phala/egress/venice-haproxy.cfg",
@@ -87,8 +87,8 @@
     },
     {
       "path": "deploy/phala/images/edge/Caddyfile",
-      "sha256": "18a398935221bd11fd89b03dc32a4fc41ebda0ac7fa0ae0384616d25e134c46c",
-      "bytes": 9374
+      "sha256": "e0600d623002b7c288b2938061dbea3fac5531f9278244231642b40ceadede49",
+      "bytes": 6903
     },
     {
       "path": "deploy/phala/images/egress/haproxy.cfg",
@@ -157,8 +157,8 @@
     },
     {
       "path": "src/config.ts",
-      "sha256": "015ae4e091805d229c3557d0ca06344ba12779e85fe7b00a32b1049e90bf2c13",
-      "bytes": 115876
+      "sha256": "281a6d5d13edb2997f21f46613bdb8fd2d10712dbadde248baafb448f8c3f027",
+      "bytes": 117779
     },
     {
       "path": "src/contentDecorators.ts",
@@ -242,8 +242,8 @@
     },
     {
       "path": "src/httpBase.ts",
-      "sha256": "11121d103f5405085a8c27603cd9ed32e460542dfad645e8258917bc305c8184",
-      "bytes": 12085
+      "sha256": "ecb80cfb152f6529684497d6390186783f0967baf8f1e0f1fa6fb8770809ced0",
+      "bytes": 12298
     },
     {
       "path": "src/ids.ts",
@@ -272,8 +272,8 @@
     },
     {
       "path": "src/inference/inlineTicket.ts",
-      "sha256": "9153a452e44874a8204d63da1526e78277d363a649b42e950022669df64cc42e",
-      "bytes": 3820
+      "sha256": "e20538681c0d087dcabfcf40d21898254029463bf82f1a03d749e377f636d429",
+      "bytes": 3875
     },
     {
       "path": "src/inference/opaqueReceipt.ts",
@@ -297,8 +297,8 @@
     },
     {
       "path": "src/inference/rpc.ts",
-      "sha256": "5de3ad4e04d88e070c32b0145644e39490000deac8347cafa291c201a20b811a",
-      "bytes": 21038
+      "sha256": "e551fcacda9f35d6d77aa70263df31308220459d6d3071460bf616686c245919",
+      "bytes": 22358
     },
     {
       "path": "src/inference/streamTiming.ts",
@@ -307,18 +307,18 @@
     },
     {
       "path": "src/inference/ticketRequestSchema.ts",
-      "sha256": "29bfd1a8d15672d0f5c2140722e59152e40f9840c7be71e8a383eb9cd3302586",
-      "bytes": 2875
+      "sha256": "9eeeb93ec27026dda00f2cb1124588c87ad0300e63e231b50ea301ab241c81a2",
+      "bytes": 3807
     },
     {
       "path": "src/inference/tickets.ts",
-      "sha256": "c54a1ffa5cec640426cd68c463a67a2d6d7b5052a755642f66214382edd3340a",
-      "bytes": 12388
+      "sha256": "391e652b9418429901acf2a5a2da49f00d512e3c2eebaa53f4fd0a8187e50d06",
+      "bytes": 14093
     },
     {
       "path": "src/inference/workerClient.ts",
-      "sha256": "72b5979c6a4b0653fddf12b0008eec9b915aaced7baa401788a00a87e231e433",
-      "bytes": 36650
+      "sha256": "fe32955a223c4650163edf0af85a88d3af84240027b4f76662773d7aec5d8d91",
+      "bytes": 39334
     },
     {
       "path": "src/logger.ts",
@@ -567,8 +567,8 @@
     },
     {
       "path": "src/providers/mock.ts",
-      "sha256": "d2641adfa8b083a8feadce666fbe60ec9b9253dff79cea284d1f129d5645e7d8",
-      "bytes": 5327
+      "sha256": "fe992943c3bb4401d3faca0d5a898607fac5a35ef8a0fc517692a6903ef3aa28",
+      "bytes": 6316
     },
     {
       "path": "src/providers/modelSlug.ts",
@@ -617,13 +617,13 @@
     },
     {
       "path": "src/providers/types.ts",
-      "sha256": "b333591c8b984f998f309e46b0d8f883f374c55672b32be7afa24f8b977bbb50",
-      "bytes": 25572
+      "sha256": "80053cef1e18ed9d701985fadc86a81524bc2d7a207e150dcc64d4a3b0777da1",
+      "bytes": 26561
     },
     {
       "path": "src/providers/venice.ts",
-      "sha256": "fd4a980623d9dea49c0f0dd19fedc12a19be2e0504099362b15cd6a391621cc1",
-      "bytes": 22495
+      "sha256": "a0d3d61a2a01ffd529a0098c529df66327b662f484684497b2333670dfc94971",
+      "bytes": 23023
     },
     {
       "path": "src/providers/veniceKeyStore.ts",
@@ -652,13 +652,13 @@
     },
     {
       "path": "src/relay/ingress.ts",
-      "sha256": "9144f16110b7548c2e100306ee5d7d94fad92c34ff3d760eeb36641ad8f1d55e",
-      "bytes": 17006
+      "sha256": "1d5f0a94c5def7a6edfd5654bae9c3f2e1f2add0b27d5052e25ed9eb8c71635f",
+      "bytes": 18031
     },
     {
       "path": "src/roles.ts",
-      "sha256": "b9debe358d41b042cc5e82ef64bfdb2242010ae9408c556a3ad382fe3ab9c714",
-      "bytes": 18145
+      "sha256": "a3207911ce13152cfd9b5210b1fc6ef881767069482bee0c4a8005955c6a87bf",
+      "bytes": 18529
     },
     {
       "path": "src/routes/chat.ts",
@@ -702,8 +702,8 @@
     },
     {
       "path": "src/routes/internal/rpcSchemas.ts",
-      "sha256": "32863af72febf41cf5b8e73f7e6a2962f3f8ca364c04485302264ea02ad29f5d",
-      "bytes": 14482
+      "sha256": "e9d2919125ad4bdc5323fd96a3aab85e454926208fb4a3bf3f5b79c77e12f650",
+      "bytes": 14918
     },
     {
       "path": "src/routes/internal/serviceAuth.ts",
@@ -712,8 +712,8 @@
     },
     {
       "path": "src/routes/internal/worker.ts",
-      "sha256": "b494824df2c7637f3494210b109bb4b0c26020daa845986e218827ee333b1ea8",
-      "bytes": 15322
+      "sha256": "378d45279c16c637ba9ca9d3b5fad2e296f3d440715c77d31b2412cf10c467b4",
+      "bytes": 16700
     },
     {
       "path": "src/routes/mediaDisabled.ts",
@@ -724,6 +724,11 @@
       "path": "src/routes/opaqueE2ee.ts",
       "sha256": "7a9548178ac7e6dd7bf8ae0b6fb93eb4fe900a9e3d52f6abbe4988a499db81bd",
       "bytes": 9148
+    },
+    {
+      "path": "src/routes/speech.ts",
+      "sha256": "187d2e1d839a96057e7d7a4925ec5956362d8f8d2141ab35fc24924ba9d767a7",
+      "bytes": 9345
     },
     {
       "path": "src/routes/teeReceipt.ts",
@@ -832,8 +837,8 @@
     },
     {
       "path": "tests/unit/rpc-boundary-contract.test.ts",
-      "sha256": "3e502a4de46772e4f1ce90909b2ef9ca84349b84be756ba45a7432ac6a0f0a9a",
-      "bytes": 15142
+      "sha256": "758d71c2a5de1e3e71379345d56bd81d492635af10b428c4b40a7167afc0bfe0",
+      "bytes": 15369
     },
     {
       "path": "tests/unit/third-party-provenance.test.ts",

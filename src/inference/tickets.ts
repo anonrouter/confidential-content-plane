@@ -38,7 +38,18 @@ return 1
 `;
 
 export type TicketStatus = "issued" | "redeemed" | "consumed";
-export type InferenceOperation = "chat" | "embeddings" | "image";
+export type InferenceOperation = "chat" | "embeddings" | "image" | "speech";
+
+/**
+ * The content-free speech work parameters a ticket binds. `inputChars` is the
+ * exact length of the text the caller will send: it is the priced unit, so
+ * binding it is what makes the reservation exact. It is a count, never text.
+ */
+export interface SpeechWorkParameters {
+  inputChars: number;
+  voice: string | null;
+  responseFormat: string;
+}
 
 export interface TicketBinding {
   /** Private: only the control plane reads these. */
@@ -90,6 +101,17 @@ export interface TicketBinding {
   imageHeight: number | null;
   imageResponseFormat: string | null;
   /**
+   * Speech-only provider-work parameters bound at issue time, mirroring the
+   * image fields. `speechCharacterCount` is the EXACT character count the caller
+   * will send: text-to-speech is priced per character, so the count is what
+   * makes the reservation exact (reserve == settle, as for a flat-priced
+   * image). It is a content-free scalar — a length, never the text. Null for
+   * non-speech operations.
+   */
+  speechCharacterCount: number | null;
+  speechVoice: string | null;
+  speechResponseFormat: string | null;
+  /**
    * Canonical reasoning selection digest ("default" | "disabled" |
    * "effort:<level>", see src/inference/reasoning.ts). Bound at issue time so a
    * redeeming request cannot escalate or change the authorized reasoning
@@ -120,6 +142,9 @@ export interface TicketPublicConstraints {
   imageWidth: number | null;
   imageHeight: number | null;
   imageResponseFormat: string | null;
+  speechCharacterCount: number | null;
+  speechVoice: string | null;
+  speechResponseFormat: string | null;
 }
 
 const redeemScript = `
@@ -184,7 +209,9 @@ function bindingFromHash(hash: Record<string, string>): TicketBinding {
       ? "embeddings"
       : hash.operation === "image"
         ? "image"
-        : "chat",
+        : hash.operation === "speech"
+          ? "speech"
+          : "chat",
     providerName: hash.providerName,
     publicModelId: hash.publicModelId,
     canonicalModelId: hash.canonicalModelId || hash.publicModelId,
@@ -206,6 +233,13 @@ function bindingFromHash(hash: Record<string, string>): TicketBinding {
     imageResponseFormat: hash.imageResponseFormat === "" || hash.imageResponseFormat === undefined
       ? null
       : hash.imageResponseFormat,
+    speechCharacterCount: hash.speechCharacterCount === "" || hash.speechCharacterCount === undefined
+      ? null
+      : Number(hash.speechCharacterCount),
+    speechVoice: hash.speechVoice === "" || hash.speechVoice === undefined ? null : hash.speechVoice,
+    speechResponseFormat: hash.speechResponseFormat === "" || hash.speechResponseFormat === undefined
+      ? null
+      : hash.speechResponseFormat,
     reasoningKey: hash.reasoningKey || "default",
     planJson: hash.planJson ?? "{}",
     routingPreferencesJson: hash.routingPreferencesJson ?? "{}",
@@ -243,6 +277,9 @@ export async function issueTicket(redis: Redis, binding: TicketBinding): Promise
     "imageWidth", binding.imageWidth === null ? "" : String(binding.imageWidth),
     "imageHeight", binding.imageHeight === null ? "" : String(binding.imageHeight),
     "imageResponseFormat", binding.imageResponseFormat ?? "",
+    "speechCharacterCount", binding.speechCharacterCount === null ? "" : String(binding.speechCharacterCount),
+    "speechVoice", binding.speechVoice ?? "",
+    "speechResponseFormat", binding.speechResponseFormat ?? "",
     "reasoningKey", binding.reasoningKey,
     "planJson", binding.planJson,
     "routingPreferencesJson", binding.routingPreferencesJson,

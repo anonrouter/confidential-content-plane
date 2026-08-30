@@ -38,7 +38,7 @@
 // unscoped" is not a state any content-tier route should be able to construct.
 
 import type { FastifyRequest } from "fastify";
-import type { InferenceOperation } from "./tickets.js";
+import type { InferenceOperation, SpeechWorkParameters } from "./tickets.js";
 import type { ReasoningSelection } from "./reasoning.js";
 import type { RedeemResult } from "./rpc.js";
 import type { ProviderRoutingPolicyInput } from "../providers/routing/policy.js";
@@ -56,6 +56,7 @@ export interface InlineTicketParams {
   operation?: InferenceOperation;
   reasoning?: ReasoningSelection;
   image?: { width: number; height: number; responseFormat: string };
+  speech?: SpeechWorkParameters;
   /** Explicit E2EE serving modality intent (dual-privacy models). */
   e2ee?: boolean;
 }

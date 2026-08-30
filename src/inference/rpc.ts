@@ -40,6 +40,10 @@ export interface RelayTicketConstraints {
   imageWidth?: number | null;
   imageHeight?: number | null;
   imageResponseFormat?: string | null;
+  /** Speech-only: bound provider-work parameters the relay validates the body against. */
+  speechCharacterCount?: number | null;
+  speechVoice?: string | null;
+  speechResponseFormat?: string | null;
   routingPreferences: RoutingPreferences;
   /** Trial-entitlement-funded request: the relay enforces the text-only surface. */
   trial?: boolean;
@@ -214,6 +218,14 @@ export interface ProviderDispatchAttempt {
   imageWidth?: number;
   imageHeight?: number;
   imageResponseFormat?: string;
+  /**
+   * Speech-only equivalents. `speechCharacterCount` is the exact character count the
+   * worker is about to send upstream, which is the priced unit — matching it
+   * against the grant is what stops a post-authorization change to the charge.
+   */
+  speechCharacterCount?: number;
+  speechVoice?: string;
+  speechResponseFormat?: string;
 }
 
 export interface SettleRpcRequest {
@@ -452,6 +464,28 @@ export interface WorkerImageResult {
 }
 
 /**
+ * Tagged, operation-specific speech request. Like image it carries only the
+ * content (here the input text) and the ticket-bound provider-work parameters,
+ * and reuses no chat token/output semantics. The relay holds the text and
+ * forwards it here; the text never reaches the control plane.
+ */
+export interface WorkerSpeechRequest {
+  dispatchToken: string;
+  requestId: string;
+  providerName: string;
+  externalModelId: string;
+  input: string;
+  voice?: string;
+  responseFormat: string;
+}
+
+export interface WorkerSpeechResult {
+  /** Base64 audio bytes (no data: prefix). Never crosses to the control plane. */
+  audioBase64: string;
+  mimeType: string;
+}
+
+/**
  * Synthetic health probe: a one-token inference sent purely to confirm a model
  * responds. It carries no ticket, no dispatch fence, and no billing — the whole
  * point is a cheap liveness signal for models that get little real traffic.
@@ -477,6 +511,7 @@ export interface WorkerClient {
   chat(request: WorkerChatRequest, signal?: AbortSignal): Promise<WorkerChatResult>;
   embeddings?(request: WorkerEmbeddingRequest, signal?: AbortSignal): Promise<WorkerEmbeddingResult>;
   generateImage?(request: WorkerImageRequest, signal?: AbortSignal): Promise<WorkerImageResult>;
+  generateSpeech?(request: WorkerSpeechRequest, signal?: AbortSignal): Promise<WorkerSpeechResult>;
   stream(request: WorkerChatRequest, signal?: AbortSignal): Promise<WorkerStreamResult>;
   /** Whole-body client ciphertext relay. Optional so workers that do not expose
    * a native opaque transport fail closed instead of accepting a JSON fallback. */

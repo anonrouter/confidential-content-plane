@@ -20,12 +20,14 @@ const IMAGE_PATH = "/v1/images/generations";
  * serialized socket. Admitted here, but never ticket-redeemed.
  */
 const GATEWAY_ATTESTATION_PATH = "/v1/gateway/attestation";
+const SPEECH_PATH = "/v1/audio/speech";
 
 interface RelayIngressContext {
   signal: AbortSignal;
   chatRedemption?: RedeemResult;
   embeddingRedemption?: RedeemResult;
   imageRedemption?: RedeemResult;
+  speechRedemption?: RedeemResult;
   attestationRedemption?: AttestationRedemption;
 }
 
@@ -305,6 +307,8 @@ function isNoncanonicalProtectedPath(path: string): boolean {
     || lower.startsWith(`${ATTESTATION_PATH}%2f`)
     || lower.startsWith(`${IMAGE_PATH}/`)
     || lower.startsWith(`${IMAGE_PATH}%2f`)
+    || lower.startsWith(`${SPEECH_PATH}/`)
+    || lower.startsWith(`${SPEECH_PATH}%2f`)
     || lower.startsWith(`${OPAQUE_E2EE_CHAT_PATH}/`)
     || lower.startsWith(`${OPAQUE_E2EE_CHAT_PATH}%2f`);
 }
@@ -334,11 +338,16 @@ export function registerRelayIngressGuard(
     // is on. With the flag off the relay serves a 503 stub at that path, so the
     // ingress must NOT intercept it (a flag-off request has no image ticket).
     const imageProtected = server.config.internal?.imageGenerationEnabled === true && path === IMAGE_PATH;
+    // Same rule as image: speech is a protected ticket path only when its flag
+    // is on. With the flag off the relay serves a 503 stub there, so the ingress
+    // must NOT intercept it (a flag-off request has no speech ticket).
+    const speechProtected = server.config.internal?.speechGenerationEnabled === true && path === SPEECH_PATH;
     const exactProtectedPath = path === CHAT_PATH
       || path === OPAQUE_E2EE_CHAT_PATH
       || path === EMBEDDINGS_PATH
       || path === ATTESTATION_PATH
-      || imageProtected;
+      || imageProtected
+      || speechProtected;
     const noncanonicalProtectedPath = isNoncanonicalProtectedPath(path);
     const gatewayAttestationPath = path === GATEWAY_ATTESTATION_PATH;
     if (!exactProtectedPath && !noncanonicalProtectedPath && !gatewayAttestationPath) return;
@@ -404,6 +413,13 @@ export function registerRelayIngressGuard(
         throw new AppError(409, "ticket_operation_mismatch", "Ticket is not valid for image generation");
       }
       ingressContexts.set(request, { signal, imageRedemption });
+    } else if (path === SPEECH_PATH) {
+      const speechRedemption = await server.controlClient.redeem(ticket, signal);
+      if (!speechRedemption) throw new AppError(401, "invalid_ticket", "Inference ticket is invalid or expired");
+      if ((speechRedemption.constraints.operation ?? "chat") !== "speech") {
+        throw new AppError(409, "ticket_operation_mismatch", "Ticket is not valid for speech generation");
+      }
+      ingressContexts.set(request, { signal, speechRedemption });
     } else {
       const attestationRedemption = await server.controlClient.redeemAttestation(ticket, signal);
       if (!attestationRedemption) {
