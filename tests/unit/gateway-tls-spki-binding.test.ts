@@ -26,7 +26,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { GatewayAttestationService } from "../../src/gateway/service.js";
-import { TlsIdentityObserver } from "../../src/gateway/tlsObservation.js";
+import { TlsIdentityObserver, type TlsObservation } from "../../src/gateway/tlsObservation.js";
 import type { DstackGateway } from "../../src/gateway/dstackClient.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -48,20 +48,26 @@ function gateway(): DstackGateway {
   } as unknown as DstackGateway;
 }
 
-const observerYielding = (spki: string): TlsIdentityObserver =>
-  new TlsIdentityObserver({ host: "edge", port: 8443 }, 30_000, async () => ({
-    spkiSha256: spki,
-    certSha256: "11".repeat(32),
-    subject: "CN=edge",
-    validToMs: Date.now() + 3_600_000,
-    observedAtMs: Date.now()
-  }));
+/**
+ * A handshake that always yields the same key, whatever name is requested.
+ *
+ * The seam is the OBSERVATION rather than a prebuilt observer, so the SNI the
+ * service chooses stays on the tested path. `observerBySni` below is the same
+ * seam used to prove the choice is per origin.
+ */
+const observerYielding = (spki: string): TlsObservation => async () => ({
+  spkiSha256: spki,
+  certSha256: "11".repeat(32),
+  subject: "CN=edge",
+  validToMs: Date.now() + 3_600_000,
+  observedAtMs: Date.now()
+});
 
 describe("attested TLS SPKI is observed, not asserted", () => {
   it("binds the SPKI of the certificate the terminator actually served", async () => {
     const observed = "ab".repeat(32);
     const service = new GatewayAttestationService(gateway(), {
-      origin: "https://example.invalid",
+      origins: ["https://example.invalid"],
       releaseId: "r@1",
       transport: "in-tee-tls",
       tlsTerminator: { host: "edge", port: 8443 }
@@ -76,11 +82,11 @@ describe("attested TLS SPKI is observed, not asserted", () => {
     // not produce a document at all. Emitting one with a null or stale
     // fingerprint would let a verifier that requires in-TEE TLS pass against a
     // deployment that is not currently terminating anything.
-    const failing = new TlsIdentityObserver({ host: "edge", port: 8443 }, 30_000, async () => {
+    const failing: TlsObservation = async () => {
       throw new Error("connection refused");
-    });
+    };
     const service = new GatewayAttestationService(gateway(), {
-      origin: "https://example.invalid",
+      origins: ["https://example.invalid"],
       releaseId: "r@1",
       transport: "in-tee-tls",
       tlsTerminator: { host: "edge", port: 8443 }
@@ -91,7 +97,7 @@ describe("attested TLS SPKI is observed, not asserted", () => {
 
   it("refuses to claim in-TEE TLS with no terminator to observe", async () => {
     const service = new GatewayAttestationService(gateway(), {
-      origin: "https://example.invalid",
+      origins: ["https://example.invalid"],
       releaseId: "r@1",
       transport: "in-tee-tls",
       tlsTerminator: null
@@ -104,7 +110,7 @@ describe("attested TLS SPKI is observed, not asserted", () => {
     // because naming a certificate you do not terminate is the ambiguity the
     // binding exists to remove.
     const service = new GatewayAttestationService(gateway(), {
-      origin: "https://example.invalid",
+      origins: ["https://example.invalid"],
       releaseId: "r@1",
       transport: "gateway-tls",
       tlsTerminator: null

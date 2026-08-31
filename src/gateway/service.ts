@@ -20,7 +20,7 @@ import {
   type GatewayTransportBinding
 } from "./binding.js";
 import { createDstackGateway, type DstackGateway } from "./dstackClient.js";
-import { TlsIdentityObserver } from "./tlsObservation.js";
+import { TlsIdentityObserver, type TlsObservation } from "./tlsObservation.js";
 
 /**
  * HKDF info string for the published application key. Versioned in the info
@@ -64,8 +64,27 @@ export interface GatewayAttestationDocument {
 }
 
 export interface GatewayAttestationConfig {
-  /** Public origin clients connect to, canonical scheme://host[:port]. */
-  origin: string;
+  /**
+   * Every public origin this workload serves, canonical scheme://host[:port],
+   * CANONICAL FIRST.
+   *
+   * A LIST RATHER THAN ONE VALUE, and the reason is a certificate fact rather
+   * than a preference. The content plane serves the restored
+   * `https://api.anonrouter.ai` base URL and keeps
+   * `https://api.private.anonrouter.ai` as the verification alias.
+   * `dstack-ingress` issues a SEPARATE certificate per name and selects it by
+   * SNI, so the two names have different SPKIs. The binding carries exactly one
+   * origin and one SPKI, so a document must describe the connection the caller
+   * actually made -- otherwise a verifier on the alias observes one key while
+   * the quote names another, and fails closed on a correctly configured
+   * deployment.
+   *
+   * NOTHING HERE WIDENS WHAT A CLIENT WILL ACCEPT. The verifier compares
+   * `binding.origin` against its OWN connection and against a policy that is
+   * distributed with the client, never fetched from this server. This list only
+   * decides which of several true statements the TD makes.
+   */
+  origins: readonly string[];
   /** Reviewed release identifier for this build. */
   releaseId: string;
   /** Whether the TD owns the TLS session the caller is using. */
@@ -80,10 +99,50 @@ export interface GatewayAttestationConfig {
    * client would observe that SPKI, the quote would repeat it, the comparison
    * would pass, and the TD would have attested to owning a key it had never
    * seen. Required whenever transport is `in-tee-tls`.
+   *
+   * NO `servername` FIELD. The SNI is derived from the origin being bound, so
+   * the observed certificate is always the one that origin is served with. A
+   * configurable servername would be a second place for the name to live and
+   * the two would drift, which on this path means attesting to the wrong key.
    */
-  tlsTerminator: { host: string; port: number; servername?: string } | null;
+  tlsTerminator: { host: string; port: number } | null;
   /** Optional explicit guest-agent endpoint (socket path or simulator URL). */
   dstackEndpoint?: string;
+}
+
+/**
+ * A caller's `Host` header resolved to one of the origins this TD serves.
+ *
+ * WHY THE HOST HEADER IS SAFE TO READ HERE, given a client controls it. It
+ * SELECTS among origins that are already approved; it cannot introduce one. An
+ * unrecognised value falls back to the canonical origin rather than being
+ * echoed, so nothing a caller writes reaches the binding.
+ *
+ * And a forged selection does not help the forger: the verifier supplies the
+ * origin IT connected to as `expectations.origin` and requires equality with
+ * `binding.origin`, so a document naming the wrong one fails at the client. The
+ * Host header decides which true statement to make, and the client checks that
+ * the statement is about its own connection.
+ */
+export function selectAttestedOrigin(origins: readonly string[], host: string | undefined): string {
+  const canonical = origins[0];
+  if (!canonical) {
+    throw new GatewayAttestationUnavailable("no public origin is configured for attestation");
+  }
+  const requested = host?.trim().toLowerCase();
+  if (!requested) return canonical;
+  // Compare on host[:port], which is exactly what a Host header carries and what
+  // `URL.host` yields. Comparing hostname alone would let :8443 match :443.
+  for (const origin of origins) {
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      continue;
+    }
+    if (parsed.host.toLowerCase() === requested) return origin;
+  }
+  return canonical;
 }
 
 const NOTE = [
@@ -107,45 +166,75 @@ export class GatewayAttestationService {
   private identity: GatewayIdentity | null = null;
   private appPublicKeyHex: string | null = null;
   private identityLoad: Promise<GatewayIdentity> | null = null;
-  private readonly tlsObserver: TlsIdentityObserver | null;
+  /**
+   * One observer per attested origin, keyed by origin.
+   *
+   * PER ORIGIN, because each name is served its own certificate. A single
+   * shared observer would cache one SPKI and report it for every name, which is
+   * the exact failure this split exists to prevent: the alias would attest to
+   * the canonical name's key and every verifier that observes its own
+   * connection would fail closed against a correctly configured deployment.
+   */
+  private readonly tlsObservers = new Map<string, TlsIdentityObserver>();
 
   constructor(
     private readonly gateway: DstackGateway,
     private readonly config: GatewayAttestationConfig,
     /**
-     * Test seam. Production always builds the observer from the measured
-     * terminator address below; a caller supplying one cannot express anything
-     * a real handshake could not, because an observer still has to produce an
-     * SPKI from somewhere.
+     * Test seam: the handshake itself, not a prebuilt observer.
+     *
+     * IT MOVED DOWN A LEVEL ON PURPOSE. The seam used to be a whole
+     * `TlsIdentityObserver`, which was fine while there was one certificate.
+     * With one certificate per name, a single injected observer would answer
+     * for every origin, so a test could not tell a per-origin SNI from a baked
+     * one -- and the defect this split exists to prevent is exactly a baked
+     * SNI. Injecting the observation function keeps the per-origin observers,
+     * and their SNI, on the tested path.
+     *
+     * A caller supplying one still cannot express anything a real handshake
+     * could not: an observation has to produce an SPKI from somewhere.
      */
-    observer?: TlsIdentityObserver
-  ) {
-    this.tlsObserver = observer ?? (config.tlsTerminator
-      ? new TlsIdentityObserver({
-        host: config.tlsTerminator.host,
-        port: config.tlsTerminator.port,
-        servername: config.tlsTerminator.servername
-      })
-      : null);
+    private readonly observe?: TlsObservation
+  ) {}
+
+  /** The observer for one origin, built once and reused. */
+  private observerFor(origin: string): TlsIdentityObserver | null {
+    if (!this.config.tlsTerminator) return null;
+    const existing = this.tlsObservers.get(origin);
+    if (existing) return existing;
+    // SNI IS THE ORIGIN'S OWN HOSTNAME, never a configured constant. This is
+    // what makes the observed key the key that name is actually served with.
+    const created = new TlsIdentityObserver(
+      {
+        host: this.config.tlsTerminator.host,
+        port: this.config.tlsTerminator.port,
+        servername: new URL(origin).hostname
+      },
+      undefined,
+      this.observe
+    );
+    this.tlsObservers.set(origin, created);
+    return created;
   }
 
   /**
-   * The SPKI to bind, or null when this deployment does not claim to own the
-   * transport.
+   * The SPKI to bind for ONE origin, or null when this deployment does not
+   * claim to own the transport.
    *
    * Fails closed. If transport is `in-tee-tls` and the terminator cannot be
    * observed, attestation fails rather than emitting a document with a missing
    * or stale fingerprint: a verifier that requires in-TEE TLS must not be able
    * to pass against a deployment whose TLS endpoint is not answering.
    */
-  private async observedTlsSpki(): Promise<string | null> {
+  private async observedTlsSpki(origin: string): Promise<string | null> {
     if (this.config.transport !== "in-tee-tls") return null;
-    if (!this.tlsObserver) {
+    const observer = this.observerFor(origin);
+    if (!observer) {
       throw new GatewayAttestationUnavailable(
         "transport is in-tee-tls but no TLS terminator address is configured to observe"
       );
     }
-    const observed = await this.tlsObserver.current();
+    const observed = await observer.current();
     return observed.spkiSha256;
   }
 
@@ -209,12 +298,24 @@ export class GatewayAttestationService {
     return this.appPublicKeyHex;
   }
 
-  /** Mint a fresh, nonce-bound attestation document. */
-  async attest(nonce: string, now = Date.now()): Promise<GatewayAttestationDocument> {
+  /**
+   * Mint a fresh, nonce-bound attestation document.
+   *
+   * `requestedHost` is the caller's `Host` header. It selects which of the
+   * origins this TD serves the document describes, and which name's certificate
+   * is observed for the bound SPKI. An unrecognised value falls back to the
+   * canonical origin; see `selectAttestedOrigin` for why that is safe.
+   */
+  async attest(
+    nonce: string,
+    options: { requestedHost?: string; now?: number } = {}
+  ): Promise<GatewayAttestationDocument> {
+    const now = options.now ?? Date.now();
+    const origin = selectAttestedOrigin(this.config.origins, options.requestedHost);
     const [identity, publicKey, tlsSpkiSha256] = await Promise.all([
       this.loadIdentity(),
       this.appPublicKey(),
-      this.observedTlsSpki()
+      this.observedTlsSpki(origin)
     ]);
 
     const binding = normalizeGatewayBinding({
@@ -224,7 +325,7 @@ export class GatewayAttestationService {
       instance_id: identity.instanceId,
       compose_hash: identity.composeHash,
       release_id: this.config.releaseId,
-      origin: this.config.origin,
+      origin,
       key_alg: "x25519",
       public_key: publicKey,
       transport: this.config.transport,

@@ -126,7 +126,7 @@ export async function buildRelayServer(
   // and reports a specific 503 rather than a 404 when no enclave is present.
   const gatewayAttestation = config.internal.gatewayAttestation.enabled
     ? await GatewayAttestationService.create({
-      origin: config.internal.gatewayAttestation.publicOrigin,
+      origins: config.internal.gatewayAttestation.publicOrigins,
       releaseId: config.internal.gatewayAttestation.releaseId,
       transport: config.internal.gatewayAttestation.transport,
       tlsTerminator: config.internal.gatewayAttestation.tlsTerminator,
@@ -220,7 +220,7 @@ export async function buildGatewayAttestationServer(
   // once-per-session call, not a per-request one.
   registerGatewayAttestationIngressGuard(server);
   const service = await GatewayAttestationService.create({
-    origin: config.internal.gatewayAttestation.publicOrigin,
+    origins: config.internal.gatewayAttestation.publicOrigins,
     releaseId: config.internal.gatewayAttestation.releaseId,
     transport: config.internal.gatewayAttestation.transport,
     tlsTerminator: config.internal.gatewayAttestation.tlsTerminator,

@@ -70,7 +70,7 @@ its trust root is whoever can push to that registry repository, not an identity 
 It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
 the image in service came from that commit.
 
-**`dstack-ingress`** Terminates customer TLS inside the trust domain. This is the serving path, not an optional one: every request arrives through it. Deployed at `dstacktee/dstack-ingress:2.2@sha256:d05a7b343c37c1cca1bba8dbf7e8f3c6d2118158af2d41c455103796db4f67f0`.
+**`dstack-ingress`** Terminates customer TLS inside the trust domain. This is the serving path, not an optional one: every request arrives through it. Deployed at `dstacktee/dstack-ingress:2.3@sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe`.
 
 The upstream source is pinned to commit `b1a90408c314b3bccf8aa529585c01de2fe0fa56` and verified file by
 file against that commit's tree (`sha256:e1ebefae81cee3e5018a508cabf62860746c295f11c72861a766a1bdc67073bb`), licence read and

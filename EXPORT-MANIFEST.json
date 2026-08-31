@@ -72,7 +72,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "1431ad02667489f93453763bfe0ef896431a88c25f0b15937c5e7796f03abff5",
+      "sha256": "c2ed193dd9f50f74b840c1a82b3305115e94c117db009dc5a4eaf52702b4222c",
       "bytes": 7694
     },
     {
@@ -87,8 +87,8 @@
     },
     {
       "path": "deploy/phala/images/edge/Caddyfile",
-      "sha256": "e0600d623002b7c288b2938061dbea3fac5531f9278244231642b40ceadede49",
-      "bytes": 6903
+      "sha256": "f727c70d28dbc987692a8f3139980efce8c7acc0011699372f10a23843c778f4",
+      "bytes": 8049
     },
     {
       "path": "deploy/phala/images/egress/haproxy.cfg",
@@ -102,8 +102,8 @@
     },
     {
       "path": "deploy/provenance/plaintext-capable-components.json",
-      "sha256": "e2a0735f9b2cd6a00e20d49ce86d97852625cb0cea4c62b053fb2ae968ab9454",
-      "bytes": 14014
+      "sha256": "62e71e3ca6f6e51d72c5d0f3792ee2aff752a734c8d47f485331cd795280568b",
+      "bytes": 14891
     },
     {
       "path": "docs/publication/INDEPENDENT_VERIFICATION.md",
@@ -162,8 +162,8 @@
     },
     {
       "path": "src/config.ts",
-      "sha256": "281a6d5d13edb2997f21f46613bdb8fd2d10712dbadde248baafb448f8c3f027",
-      "bytes": 117779
+      "sha256": "d36be79cef5db15eb3853b04eb825389cb36b43bc448d4a5e1dba3afb959f27f",
+      "bytes": 119735
     },
     {
       "path": "src/contentDecorators.ts",
@@ -227,13 +227,13 @@
     },
     {
       "path": "src/gateway/service.ts",
-      "sha256": "9daf57bb425918bf135b36ba120eb9f4cb546b82bc8faaaf2dbe6022855fd545",
-      "bytes": 10901
+      "sha256": "d36f5deb61353188aa3e824157208b65bc76853c52cb5715d5462009920b6bb4",
+      "bytes": 15678
     },
     {
       "path": "src/gateway/tlsObservation.ts",
-      "sha256": "25c759c729c09f4fd96e7d64f848776e81c75a645d074b314e418eef48c74811",
-      "bytes": 6254
+      "sha256": "d14e7096c15d4c200ecda805f118cbd1b415d13bf11511076a9725fd5053caef",
+      "bytes": 6734
     },
     {
       "path": "src/gateway/verify.ts",
@@ -662,8 +662,8 @@
     },
     {
       "path": "src/roles.ts",
-      "sha256": "a3207911ce13152cfd9b5210b1fc6ef881767069482bee0c4a8005955c6a87bf",
-      "bytes": 18529
+      "sha256": "b04891be1cc27539802b463aa7ffe85756ee06192720766e3de65fe7297105da",
+      "bytes": 18533
     },
     {
       "path": "src/routes/chat.ts",
@@ -677,8 +677,8 @@
     },
     {
       "path": "src/routes/gatewayAttestation.ts",
-      "sha256": "2401988909c21519624c0fd23dff5ea3d2c99ed94d21e5e3506ab8a283954935",
-      "bytes": 3877
+      "sha256": "71d5a5c53098c351c80a4d7c4819c3944889cd4e45cb83c5754da63aa6b1f3c9",
+      "bytes": 4591
     },
     {
       "path": "src/routes/healthLean.ts",
@@ -822,8 +822,8 @@
     },
     {
       "path": "tests/unit/gateway-tls-spki-binding.test.ts",
-      "sha256": "2ccac080b3cf54b99a6c136af2bcf257bbeb38c68a7696978499dc14a0c0370d",
-      "bytes": 7678
+      "sha256": "63cb55150c08ee2c1193d98294bc83c6314898311bb1caa39d8d4d087aa1cf2d",
+      "bytes": 7875
     },
     {
       "path": "tests/unit/logger-allowlist.test.ts",

@@ -1062,14 +1062,33 @@ function validateCryptoPaymentConfig(params: {
 }
 
 /** `host:port` for the in-CVM TLS terminator the attestation service observes. */
-function parseTlsTerminator(value: string | undefined, servername?: string): { host: string; port: number; servername?: string } | null {
+function parseTlsTerminator(value: string | undefined): { host: string; port: number } | null {
   if (!value) return null;
   const index = value.lastIndexOf(":");
   return {
     host: value.slice(0, index),
-    port: Number(value.slice(index + 1)),
-    ...(servername ? { servername } : {})
+    port: Number(value.slice(index + 1))
   };
+}
+
+/**
+ * The ordered, de-spaced list of public origins this workload may attest to.
+ *
+ * ONE PARSER, because three call sites read this value: the production
+ * validation above, the config object below, and the attestation service's own
+ * assertion that a requested origin is one it serves. Three copies of a split
+ * is how `CORS_ORIGIN` ended up with two of its readers not trimming, which
+ * produced an entry that could never equal an Origin header while every file
+ * involved still read as correct.
+ *
+ * ORDER IS MEANING: the first entry is CANONICAL and is what a document binds
+ * when the caller's Host header names nothing this workload recognises.
+ */
+export function gatewayPublicOrigins(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/\/$/, ""))
+    .filter(Boolean);
 }
 
 /**
@@ -1515,10 +1534,21 @@ export function loadConfig() {
     // publish a quote committing to an origin or a transport claim that is not
     // true, and clients would pin against it.
     if (env.GATEWAY_ATTESTATION_ENABLED) {
-      const origin = env.GATEWAY_PUBLIC_ORIGIN?.trim() ?? "";
-      if (!origin) {
+      // A LIST, canonical first. The content plane serves the restored
+      // api.anonrouter.ai base URL and keeps api.private.anonrouter.ai as the
+      // verification alias, and dstack-ingress issues a separate certificate per
+      // name -- so the attestation producer must be able to bind whichever name
+      // the caller actually connected to, with that name's SPKI.
+      //
+      // Every entry is validated. A single malformed member is a boot failure,
+      // not a silently dropped origin: an origin that quietly vanishes from the
+      // accepted set turns into a client-side verification failure on a name
+      // that looks configured.
+      const origins = gatewayPublicOrigins(env.GATEWAY_PUBLIC_ORIGIN);
+      if (origins.length === 0) {
         problems.push("GATEWAY_PUBLIC_ORIGIN is required when GATEWAY_ATTESTATION_ENABLED=true");
-      } else {
+      }
+      for (const origin of origins) {
         let parsed: URL | null = null;
         try {
           parsed = new URL(origin);
@@ -1526,10 +1556,13 @@ export function loadConfig() {
           parsed = null;
         }
         if (!parsed || parsed.protocol !== "https:") {
-          problems.push("GATEWAY_PUBLIC_ORIGIN must be an absolute https origin");
+          problems.push(`GATEWAY_PUBLIC_ORIGIN entry '${origin}' must be an absolute https origin`);
         } else if (parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== "/") {
-          problems.push("GATEWAY_PUBLIC_ORIGIN must contain only scheme, host, and optional port");
+          problems.push(`GATEWAY_PUBLIC_ORIGIN entry '${origin}' must contain only scheme, host, and optional port`);
         }
+      }
+      if (new Set(origins).size !== origins.length) {
+        problems.push("GATEWAY_PUBLIC_ORIGIN must not repeat an origin");
       }
       if (!env.GATEWAY_RELEASE_ID?.trim()) {
         problems.push("GATEWAY_RELEASE_ID is required when GATEWAY_ATTESTATION_ENABLED=true");
@@ -2161,16 +2194,19 @@ export function loadConfig() {
       relayForwardTimeoutMs: env.RELAY_FORWARD_TIMEOUT_MS,
       gatewayAttestation: {
         enabled: env.GATEWAY_ATTESTATION_ENABLED,
-        publicOrigin: env.GATEWAY_PUBLIC_ORIGIN?.trim().replace(/\/$/, "") ?? "",
+        publicOrigins: gatewayPublicOrigins(env.GATEWAY_PUBLIC_ORIGIN),
         releaseId: env.GATEWAY_RELEASE_ID?.trim() ?? "",
         transport: env.GATEWAY_TRANSPORT,
-        // SNI is derived from the attested public origin rather than accepted
-        // as a separate operator input. This is required for dstack-ingress,
-        // which selects the ACME certificate by the public hostname.
-        tlsTerminator: parseTlsTerminator(
-          env.GATEWAY_TLS_TERMINATOR,
-          env.GATEWAY_PUBLIC_ORIGIN ? new URL(env.GATEWAY_PUBLIC_ORIGIN).hostname : undefined
-        ),
+        // NO SNI HERE ANY MORE. It used to be derived once from the single
+        // public origin, which was right while there was one name and one
+        // certificate. dstack-ingress issues a SEPARATE certificate per name and
+        // selects it by SNI, so a single baked servername would make every
+        // attestation report the canonical name's SPKI regardless of which name
+        // the caller used -- and the alias would fail
+        // `tls_certificate_bound_to_quote` at every verifier that observes its
+        // own connection. The service derives the SNI from the origin it is
+        // binding; see src/gateway/service.ts.
+        tlsTerminator: parseTlsTerminator(env.GATEWAY_TLS_TERMINATOR),
         dstackEndpoint: env.DSTACK_ENDPOINT?.trim() || undefined
       },
       // Same role ownership and fail-closed semantics as image: the relay serves

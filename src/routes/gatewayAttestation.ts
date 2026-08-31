@@ -76,7 +76,18 @@ export async function registerGatewayAttestationRoutes(server: FastifyInstance) 
 
     let document;
     try {
-      document = await service.attest(nonce.toLowerCase());
+      // THE HOST HEADER SELECTS WHICH NAME IS ATTESTED, and nothing more.
+      //
+      // This CVM serves the restored api.anonrouter.ai base URL and the
+      // api.private.anonrouter.ai verification alias, each with its own
+      // certificate. A verifier compares the bound origin against ITS OWN
+      // connection, so a document has to describe the name the caller used or a
+      // correctly configured alias fails closed. An unrecognised Host falls back
+      // to the canonical origin; a caller cannot introduce an origin, only pick
+      // among the ones the measured compose declares.
+      document = await service.attest(nonce.toLowerCase(), {
+        requestedHost: typeof request.headers.host === "string" ? request.headers.host : undefined
+      });
     } catch (error) {
       // Never surface a guest-agent message: it is not content, but it is
       // unbounded upstream text and this route has no reason to echo any.

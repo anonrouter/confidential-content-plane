@@ -128,15 +128,24 @@ export async function observeLocalTlsIdentity(
  * failure clears the cache rather than being memoized: a terminator that has
  * gone away must make attestation fail, not keep answering from memory.
  */
+/** One completed handshake against a named terminator. The injectable seam. */
+export type TlsObservation = (options: TlsObservationOptions) => Promise<ObservedTlsIdentity>;
+
 export class TlsIdentityObserver {
   private cached: ObservedTlsIdentity | null = null;
   private inflight: Promise<ObservedTlsIdentity> | null = null;
+  private readonly observe: TlsObservation;
 
   constructor(
     private readonly options: TlsObservationOptions,
     private readonly ttlMs = 30_000,
-    private readonly observe = observeLocalTlsIdentity
-  ) {}
+    // `?? observeLocalTlsIdentity` rather than a parameter default, because a
+    // caller that forwards an optional seam through passes `undefined`
+    // explicitly, and a default only applies to an ARGUMENT THAT IS ABSENT.
+    observe?: TlsObservation
+  ) {
+    this.observe = observe ?? observeLocalTlsIdentity;
+  }
 
   async current(now = Date.now()): Promise<ObservedTlsIdentity> {
     if (this.cached && now - this.cached.observedAtMs < this.ttlMs) return this.cached;

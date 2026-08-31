@@ -190,6 +190,27 @@
 			# so it depended on Caddy's content-type sniffing to avoid buffering an
 			# SSE response. Explicit here, as it is everywhere else.
 			flush_interval -1
+			# REUSABLE CREDENTIALS ARE STRIPPED, AND THIS EDGE DID NOT DO IT.
+			#
+			# The relay authenticates the opaque single-use ticket and nothing
+			# else. That is the whole of the unlinkability property: the control
+			# plane knows the account and not the prompt, the relay knows the
+			# prompt and not the account, and neither can join them. A stable
+			# `ar_` key or a session cookie arriving here joins them at the one
+			# component the split exists to keep ignorant.
+			#
+			# Both sibling edges strip (deploy/caddy/Caddyfile on @relay, and the
+			# @receipt handle a few lines above in this very file). This handle
+			# did not, so any client that sent BOTH a ticket and an Authorization
+			# header handed the relay its account key -- and four of the seven
+			# paths here are not covered by the @compat_static matcher above, so
+			# they had no other route that would have taken the key away.
+			#
+			# Nothing legitimate needs them: ALLOW_INLINE_TICKET is false in
+			# production, the browser sends `credentials: "omit"`, and the compat
+			# broker builds relay headers from scratch.
+			header_up -Authorization
+			header_up -Cookie
 		}
 	}
 
