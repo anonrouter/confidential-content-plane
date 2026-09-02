@@ -232,23 +232,42 @@ jobs:
           # against the exported layers, with the STOCK image as the control
           # that proves the check can fail.
           if [ "${{ matrix.image }}" = "caddy" ]; then
+            # `grep -c`, never `grep -q`, and this is not a style choice. Under
+            # `set -o pipefail`, `gzip -dc blob | grep -q pattern` reports
+            # FAILURE when grep matches: grep exits at the first hit, gzip takes
+            # SIGPIPE, and pipefail surfaces gzip's death as the pipeline's
+            # status. The check would then read "no capability found" for every
+            # image including one that has it.
+            #
+            # The first run of this workflow did exactly that, and the control
+            # below is what caught it: the candidate "passed" and the stock
+            # image, which definitely carries the capability, "passed" too.
+            carries_capability() {
+              local blob="$1" count
+              count=$( { gzip -dc "${blob}" 2>/dev/null || true; } | grep -ac "security.capability" || true)
+              if [ "${count:-0}" -gt 0 ]; then return 0; fi
+              count=$(grep -ac "security.capability" "${blob}" 2>/dev/null || true)
+              [ "${count:-0}" -gt 0 ]
+            }
+
             for blob in replicas/base-caddy-a/layout/blobs/sha256/*; do
-              if gzip -dc "${blob}" 2>/dev/null | grep -aq "security.capability"; then
-                echo "REFUSING: a layer carries a file capability xattr." >&2
-                exit 1
-              fi
-              if grep -aq "security.capability" "${blob}" 2>/dev/null; then
+              if carries_capability "${blob}"; then
                 echo "REFUSING: a layer carries a file capability xattr." >&2
                 exit 1
               fi
             done
-            echo "ok: no layer carries a file capability"
+            echo "ok: no layer of the candidate carries a file capability"
+
+            # THE CONTROL. The stock image sets cap_net_bind_service on the
+            # caddy binary, so the same check MUST find it there. Without this,
+            # "not found" in the candidate is consistent with a check that can
+            # never find anything.
             crane pull --format=oci \
               docker.io/library/caddy@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a3411ad798f7a423a \
               stock-caddy
             found=0
             for blob in stock-caddy/blobs/sha256/*; do
-              if gzip -dc "${blob}" 2>/dev/null | grep -aq "security.capability"; then found=1; fi
+              if carries_capability "${blob}"; then found=1; fi
             done
             if [ "${found}" -ne 1 ]; then
               echo "REFUSING: the control failed. The stock caddy image is supposed to CARRY" >&2
