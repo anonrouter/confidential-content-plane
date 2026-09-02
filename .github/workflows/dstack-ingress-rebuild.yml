@@ -1,0 +1,407 @@
+# Rebuild dstack-ingress from pinned upstream source and compare it with the
+# image production actually runs.
+#
+# =============================================================================
+# WHAT THIS IS TRYING TO ESTABLISH, AND WHY THE COMPARISON IS THE POINT
+# =============================================================================
+#
+# `dstack-ingress` terminates customer TLS INSIDE the trust domain. It holds the
+# certificate private key and it sees every request. Its provenance is recorded
+# in deploy/provenance/plaintext-capable-components.json as a RECORDED GAP: the
+# source is pinned and verified, and nothing ties the running image to it.
+#
+# WO-07 section 2.2 option A closes that gap by rebuilding from pinned upstream
+# source and matching the deployed digest. This workflow is that rebuild. It
+# does NOT get to decide it succeeded: a match is a match and everything else is
+# a difference to explain. `scripts/provenance/compare-oci-images.ts` produces
+# that explanation file by file, so "near enough" is not a thing anyone can
+# write down here.
+#
+# =============================================================================
+# THE COMMIT THIS BUILDS IS READ OUT OF THE DEPLOYED IMAGE, NOT CHOSEN
+# =============================================================================
+#
+# Upstream bakes `git rev-parse HEAD` into the image at /etc/.GIT_REV. That
+# makes the source commit a property of the artifact rather than a claim about
+# it, and it means picking the wrong commit cannot silently produce a plausible
+# result: the .GIT_REV layer would differ and the comparison would say so.
+#
+# It also found a real discrepancy. This project pinned b1a90408 as the ingress
+# source; the deployed 2.3 image names b322d14e, nine ingress commits earlier.
+# Both facts are now in the ledger. Building the pinned-but-not-deployed commit
+# would have produced a confident answer about the wrong bytes.
+#
+# =============================================================================
+# EVERY ACTION IS PINNED TO A FULL COMMIT SHA
+# =============================================================================
+#
+# Same reasoning as release.yml: a tag is a mutable pointer, and an action runs
+# inside this job with the ability to request the OIDC token that mints our
+# signing identity. Pinning a ref authenticates a name; pinning a commit fixes
+# the implementation. Each pin records the tag it was resolved from.
+
+name: dstack-ingress-rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push and sign the rebuilt image (only meaningful once it reproduces)"
+        type: boolean
+        default: false
+  # A TAG for the signing path, so a push to the default branch cannot mint a
+  # release identity.
+  push:
+    tags:
+      - "dstack-ingress-rebuild-v*"
+
+permissions: {}
+
+env:
+  # The image production runs, and the upstream image it derives from. Both are
+  # in deploy/provenance/dstack-escrow-ledger.json; duplicated here so the
+  # workflow fails closed rather than reading a value it also has to trust.
+  UPSTREAM_IMAGE: docker.io/dstacktee/dstack-ingress
+  UPSTREAM_DIGEST: sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe
+  ANONROUTER_MIRROR: ghcr.io/anonrouter/mirror/dstack-ingress
+  REBUILD_REPO: ghcr.io/anonrouter/mirror/dstack-ingress-rebuilt
+
+  UPSTREAM_SOURCE_REPO: Dstack-TEE/dstack-examples
+  UPSTREAM_SOURCE_PATH: custom-domain/dstack-ingress
+
+  # Build inputs, pinned. A rebuild that used a different base, a different
+  # Debian snapshot or a different lego binary would produce a different image
+  # from the same source, and the difference would be invisible without these.
+  EXPECTED_BASE_INDEX: sha256:49a0a0d6f0b8b7e59c233b06eefab1564f2c8d64f673554d368fd7d2ab4b2c2d
+  EXPECTED_BASE_AMD64: sha256:8f678a9986c4ba900378eb6ddd73ee42c3a27e6ca6d46304c19d58e97f6dd4a2
+  EXPECTED_DEBIAN_SNAPSHOT: "20250411T024939Z"
+  EXPECTED_LEGO_VERSION: "5.3.1"
+  EXPECTED_LEGO_SHA256: b3c71b122ee1947eacfe0b809b955647f6377239fe4bfc49f73b1a091ae1252a
+  BUILDKIT_IMAGE: moby/buildkit:v0.20.2
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    # ubuntu-latest is linux/amd64 natively. That is a requirement, not a
+    # convenience: a local rebuild on Apple Silicon matched 10 of 11 layers and
+    # differed only by /root/.cache/rosetta, which Rosetta 2 writes. Emulation
+    # leaves fingerprints, so the comparison must run without any.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      rebuilt-digest: ${{ steps.compare.outputs.rebuilt }}
+      reproduced: ${{ steps.compare.outputs.reproduced }}
+    steps:
+      - name: Check out, without leaving a credential in the git config
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install crane
+        # imjasonh/setup-crane v0.4
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e
+
+      # ---------------------------------------------------------------------
+      # Read the source commit OUT OF the deployed image. This is the step that
+      # makes the rest of the workflow about the right bytes.
+      # ---------------------------------------------------------------------
+      - name: Resolve the commit the deployed image was built from
+        id: source
+        run: |
+          set -euo pipefail
+          # Prefer the AnonRouter mirror. It holds the identical manifest by
+          # digest, and using it means this workflow is not an availability
+          # dependency on the party whose withdrawal it exists to survive.
+          for candidate in "${ANONROUTER_MIRROR}" "${UPSTREAM_IMAGE}"; do
+            if crane manifest "${candidate}@${UPSTREAM_DIGEST}" >/dev/null 2>&1; then
+              source_ref="${candidate}@${UPSTREAM_DIGEST}"
+              echo "resolved deployed image from ${candidate}"
+              break
+            fi
+          done
+          if [ -z "${source_ref:-}" ]; then
+            echo "REFUSING: neither the AnonRouter mirror nor upstream served ${UPSTREAM_DIGEST}." >&2
+            exit 1
+          fi
+
+          # A registry that serves different bytes for a digest is broken or
+          # hostile. Check before believing anything it says.
+          crane manifest "${source_ref}" > manifest.json
+          actual="sha256:$(sha256sum manifest.json | cut -d' ' -f1)"
+          if [ "${actual}" != "${UPSTREAM_DIGEST}" ]; then
+            echo "REFUSING: manifest bytes hash to ${actual}, requested ${UPSTREAM_DIGEST}." >&2
+            exit 1
+          fi
+
+          # Exported to a file rather than piped. `tar -xO <one member>` exits as
+          # soon as it has the file, which SIGPIPEs crane, which `pipefail`
+          # correctly reports as a failed step. Streaming would work most of the
+          # time and fail on a race, which is the worst kind of flake.
+          crane export "${source_ref}" rootfs.tar
+          commit=$(tar -xOf rootfs.tar etc/.GIT_REV | tr -d '[:space:]')
+          rm -f rootfs.tar
+          if ! printf '%s' "${commit}" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "REFUSING: /etc/.GIT_REV in the deployed image is not a commit sha: ${commit}" >&2
+            exit 1
+          fi
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          echo "source_ref=${source_ref}" >> "$GITHUB_OUTPUT"
+          echo "deployed image records source commit ${commit}"
+
+      - name: Fetch the upstream source at that commit
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://github.com/${UPSTREAM_SOURCE_REPO}.git" upstream-src
+          cd upstream-src
+          git checkout --quiet "${{ steps.source.outputs.commit }}"
+          test "$(git rev-parse HEAD)" = "${{ steps.source.outputs.commit }}"
+
+      # ---------------------------------------------------------------------
+      # Licence first. A rebuild of Apache-2.0 source that loses the licence is
+      # a redistribution problem, and it is much cheaper to catch here than in
+      # a published image.
+      # ---------------------------------------------------------------------
+      - name: Preserve LICENSE and NOTICE, and refuse if the licence moved
+        run: |
+          set -euo pipefail
+          cd upstream-src
+          if ! grep -q "Apache License" LICENSE || ! grep -q "Version 2.0" LICENSE; then
+            echo "REFUSING: upstream LICENSE no longer reads as Apache-2.0." >&2
+            exit 1
+          fi
+          mkdir -p "${GITHUB_WORKSPACE}/rebuild-artifacts"
+          cp LICENSE "${GITHUB_WORKSPACE}/rebuild-artifacts/LICENSE.upstream"
+          # Upstream ships no NOTICE at this revision. Recording its absence is
+          # the honest form: a missing file that a later revision adds must show
+          # up as a change rather than as silence.
+          if [ -f NOTICE ]; then
+            cp NOTICE "${GITHUB_WORKSPACE}/rebuild-artifacts/NOTICE.upstream"
+          else
+            echo "upstream ships no NOTICE at ${{ steps.source.outputs.commit }}" \
+              > "${GITHUB_WORKSPACE}/rebuild-artifacts/NOTICE.upstream.absent"
+          fi
+          sha256sum LICENSE
+
+      - name: Assert the pinned build inputs are what upstream still declares
+        run: |
+          set -euo pipefail
+          cd "upstream-src/${UPSTREAM_SOURCE_PATH}"
+          fail=0
+          check() {
+            if ! grep -qF "$2" Dockerfile; then
+              echo "MISMATCH: Dockerfile no longer declares $1 = $2" >&2
+              fail=1
+            else
+              echo "ok  $1 = $2"
+            fi
+          }
+          check "base image"       "${EXPECTED_BASE_INDEX}"
+          check "debian snapshot"  "${EXPECTED_DEBIAN_SNAPSHOT}"
+          check "lego version"     "LEGO_VERSION=${EXPECTED_LEGO_VERSION}"
+          check "lego sha256"      "LEGO_SHA256=${EXPECTED_LEGO_SHA256}"
+          # BuildKit is pinned in build-image.sh rather than the Dockerfile, so
+          # it needs its own check against a different file.
+          if grep -qF "image=${BUILDKIT_IMAGE}" build-image.sh; then
+            echo "ok  buildkit = ${BUILDKIT_IMAGE}"
+          else
+            echo "MISMATCH: build-image.sh no longer pins ${BUILDKIT_IMAGE}" >&2
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] || exit 1
+
+      - name: Set up buildx with the pinned BuildKit
+        # docker/setup-buildx-action v4.3.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        with:
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      # ---------------------------------------------------------------------
+      # The build. Byte-for-byte the invocation upstream's own build-image.sh
+      # uses, minus the parts that push or mutate the source tree.
+      # ---------------------------------------------------------------------
+      - name: Rebuild
+        run: |
+          set -euo pipefail
+          cd "upstream-src/${UPSTREAM_SOURCE_PATH}"
+          # Upstream writes the commit into the image. Reproduce that exactly;
+          # a trailing-newline difference here changes a layer digest.
+          printf '%s\n' "${{ steps.source.outputs.commit }}" > .GIT_REV
+          docker buildx build \
+            --platform linux/amd64 \
+            --no-cache \
+            --build-arg SOURCE_DATE_EPOCH=0 \
+            --provenance=false \
+            --sbom=false \
+            --output "type=oci,dest=${GITHUB_WORKSPACE}/rebuild.tar,rewrite-timestamp=true" \
+            .
+          # --provenance/--sbom are disabled for the COMPARISON build on purpose.
+          # Inline attestations turn the output into an index with extra
+          # manifests, which changes the top-level digest and would make the
+          # comparison structurally impossible. The SBOM and provenance below
+          # are produced separately and attached to the pushed image.
+
+      - name: Compare with the deployed image, and explain every difference
+        id: compare
+        run: |
+          set -euo pipefail
+          mkdir -p rebuilt-layout deployed-layout
+          tar -xf rebuild.tar -C rebuilt-layout
+          crane pull --format=oci "${{ steps.source.outputs.source_ref }}" deployed-layout
+
+          rebuilt=$(jq -r '.manifests[0].digest' rebuilt-layout/index.json)
+          echo "rebuilt=${rebuilt}" >> "$GITHUB_OUTPUT"
+
+          npm ci --no-audit --no-fund --ignore-scripts
+          set +e
+          npx tsx scripts/provenance/compare-oci-images.ts deployed-layout rebuilt-layout \
+            | tee "${GITHUB_WORKSPACE}/rebuild-artifacts/comparison.txt"
+          status=${PIPESTATUS[0]}
+          npx tsx scripts/provenance/compare-oci-images.ts --json deployed-layout rebuilt-layout \
+            > "${GITHUB_WORKSPACE}/rebuild-artifacts/comparison.json"
+          set -e
+
+          {
+            echo "## dstack-ingress rebuild"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| source commit | \`${{ steps.source.outputs.commit }}\` (from the deployed image's /etc/.GIT_REV) |"
+            echo "| deployed | \`${UPSTREAM_DIGEST}\` |"
+            echo "| rebuilt | \`${rebuilt}\` |"
+            echo
+            echo '```'
+            cat "${GITHUB_WORKSPACE}/rebuild-artifacts/comparison.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${rebuilt}" = "${UPSTREAM_DIGEST}" ] && [ "${status}" -eq 0 ]; then
+            echo "reproduced=true" >> "$GITHUB_OUTPUT"
+            echo "REPRODUCED. The rebuild is the deployed image."
+          else
+            echo "reproduced=false" >> "$GITHUB_OUTPUT"
+            echo "NOT REPRODUCED. Differences are listed above and in comparison.json."
+            echo "This is not a failure of the workflow. It is the result, and it is"
+            echo "the only result that may be recorded until the digests are equal:"
+            echo "a near match is not a source-to-digest binding."
+          fi
+
+      - name: Publish the rebuilt image, only when it reproduces
+        id: publish
+        if: >-
+          steps.compare.outputs.reproduced == 'true' &&
+          (github.event_name == 'push' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Credential on stdin, never in argv: a token in a command line is
+          # visible to every process on the box and lands in traces.
+          printf '%s' "${GH_TOKEN}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # Push the OCI LAYOUT directory, not the tarball. crane reads a
+          # directory as an OCI layout and preserves the manifest bytes, which
+          # is what keeps the pushed digest equal to the reproduced one.
+          # Tagged by content, so the tag cannot be repointed to different bytes
+          # without the mismatch being visible in the tag itself.
+          crane push rebuilt-layout "${REBUILD_REPO}:sha256-${UPSTREAM_DIGEST#sha256:}"
+          pushed=$(crane digest "${REBUILD_REPO}:sha256-${UPSTREAM_DIGEST#sha256:}")
+          if [ "${pushed}" != "${UPSTREAM_DIGEST}" ]; then
+            echo "REFUSING: pushed digest ${pushed} is not the reproduced digest." >&2
+            exit 1
+          fi
+          echo "digest=${pushed}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: steps.publish.outputs.digest != ''
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Sign keylessly
+        if: steps.publish.outputs.digest != ''
+        # No key material is created, stored or read. cosign exchanges this
+        # job's OIDC token for a short-lived Fulcio certificate whose identity
+        # IS this workflow file at this ref, which is what a verifier pins.
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${REBUILD_REPO}@${{ steps.publish.outputs.digest }}"
+
+      - name: Attest build provenance
+        if: steps.publish.outputs.digest != ''
+        # actions/attest-build-provenance v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ env.REBUILD_REPO }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate an SBOM
+        if: steps.publish.outputs.digest != ''
+        # anchore/sbom-action v0.24.0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: ${{ env.REBUILD_REPO }}@${{ steps.publish.outputs.digest }}
+          format: spdx-json
+          output-file: rebuild-artifacts/sbom.spdx.json
+
+      - name: Attest the SBOM
+        if: steps.publish.outputs.digest != ''
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign attest \
+            --predicate rebuild-artifacts/sbom.spdx.json \
+            --type spdxjson \
+            "${REBUILD_REPO}@${{ steps.publish.outputs.digest }}"
+
+      # ---------------------------------------------------------------------
+      # Record the identity a verifier must pin. Without this a reader can
+      # confirm that SOME workflow signed the image and not what it did.
+      # ---------------------------------------------------------------------
+      - name: Record the signing identity
+        if: steps.publish.outputs.digest != ''
+        run: |
+          set -euo pipefail
+          claims=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" | jq -r '.value' \
+            | cut -d. -f2 | base64 -d 2>/dev/null || true)
+          ref=$(printf '%s' "${claims}" | jq -r '.job_workflow_ref // "ABSENT"')
+          sha=$(printf '%s' "${claims}" | jq -r '.job_workflow_sha // "ABSENT"')
+          if [ "${ref}" = "ABSENT" ] || [ "${sha}" = "ABSENT" ]; then
+            echo "REFUSING: the OIDC token does not carry job_workflow_ref and job_workflow_sha." >&2
+            exit 1
+          fi
+          {
+            echo "### Signing identity a verifier must pin"
+            echo
+            echo "| claim | value |"
+            echo "|---|---|"
+            echo "| \`job_workflow_ref\` | \`${ref}\` |"
+            echo "| \`job_workflow_sha\` | \`${sha}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          jq -n --arg ref "${ref}" --arg sha "${sha}" \
+            --arg digest "${{ steps.publish.outputs.digest }}" \
+            --arg commit "${{ steps.source.outputs.commit }}" \
+            '{certificateIdentity:$ref, workflowSha:$sha, rebuiltDigest:$digest, sourceCommit:$commit,
+              certificateOidcIssuer:"https://token.actions.githubusercontent.com"}' \
+            > rebuild-artifacts/signing-identity.json
+
+      - name: Upload the comparison and provenance artifacts
+        if: always()
+        # actions/upload-artifact v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: dstack-ingress-rebuild
+          path: rebuild-artifacts/
+          if-no-files-found: warn
+
+      - name: Fail the run only when something was actually wrong
+        run: |
+          if [ "${{ steps.compare.outputs.reproduced }}" != "true" ]; then
+            echo "The rebuild did not reproduce the deployed digest."
+            echo "The differences are recorded and the ledger keeps dstack-ingress"
+            echo "at binding status NONE, which is the correct outcome rather than"
+            echo "a broken build. Read rebuild-artifacts/comparison.txt."
+          fi
