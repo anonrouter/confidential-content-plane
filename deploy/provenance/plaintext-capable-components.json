@@ -72,6 +72,52 @@
         "means provenance that Docker Official Images do not publish in a form",
         "pinnable to a single upstream identity. Same shape as node-base-image.",
         "",
+        "MEASURED 2026-09-02, AND THE ANSWER IS STRONGER THAN 'NOT DONE YET'.",
+        "",
+        "AnonRouter's public CI replayed docker-library's recorded invocation for",
+        "this exact digest, natively on linux/amd64, three times. Every argument",
+        "came from the deployed image's own SLSA statement: the git URL, the commit",
+        "fba28535, the directory 2.11/alpine, the alpine:3.23 parent resolved to",
+        "oisupport/staging-amd64@sha256:1beb0dc0, the tianon/buildkit:0.16 frontend",
+        "by digest, and the build arguments. The replay was additionally HANDED the",
+        "deployed manifest's own annotations, including the build clock, which makes",
+        "the test maximally favourable.",
+        "",
+        "It failed, and it failed in a way that closes the question rather than",
+        "deferring it. Two IDENTICAL invocations, minutes apart on the same runner",
+        "with a cold cache, produced sha256:814143b2... and sha256:eec80ff0..., which",
+        "are different images. So no rebuild by ANY party can match a fixed digest:",
+        "option A is unavailable for this artifact rather than merely unachieved.",
+        "",
+        "The whole difference between those two runs is one file, /var/log/apk.log,",
+        "whose first line reads 'Running `apk add --no-cache ca-certificates curl",
+        "libcap mailcap` at 2026-06-22 20:09:02' in the deployed image. It is file",
+        "CONTENT, not metadata, so no timestamp-normalisation flag rewrites it, and",
+        "21 image-config history timestamps move with it.",
+        "",
+        "The SOURCE_DATE_EPOCH branch was tested too, so it is not left as an",
+        "untested excuse: setting it to the deployed build clock produced",
+        "sha256:7a4b0434..., also not the deployed digest. Leaving the epoch unset",
+        "lets the clock move; setting it collapses the per-step timestamps the",
+        "deployed config records at sub-second precision. Neither branch can work.",
+        "",
+        "AND THE ARCHIVE HAS MOVED, which is an independent obstruction. Against the",
+        "deployed image the rebuild differs in five paths that have nothing to do",
+        "with time: c-ares went 1.34.6 to 1.34.7 (libcares.so.2.19.5 became .19.7),",
+        "curl and libcurl were rebuilt, and lib/apk/db/installed records the new",
+        "versions. `apk add --no-cache` resolves against Alpine v3.23's live",
+        "repository, which is mutable, so the contents of this image were never",
+        "recoverable from its source after the fact.",
+        "",
+        "OPTION B IS UNAVAILABLE, MEASURED RATHER THAN ASSUMED. No OCI referrer on",
+        "the child manifest or the index, no cosign .sig sibling tag, no GitHub",
+        "attestation under docker-library. Sigstore's transparency log DOES carry one",
+        "entry over this digest and it is unusable: a hashedrekord with a bare public",
+        "key, no certificate, so no subject and no issuer. Anyone can create one over",
+        "any digest. A checker that asked only 'is this digest in the transparency",
+        "log' would have passed it, which is why the check records the shape and not",
+        "just the count.",
+        "",
         "CONSEQUENCE FOR ALREADY-PUBLISHED IMAGES, recorded rather than left to be",
         "discovered: ghcr.io/anonrouter/anonrouter-edge-ingress@sha256:4645b36c...,",
         "anonrouter-venice-egress@sha256:c4508541... and",
@@ -95,6 +141,46 @@
         "sourcePath": "2.11/alpine",
         "signed": false,
         "fetchedAt": "2026-08-24T04:30:00Z"
+      },
+      "reproducibility": {
+        "method": "public-ci-rebuild",
+        "verdict": "NOT-REPRODUCED-RECIPE-NONDETERMINISTIC",
+        "optionAAvailable": false,
+        "optionBAvailable": false,
+        "run": "https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190",
+        "builderWorkflowRef": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/doi-base-rebuild.yml@refs/heads/main",
+        "builderWorkflowSha": "19576d6839ea798174045dd40f123bca2965c4d9",
+        "rebuiltDigest": "sha256:814143b2fffc1e6d557976099a3e32914668bb203a5a43c23c8aa989325a7a87",
+        "rebuiltAgainDigest": "sha256:eec80ff07eb230cb95bc5e53bc63729f85e09a07d0b7ff05507c0230e85425d8",
+        "sourceDateEpochRebuildDigest": "sha256:7a4b04347a308f1a9ea6f9e27699c9c1e3c6470bc3bb8dc4495a5455f9193cc9",
+        "obstructions": [
+          {
+            "id": "recipe-nondeterministic",
+            "detail": "Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:814143b2 and sha256:eec80ff0. No rebuild by any party can match a fixed digest."
+          },
+          {
+            "id": "build-clock-in-layer-content",
+            "detail": "/var/log/apk.log ships inside the image and its first line records the second the build ran: 'Running `apk add --no-cache ca-certificates curl libcap mailcap` at 2026-06-22 20:09:02'. File content, not metadata, so no normalisation flag rewrites it."
+          },
+          {
+            "id": "build-clock-in-image-config",
+            "detail": "21 history timestamps differ between two runs of the same recipe, at sub-second precision."
+          },
+          {
+            "id": "build-clock-in-manifest-annotation",
+            "detail": "org.opencontainers.image.created is derived from `env.SOURCE_DATE_EPOCH // now` by docker-library's meta.jq, and the recorded build set no epoch. The annotation is manifest bytes, so it is part of the digest."
+          },
+          {
+            "id": "mutable-archive",
+            "detail": "`apk add --no-cache` resolves against Alpine v3.23's live repository. Against the deployed image the rebuild differs by c-ares 1.34.6 -> 1.34.7, a rebuilt curl and libcurl, and the matching lib/apk/db/installed entries. The contents were never recoverable from the source after the fact."
+          },
+          {
+            "id": "option-b-absent",
+            "detail": "No OCI referrer on the child or the index, no cosign .sig sibling tag, no GitHub attestation under docker-library. One Rekor entry names this digest and carries a bare public key rather than a certificate, so it attests to no identity at all."
+          }
+        ],
+        "evidenceFile": ".evidence/doi-base-rebuild/caddy-edge-base-verdict.json",
+        "measuredAt": "2026-09-02T22:16:47.000Z"
       }
     },
     {
@@ -349,7 +435,50 @@
         "nodejs/docker-node Dockerfile and its Debian base, which transitively",
         "means trusting Debian's own archive. Option B means verifying provenance",
         "that Docker Official Images do not currently publish in a form we can pin",
-        "to a single upstream identity. Neither is closed by this change."
+        "to a single upstream identity. Neither is closed by this change.",
+        "",
+        "MEASURED 2026-09-02, AND THE RESULT IS UNUSUALLY CLEAN.",
+        "",
+        "AnonRouter's public CI replayed docker-library's recorded invocation for",
+        "this exact digest, natively on linux/amd64, three times, with every argument",
+        "read out of the deployed image's own SLSA statement: nodejs/docker-node at",
+        "bc0a422b, path 22/bookworm-slim, the debian:bookworm-slim parent resolved to",
+        "oisupport/staging-amd64@sha256:362e6422, the tianon/buildkit:0.16 frontend by",
+        "digest. The replay was handed the deployed manifest's own annotations too,",
+        "which makes the test maximally favourable.",
+        "",
+        "Two IDENTICAL invocations, minutes apart with a cold cache, produced",
+        "sha256:6babfba1... and sha256:c1d12a97..., which are different images. Option",
+        "A is therefore unavailable to ANY party for this artifact, not merely",
+        "unachieved by us.",
+        "",
+        "WHAT DIFFERED BETWEEN THOSE TWO RUNS IS THE WHOLE FINDING, and it is four",
+        "files: /var/log/dpkg.log, /var/log/alternatives.log, /var/log/apt/history.log",
+        "and /var/log/apt/term.log. Zero paths present on one side only. Zero other",
+        "content changes anywhere in 5,759 scanned files. Every one of those four is a",
+        "log apt and dpkg wrote and the image then shipped, recording WHEN the build",
+        "ran rather than what it built. The deployed image's dpkg.log carries 1,052",
+        "such stamps and begins '2026-08-05 00:49:00 startup archives unpack'.",
+        "",
+        "So the Node recipe is deterministic in every respect except its own clock,",
+        "and the clock is in file CONTENT where no normalisation flag reaches it. That",
+        "is a much more specific finding than 'it did not reproduce', and it is the",
+        "one that says what a fix would have to do.",
+        "",
+        "Against the deployed image the rebuild differs in nine paths and every one is",
+        "a clock or a cache: the four logs above, /var/log/apt/eipp.log.xz,",
+        "/var/cache/debconf/config.dat-old, templates.dat-old,",
+        "/var/cache/ldconfig/aux-cache, and /etc/shadow, whose last-changed field is a",
+        "day count. Notably NOT the Debian archive: no package content moved, which is",
+        "the opposite of what happened to the Alpine-based caddy base.",
+        "",
+        "The SOURCE_DATE_EPOCH branch was tested and also failed",
+        "(sha256:116a5d09...), so neither half of that fork is left as an untested",
+        "excuse.",
+        "",
+        "OPTION B IS UNAVAILABLE, MEASURED. No OCI referrer on the child or the index,",
+        "no cosign .sig sibling tag, no GitHub attestation under docker-library, and",
+        "no Sigstore transparency-log entry over this digest at all."
       ],
       "registryProvenance": {
         "method": "registry-provenance",
@@ -363,6 +492,46 @@
         "sourcePath": "22/bookworm-slim",
         "signed": false,
         "fetchedAt": "2026-08-24T04:30:00Z"
+      },
+      "reproducibility": {
+        "method": "public-ci-rebuild",
+        "verdict": "NOT-REPRODUCED-RECIPE-NONDETERMINISTIC",
+        "optionAAvailable": false,
+        "optionBAvailable": false,
+        "run": "https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190",
+        "builderWorkflowRef": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/doi-base-rebuild.yml@refs/heads/main",
+        "builderWorkflowSha": "19576d6839ea798174045dd40f123bca2965c4d9",
+        "rebuiltDigest": "sha256:6babfba1586e01cc2da1e051f5c879b37c259f0f83db9f03370bcd8498d24953",
+        "rebuiltAgainDigest": "sha256:c1d12a978b22af8334fe0a8001e93c8f9b41a20558fd7e5ed642d22ab498c921",
+        "sourceDateEpochRebuildDigest": "sha256:116a5d093ac2985f647cae3ac739e82e02c4e3b3a21115da2b0045c2ae98be1d",
+        "obstructions": [
+          {
+            "id": "recipe-nondeterministic",
+            "detail": "Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:6babfba1 and sha256:c1d12a97. No rebuild by any party can match a fixed digest."
+          },
+          {
+            "id": "build-clock-in-layer-content",
+            "detail": "The ENTIRE difference between those two runs is four shipped log files: /var/log/dpkg.log, /var/log/alternatives.log, /var/log/apt/history.log and /var/log/apt/term.log. apt and dpkg write the wall clock into them and the image ships them. The deployed dpkg.log carries 1,052 such stamps. File content, not metadata."
+          },
+          {
+            "id": "build-clock-in-image-config",
+            "detail": "9 history timestamps differ between two runs of the same recipe."
+          },
+          {
+            "id": "build-clock-in-manifest-annotation",
+            "detail": "org.opencontainers.image.created is derived from `env.SOURCE_DATE_EPOCH // now` by docker-library's meta.jq, and the recorded build set no epoch."
+          },
+          {
+            "id": "build-day-in-etc-shadow",
+            "detail": "/etc/shadow differs from the deployed image because the node account's last-changed field is a count of days since the epoch. Day resolution, so two runs on the same day agree and a rebuild on any other day cannot."
+          },
+          {
+            "id": "option-b-absent",
+            "detail": "No OCI referrer on the child or the index, no cosign .sig sibling tag, no GitHub attestation under docker-library, and no Sigstore transparency-log entry over this digest at all."
+          }
+        ],
+        "evidenceFile": ".evidence/doi-base-rebuild/node-base-image-verdict.json",
+        "measuredAt": "2026-09-02T22:16:47.000Z"
       }
     }
   ]

@@ -261,7 +261,30 @@ function factsOf(path: string, stats = lstatSync(path, { throwIfNoEntry: false }
   }
   if (stats.isDirectory()) return { kind: "dir", mode, size: 0, linkTarget: null, sha256: null };
   if (!stats.isFile()) return { kind: "other", mode, size: stats.size, linkTarget: null, sha256: null };
-  return { kind: "file", mode, size: stats.size, linkTarget: null, sha256: sha256(readFileSync(path)) };
+  return { kind: "file", mode, size: stats.size, linkTarget: null, sha256: sha256(readOpening(path, stats.mode)) };
+}
+
+/**
+ * Read a file, opening it by force if the extracted mode forbids it.
+ *
+ * Layer tars contain files an unprivileged extraction cannot read back: mode
+ * 0000 whiteout markers are the common case, and `.wh.faillog` is the one that
+ * surfaced this. The mode has already been recorded by the caller, so adding
+ * the owner read bit here changes what this process can see and not what the
+ * report says the image contains.
+ *
+ * Refusing instead would mean the tool cannot compare any image that deletes a
+ * root-owned file, and skipping the content would let a difference inside such
+ * a file go unreported, which is the worse of the two.
+ */
+function readOpening(path: string, mode: number): Buffer {
+  try {
+    return readFileSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
+    chmodSync(path, (mode & 0o7777) | 0o400);
+    return readFileSync(path);
+  }
 }
 
 function compareConfigs(a: Record<string, any>, b: Record<string, any>): string[] {
