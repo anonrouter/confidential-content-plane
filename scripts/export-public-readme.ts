@@ -48,13 +48,50 @@ function gapsOf(ledger: Ledger): Component[] {
  * same breath, what it does not establish. The order matters: the reader gets
  * the limit before they get the reassurance.
  */
+/**
+ * Where the thing actually is, said once.
+ *
+ * `pinned` is the third-party artifact this entry's provenance is ABOUT.
+ * `runtime`, when present and derived, is what production actually pulls.
+ * Printing only the first said production pulls from a competitor's registry at
+ * boot, which is false and, being checkable, was worse than saying nothing.
+ *
+ * Shared by the gap and the established-binding sections rather than written
+ * twice. It WAS written twice for one revision, and the copy in the
+ * established-binding section immediately said "Deployed at
+ * dstacktee/dstack-ingress" for a component the ledger records as not being
+ * pulled from there. Closing a gap must not reintroduce the sentence that gap's
+ * own notes exist to correct.
+ */
+function deployedSentence(component: Component): string {
+  const pinnedRef = `\`${component.pinned.image ?? "(image name not recorded)"}@${component.pinned.digest}\``;
+  if (!component.pinned.digest) {
+    return "Not currently deployed. The entry exists anyway, because the binding has to be in place before the component is first used, not after.";
+  }
+  if (component.runtime && component.runtime.relationship === "derived-from-pinned") {
+    return (
+      `Production runs \`${component.runtime.image}@${component.runtime.digest}\`, an AnonRouter image ` +
+      `built FROM ${pinnedRef}. So the upstream artifact is a build-time dependency and not a runtime one: ` +
+      `nothing is pulled from the upstream registry at boot. Its provenance is still the question this ` +
+      `entry is about, because the derived image contains it.`
+    );
+  }
+  return `Deployed at ${pinnedRef}.`;
+}
+
 function gapProse(component: Component): string[] {
   const lines: string[] = [];
-  const deployed = component.pinned.digest
-    ? `Deployed at \`${component.pinned.image ?? "(image name not recorded)"}@${component.pinned.digest}\`.`
-    : "Not currently deployed. The entry exists anyway, because the binding has to be in place before the component is first used, not after.";
-  lines.push(`**\`${component.id}\`** ${component.role}. ${deployed}`);
+  lines.push(`**\`${component.id}\`** ${component.role}. ${deployedSentence(component)}`);
   lines.push("");
+  if (component.deployedSource && component.sourcePin && component.deployedSource.commit !== component.sourcePin.commit) {
+    lines.push(
+      `The deployed artifact records its own source commit as \`${component.deployedSource.commit}\``,
+      `(read from \`${component.deployedSource.path}\` inside the image, not asserted about it), and that is`,
+      `**not** the commit pinned below. A rebuild must target the deployed commit; building the reviewed one`,
+      "would run the right procedure against the wrong bytes.",
+      ""
+    );
+  }
 
   if (component.registryProvenance) {
     lines.push(
@@ -83,6 +120,70 @@ function gapProse(component: Component): string[] {
   return lines;
 }
 
+/** Established bindings, in the same stable order, for the same reason. */
+function boundOf(ledger: Ledger): Component[] {
+  return ledger.components
+    .filter((c) => c.plaintextCapable && c.binding.status !== "NONE")
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * The component table's "where the source is" cell, DERIVED.
+ *
+ * It used to be a literal reading "UPSTREAM, Phala. Apache-2.0. See the gaps
+ * below" for `dstack-ingress`, which stopped being true the moment that gap
+ * closed and would have kept being published anyway: the table sat above the
+ * generated section and nothing related the two. A README that contradicts
+ * itself in adjacent paragraphs is worse than one that says less, and the
+ * contradiction here would have been in the direction of understating a proof
+ * while overstating a gap.
+ */
+function whereTheSourceIs(component: Component | undefined, fallback: string): string {
+  if (!component) return fallback;
+  const upstream = `**UPSTREAM, ${component.upstream.project}. ${component.upstream.license}.`;
+  return component.binding.status === "NONE"
+    ? `${upstream} Source-to-digest binding NOT established; see the gaps below**`
+    : `${upstream} Rebuilt in this repository's CI from pinned upstream source, byte-identical to the deployed digest; see below**`;
+}
+
+/**
+ * What a reader runs to check an established binding for themselves.
+ *
+ * A binding nobody outside AnonRouter can re-check is an assertion with extra
+ * steps. The identity printed here is the one `cosign verify` accepts, which is
+ * not the same string as the `job_workflow_ref` OIDC claim: Fulcio's SAN carries
+ * an `https://github.com/` prefix the claim omits, and publishing the claim
+ * produced a value that looked right and could not verify.
+ */
+function boundProse(component: Component): string[] {
+  const evidence = component.binding.evidence;
+  const lines: string[] = [];
+  lines.push(`**\`${component.id}\`** ${component.role}. ${deployedSentence(component)}`);
+  lines.push("");
+  if (evidence?.method === "rebuild") {
+    lines.push(
+      `Rebuilt by \`${evidence.builderWorkflowRef}\` (workflow commit`,
+      `\`${evidence.builderWorkflowSha}\`) from \`${component.upstream.project}@${evidence.sourceCommit}\`,`,
+      `producing \`${evidence.rebuiltDigest}\`, which is the deployed digest.`,
+      ""
+    );
+    if (component.deployedSource) {
+      lines.push(
+        `The commit was not chosen. It was read from \`${component.deployedSource.path}\` inside the deployed`,
+        "image before any source was fetched, so it is a property of the artifact rather than a claim about it.",
+        ""
+      );
+    }
+  } else if (evidence?.method === "attestation") {
+    lines.push(
+      `Verified against upstream identity \`${evidence.certificateIdentity}\` under issuer`,
+      `\`${evidence.certificateOidcIssuer}\`, over digest \`${evidence.attestedDigest}\`.`,
+      ""
+    );
+  }
+  return lines;
+}
+
 /**
  * The full README text.
  *
@@ -92,9 +193,11 @@ function gapProse(component: Component): string[] {
  */
 export function buildPublicReadme(ledger: Ledger): string {
   const gaps = gapsOf(ledger);
+  const bound = boundOf(ledger);
   const gapIds = gaps.map((c) => `\`${c.id}\``).join(", ");
   const count = gaps.length;
   const word = count === 1 ? "link" : "links";
+  const byId = (id: string) => ledger.components.find((c) => c.id === id);
 
   return [
     "# AnonRouter confidential content plane",
@@ -134,23 +237,22 @@ export function buildPublicReadme(ledger: Ledger): string {
     "| classifier (in-process on the relay) | the truncated latest user turn | here |",
     "| `compat` broker | full bodies **and** the caller's static `ar_` key | here |",
     "| `<provider>-worker` | full bodies plus one provider credential | here |",
-    "| `edge` (in-CVM L7 router) | full bodies, after TLS terminates in-TD | here (configuration); **its base image is UPSTREAM, see the gaps below** |",
+    `| \`edge\` (in-CVM L7 router) | full bodies, after TLS terminates in-TD | here (configuration); its base image is ${whereTheSourceIs(byId("caddy-edge-base"), "**UPSTREAM**")} |`,
     "| `<provider>-egress` | ciphertext only (SNI passthrough) | here (configuration) |",
     "| `gateway-attestation` | **no content at all** | here |",
-    "| `dstack-ingress` | ciphertext, then the plaintext stream in transit | **UPSTREAM, Phala. Apache-2.0. See the gaps below** |",
+    `| \`dstack-ingress\` | ciphertext, then the plaintext stream in transit | ${whereTheSourceIs(byId("dstack-ingress"), "**UPSTREAM, Phala. Apache-2.0**")} |`,
     "",
     "The `relay`, `compat`, `worker` and `gateway-attestation` roles are all the",
     "same first-party image, selected by `RUNTIME_ROLE`. Its **base image** is",
-    "upstream and is one of the gaps below: it runs every line of code in this",
-    "repository, so it is plaintext-capable whatever the code above it does.",
+    "upstream: it runs every line of code in this repository, so it is",
+    "plaintext-capable whatever the code above it does, and it is covered by the",
+    "ledger like any other third-party component.",
     "",
-    `### The ${count} unproven ${word}, stated rather than rounded up`,
+    "### What a binding is",
     "",
-    `${count} plaintext-capable component${count === 1 ? "" : "s"} in this deployment ${count === 1 ? "is" : "are"} not built from this`,
-    `source, and for ${count === 1 ? "it" : "each of them"} the source-to-digest binding is **NOT established**: ${gapIds}.`,
-    "",
-    "A binding means one of exactly two things, and neither has been done for any",
-    "of them:",
+    "Exactly one of two things. Nothing else counts, and in particular a pinned",
+    "digest is not one, a stated Git revision is not one, and an unsigned",
+    "attestation published by a registry is not one:",
     "",
     "- **Rebuild.** Build the component in our public CI from pinned upstream source",
     "  and confirm the digest equals the deployed one. A near miss is not a partial",
@@ -160,7 +262,32 @@ export function buildPublicReadme(ledger: Ledger): string {
     "  **pinned** upstream identity, both certificate identity and OIDC issuer, over",
     "  the digest actually deployed.",
     "",
-    ...gaps.flatMap(gapProse),
+    ...(bound.length === 0
+      ? []
+      : [
+          `### ${bound.length} established binding${bound.length === 1 ? "" : "s"}`,
+          "",
+          ...bound.flatMap(boundProse)
+        ]),
+    ...(count === 0
+      ? [
+          "### No unproven links",
+          "",
+          "Every plaintext-capable component in this deployment that is not built from",
+          "this source has an established binding, listed above. That is a statement",
+          "about provenance and nothing else: it says the running bytes came from the",
+          "named source, not that the named source is free of defects, and it says",
+          "nothing at all about components outside the trust domain.",
+          ""
+        ]
+      : [
+          `### The ${count} unproven ${word}, stated rather than rounded up`,
+          "",
+          `${count} plaintext-capable component${count === 1 ? "" : "s"} in this deployment ${count === 1 ? "is" : "are"} not built from this`,
+          `source, and for ${count === 1 ? "it" : "each of them"} the source-to-digest binding is **NOT established**: ${gapIds}.`,
+          "",
+          ...gaps.flatMap(gapProse)
+        ]),
     "This is stated here, in the README, because a transparency chain that quietly",
     "rounds an unverifiable link up to \"verified\" is worse than no chain: it",
     "launders an assumption into an apparent proof. Someone told the chain is",

@@ -86,12 +86,28 @@ describe("the committed ledger", () => {
     expect(note).toMatch(/An image IS deployed/);
   });
 
-  it("records dstack-ingress as an unproven gap rather than rounding it up", () => {
+  it("records dstack-ingress as REBUILT, with evidence a third party can check", () => {
+    // This assertion used to require NONE, and it was right to: a gap must
+    // never be rounded up. The gap is now closed by measurement rather than by
+    // assertion, so what it guards has moved. A binding is only a binding if a
+    // reader can re-run it, so the evidence is what is checked, not the word.
     const ingress = ledger.components.find((c) => c.id === "dstack-ingress");
     expect(ingress?.plaintextCapable).toBe(true);
-    expect(ingress?.binding.status).toBe("NONE");
-    expect(ingress?.binding.evidence).toBeNull();
-    expect(recordedGaps(ledger).map((c) => c.id)).toContain("dstack-ingress");
+    expect(ingress?.binding.status).toBe("REBUILT");
+    const evidence = ingress?.binding.evidence;
+    expect(evidence?.method).toBe("rebuild");
+    if (evidence?.method !== "rebuild") throw new Error("unreachable");
+    // The rebuild must target the commit the DEPLOYED image records, not the
+    // one this repository reviewed. Building the reviewed commit would be the
+    // right procedure against the wrong bytes.
+    expect(evidence.sourceCommit).toBe(ingress?.deployedSource?.commit);
+    expect(evidence.rebuiltDigest).toBe(ingress?.pinned.digest);
+    // The identity a verifier pins must be the one cosign accepts. The bare
+    // job_workflow_ref claim omits the https://github.com/ prefix Fulcio's SAN
+    // carries, and pinning the claim produces a value that cannot verify.
+    expect(evidence.builderWorkflowRef).toMatch(/^https:\/\/github\.com\//);
+    expect(evidence.builderWorkflowSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(recordedGaps(ledger).map((c) => c.id)).not.toContain("dstack-ingress");
   });
 
   it("agrees with the public README, which must name EVERY gap", () => {
@@ -204,13 +220,30 @@ describe("a source pin is not a binding", () => {
     expect(ingress?.sourcePin?.license).toBe("Apache-2.0");
   });
 
-  it("still counts as a recorded gap despite the pin", () => {
-    // This is the assertion that matters. Pinning the source is real progress
-    // and it is not the thing WO-07 section 2.2 asks for. If having a source
-    // pin ever silently promoted a component out of the gap list, the release
-    // manifest would stop naming it.
-    expect(ingress?.binding.status).toBe("NONE");
-    expect(recordedGaps(ledger).map((c) => c.id)).toContain("dstack-ingress");
+  it("was not what closed the gap, and could not have been", () => {
+    // The assertion that matters, restated now that a binding exists. A source
+    // pin is real progress and is not the thing WO-07 section 2.2 asks for, so
+    // the guarantee worth keeping is that the pin ALONE never promoted this
+    // component out of the gap list.
+    //
+    // The two commits are the proof: the pin names b1a90408, the rebuild that
+    // closed the gap names b322d14e. So the binding demonstrably did not come
+    // from the pin, and a component with only a pin still cannot reach REBUILT
+    // because the schema demands rebuild evidence.
+    const evidence = ingress?.binding.evidence;
+    expect(evidence?.method).toBe("rebuild");
+    if (evidence?.method !== "rebuild") throw new Error("unreachable");
+    expect(evidence.sourceCommit).not.toBe(ingress?.sourcePin?.commit);
+    // A component carrying only a pin parses, and parses as a GAP. That is
+    // the shape this component was in before the rebuild, and it must stay
+    // reachable: if a pin alone could not be expressed, the distinction between
+    // pinning and binding would have quietly disappeared from the schema.
+    const pinnedOnly = parseLedger(
+      ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+        sourcePin: ingress?.sourcePin
+      })
+    );
+    expect(recordedGaps(pinnedOnly)).toHaveLength(1);
   });
 
   it("records the build inputs that decide what the image contains", () => {
@@ -350,8 +383,15 @@ describe("the committed ledger's registry provenance is real", () => {
     }
   });
 
-  it("does not reduce the recorded gap count", () => {
-    // Three gaps before, three after. Characterising a gap is not closing it.
-    expect(recordedGaps(ledger)).toHaveLength(3);
+  it("does not close a gap for either image it describes", () => {
+    // Registry provenance is unsigned, so it can characterise a gap and never
+    // close one. Asserted per component rather than as a total count: the count
+    // moved when dstack-ingress was rebuilt, and a count assertion would have
+    // read that unrelated win as a regression here.
+    for (const component of ledger.components) {
+      if (!component.registryProvenance) continue;
+      expect(component.binding.status, component.id).toBe("NONE");
+      expect(recordedGaps(ledger).map((c) => c.id)).toContain(component.id);
+    }
   });
 });
