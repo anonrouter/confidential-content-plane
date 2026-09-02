@@ -373,20 +373,40 @@ jobs:
             echo "REFUSING: the OIDC token does not carry job_workflow_ref and job_workflow_sha." >&2
             exit 1
           fi
+          # THE CLAIM IS NOT THE CERTIFICATE IDENTITY, and recording only the
+          # claim produced a value that does not verify. Fulcio's SAN is the
+          # full URL form; `job_workflow_ref` omits the `https://github.com/`
+          # prefix. A verifier pinning the claim gets:
+          #   expected SAN value "anonrouter/...", got "https://github.com/anonrouter/..."
+          # Both are recorded, with the one `cosign verify` actually takes named
+          # as such, because this is precisely the kind of near-miss that makes
+          # a published identity unusable while looking correct.
+          identity="https://github.com/${ref}"
           {
             echo "### Signing identity a verifier must pin"
             echo
-            echo "| claim | value |"
+            echo "| field | value |"
             echo "|---|---|"
-            echo "| \`job_workflow_ref\` | \`${ref}\` |"
+            echo "| \`--certificate-identity\` | \`${identity}\` |"
+            echo "| \`job_workflow_ref\` claim | \`${ref}\` |"
             echo "| \`job_workflow_sha\` | \`${sha}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
-          jq -n --arg ref "${ref}" --arg sha "${sha}" \
+          jq -n --arg identity "${identity}" --arg ref "${ref}" --arg sha "${sha}" \
             --arg digest "${{ steps.publish.outputs.digest }}" \
             --arg commit "${{ steps.source.outputs.commit }}" \
-            '{certificateIdentity:$ref, workflowSha:$sha, rebuiltDigest:$digest, sourceCommit:$commit,
+            '{certificateIdentity:$identity, jobWorkflowRefClaim:$ref, workflowSha:$sha,
+              rebuiltDigest:$digest, sourceCommit:$commit,
               certificateOidcIssuer:"https://token.actions.githubusercontent.com"}' \
             > rebuild-artifacts/signing-identity.json
+
+          # Verify our own signature the way a third party would, with the value
+          # we just wrote down. A published identity that has never been used to
+          # verify anything is a guess.
+          cosign verify \
+            --certificate-identity "${identity}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${REBUILD_REPO}@${{ steps.publish.outputs.digest }}" >/dev/null
+          echo "self-verified against the recorded identity"
 
       - name: Upload the comparison and provenance artifacts
         if: always()
