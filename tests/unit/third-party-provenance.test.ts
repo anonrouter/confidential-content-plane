@@ -510,6 +510,35 @@ describe("a controlled equivalent is an alternative, never a proof about the dep
     ).toThrow(/not independently reproduced/);
   });
 
+  it("is recorded for both gaps, and neither closes one", () => {
+    const ledger = loadLedger();
+    for (const id of ["caddy-edge-base", "node-base-image"]) {
+      const component = ledger.components.find((c) => c.id === id);
+      const candidate = component?.controlledEquivalent;
+      expect(candidate, id).toBeTruthy();
+      expect(candidate?.deployed, id).toBe(false);
+      expect(candidate?.digest, id).not.toBe(component?.pinned.digest);
+      // Two independent CI jobs, same digest. The schema enforces the equality;
+      // this asserts the committed record actually carries it rather than
+      // repeating the same value by accident of being hand-written.
+      expect(candidate?.independentlyReproducedDigest, id).toBe(candidate?.digest);
+      expect(candidate?.certificateOidcIssuer, id).toBe("https://token.actions.githubusercontent.com");
+      // The identity a verifier pins must be the form cosign accepts, not the
+      // bare job_workflow_ref claim, which omits the https://github.com/ prefix
+      // Fulcio's SAN carries.
+      expect(candidate?.certificateIdentity, id).toMatch(/^https:\/\/github\.com\//);
+      // And the component must still be a gap. A candidate that quietly closed
+      // one would be the exact rounding-up this ledger exists to refuse.
+      expect(component?.binding.status, id).toBe("NONE");
+    }
+  });
+
+  it("is described in the README as proving nothing about the deployed digest", () => {
+    const readme = buildPublicReadme(loadLedger());
+    expect(readme).toMatch(/NOT deployed/);
+    expect(readme).toMatch(/proves \*\*nothing about the artifact above\*\*/);
+  });
+
   it("cannot claim to be deployed", () => {
     // Promoting one changes the measured Compose, the app id and the policy.
     // That is a measured-release decision, so the schema will not let a ledger

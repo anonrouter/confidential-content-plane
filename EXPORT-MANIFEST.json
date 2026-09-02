@@ -26,19 +26,33 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 158,
+  "copiedSourceFiles": 173,
   "generatedFiles": 7,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
-    "dstack-ingress",
     "node-base-image"
   ],
-  "fileCount": 165,
+  "fileCount": 180,
   "files": [
     {
       "path": ".dockerignore",
       "sha256": "3fb07066e1f51cb1fa2fca887e15692d4b38d31f0fe801546fb39940a93fef1e",
       "bytes": 34
+    },
+    {
+      "path": ".github/workflows/anonrouter-base-build.yml",
+      "sha256": "bbed57b329c590d06fa7bdb73b5fcde7f14772cbb33a8474143a60675f99688c",
+      "bytes": 23157
+    },
+    {
+      "path": ".github/workflows/doi-base-rebuild.yml",
+      "sha256": "d3713806b55dcb5696e4086a3ffcd9f5e49b1e25ecc87fd28f6d28e38415c1fb",
+      "bytes": 21358
+    },
+    {
+      "path": ".github/workflows/dstack-ingress-rebuild.yml",
+      "sha256": "4520f9ea9acbc9c1615f9bf2012b18422db1c9e5e9cd3338a4a65d2eb6c49bfc",
+      "bytes": 20933
     },
     {
       "path": ".github/workflows/finalize.yml",
@@ -72,8 +86,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "c2ed193dd9f50f74b840c1a82b3305115e94c117db009dc5a4eaf52702b4222c",
-      "bytes": 7694
+      "sha256": "181a2684651d81466137257e58abd9d91409e9470729a776379c55c1eb11272c",
+      "bytes": 15922
     },
     {
       "path": "deploy/phala/docker-compose.production.yml",
@@ -101,9 +115,34 @@
       "bytes": 9115
     },
     {
+      "path": "deploy/provenance/base-images/README.md",
+      "sha256": "2bfb58e7c15dcd7717d8da1df04229036573c7ef83012e60a90856af429d403b",
+      "bytes": 6643
+    },
+    {
+      "path": "deploy/provenance/base-images/caddy/Dockerfile",
+      "sha256": "6e5212cf94e06c1dd3bb83af85bda2de49f438472c444f543f2626d1556d00d7",
+      "bytes": 8939
+    },
+    {
+      "path": "deploy/provenance/base-images/caddy/LICENSE.upstream",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "path": "deploy/provenance/base-images/node/Dockerfile",
+      "sha256": "8756e0482d908a755e43e6a6fa0740f0de07d4da8fc99f1bad74c419a800eaf4",
+      "bytes": 8642
+    },
+    {
+      "path": "deploy/provenance/base-images/node/LICENSE.upstream",
+      "sha256": "782e17d54343aa3f6db60430015692b6540089b3ec5b78274981ada2d3c3c423",
+      "bytes": 1119
+    },
+    {
       "path": "deploy/provenance/plaintext-capable-components.json",
-      "sha256": "62e71e3ca6f6e51d72c5d0f3792ee2aff752a734c8d47f485331cd795280568b",
-      "bytes": 14891
+      "sha256": "5e1cf6c6f12275b684867ec411a1364172823335c2a1c0b015b13e0fc52556f7",
+      "bytes": 40629
     },
     {
       "path": "docs/publication/INDEPENDENT_VERIFICATION.md",
@@ -122,8 +161,8 @@
     },
     {
       "path": "scripts/export-public-readme.ts",
-      "sha256": "df23c34c38fa746bc425718a1d483449a25ad4feab0b8e458ec6bae8c4ef9622",
-      "bytes": 11374
+      "sha256": "f2ba3a45919a3bff9974dcf1cec34e3a00d26af96028a4273caef82b367aaa63",
+      "bytes": 20433
     },
     {
       "path": "scripts/finalize-phala-release.mjs",
@@ -141,9 +180,44 @@
       "bytes": 3110
     },
     {
+      "path": "scripts/provenance/check-upstream-signatures.ts",
+      "sha256": "efb03b7fa64fb4e64c2dcb544d8b3805956fa2e27913192495eb9be0452fc25a",
+      "bytes": 12483
+    },
+    {
+      "path": "scripts/provenance/compare-oci-images.ts",
+      "sha256": "28527faa2c0a2e9571faedd20d9d45de1cb4169aedd10575164d12078e7b3121",
+      "bytes": 20763
+    },
+    {
+      "path": "scripts/provenance/doi-source-recipe.ts",
+      "sha256": "45d23076b32a3626bde9d79f73f2f6acaa0530a7cc78a02b06d60bee00314b72",
+      "bytes": 18905
+    },
+    {
+      "path": "scripts/provenance/escrowRuntime.ts",
+      "sha256": "8869fd3b3869564600b6bf319ee05fb49539743c82297c58064ba91e093890c3",
+      "bytes": 10117
+    },
+    {
+      "path": "scripts/provenance/judge-doi-rebuild.ts",
+      "sha256": "cc02e53e691846aae4fac0f939b0922be126da60dc9402d85102e804f11b78fa",
+      "bytes": 12243
+    },
+    {
+      "path": "scripts/provenance/replay-doi-build.sh",
+      "sha256": "6722373251f4baee40f9c26bedd9db8f6377d138619cb657a3af12672b49236b",
+      "bytes": 5269
+    },
+    {
+      "path": "scripts/provenance/scan-build-clock.ts",
+      "sha256": "6132d16512f5f5921f16dd84bf760acdeea12e1a7516ca7cc063743d66352f6c",
+      "bytes": 10866
+    },
+    {
       "path": "scripts/verify-third-party-provenance.ts",
-      "sha256": "2e64b38bd455a31f8ecedd54aa8bb1454ae4c2709aeefa22eeed4ea7891cb654",
-      "bytes": 13247
+      "sha256": "8e507b0985764652b9d7687d9f217ef5015e8fdfaa9aa45d06abff05edbf93cd",
+      "bytes": 26030
     },
     {
       "path": "src/compat/broker.ts",
@@ -787,8 +861,8 @@
     },
     {
       "path": "tests/unit/base-image-pin-platform.test.ts",
-      "sha256": "63f14d0f7805d7deb7e6b796d8a762566d111a6daa4d9ea0fc6066d5c8600699",
-      "bytes": 7533
+      "sha256": "376256b5b2a235c4b54434e96d67c1a9089f45618eefadcd3c4238d2e41810af",
+      "bytes": 8535
     },
     {
       "path": "tests/unit/catalog-provider-binding.test.ts",
@@ -847,8 +921,8 @@
     },
     {
       "path": "tests/unit/third-party-provenance.test.ts",
-      "sha256": "871c5c8ad9bf525af63f6528de6f1fbdd2902106f1e293380724c04371feca3b",
-      "bytes": 15284
+      "sha256": "d82a9b9696991a76a2470cca970fa482c48274154b92dd3b978bd34fc5bc8bff",
+      "bytes": 26909
     },
     {
       "path": "tsconfig.json",

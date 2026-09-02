@@ -48,7 +48,23 @@ const REVIEWED: Record<string, string> = {
   // builder this machine does not have. Confirmed a single-platform OCI manifest
   // rather than an index (`crane manifest` reports no `manifests` array), which
   // is a property build-image-crane.sh guarantees by construction.
-  "ghcr.io/anonrouter/anonrouter-edge-ingress": "sha256:66868f6d8819b676c10e2c4910186f0d382df758b2e25899096766ee4c3af6e1"
+  "ghcr.io/anonrouter/anonrouter-edge-ingress": "sha256:66868f6d8819b676c10e2c4910186f0d382df758b2e25899096766ee4c3af6e1",
+  // The upstream base of the delegated ingress, which is what production
+  // actually derives from.
+  //
+  // MISSING UNTIL 2026-09-01, and the suite had been failing on it since the
+  // delegated ingress image was added: the Dockerfile list is discovered from
+  // deploy/phala/images/*, so a new image directory joins the check
+  // automatically and this map does not. The failure was real rather than
+  // noise — an unreviewed base on the component that terminates customer TLS is
+  // exactly what this suite exists to catch — and it went unnoticed because
+  // nothing ran the suite between the two commits.
+  //
+  // Confirmed a single-platform linux/amd64 OCI manifest, not an index: `crane
+  // manifest` reports 11 layers and no `manifests` array, and the escrow
+  // mirroring tool refuses an index outright, so this digest could not have
+  // been mirrored if it were one.
+  "dstacktee/dstack-ingress:2.3": "sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe"
 };
 
 /** Digests that are known INDEXES. Naming them is what makes the failure legible. */
