@@ -507,6 +507,29 @@ function report(ledger: Ledger): number {
       say("                  registry push access, not a pinned identity. It does name the");
       say(`                  exact commit to rebuild and compare: ${rp.sourceCommit}`);
     }
+    // The measurement, when there is one. Without it a reader is left to assume
+    // the gap is open because nobody has got round to it, which for these two
+    // components is the wrong conclusion in the direction that would waste
+    // somebody's week.
+    if (component.reproducibility) {
+      const r = component.reproducibility;
+      say(`         measured ${r.verdict}`);
+      say(`                  option A ${r.optionAAvailable ? "available" : "UNAVAILABLE"}, option B ${r.optionBAvailable ? "available" : "UNAVAILABLE"}`);
+      say(`                  ${r.run}`);
+      for (const obstruction of r.obstructions) say(`                  - ${obstruction.id}`);
+      if (!r.optionAAvailable && !r.optionBAvailable) {
+        say("                  NOT 'not done yet'. Both routes to a binding were tried and");
+        say("                  neither can succeed for this artifact, so trying harder does");
+        say("                  not help. Closing it means replacing the artifact.");
+      }
+    }
+    if (component.controlledEquivalent) {
+      const e = component.controlledEquivalent;
+      say(`         candidate ${e.image}@${e.digest}`);
+      say(`                  built from ${e.sourceRepository}@${e.sourceCommit}, reproduced independently`);
+      say("                  UNDEPLOYED. A replacement is not a binding for the artifact in");
+      say("                  service, and promoting one is a measured-release decision.");
+    }
   }
 
   say("");

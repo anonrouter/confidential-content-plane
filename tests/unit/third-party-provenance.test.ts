@@ -25,6 +25,23 @@ const REBUILT = {
   verifiedAt: "2026-08-21T00:00:00.000Z"
 };
 
+/** A measurement shaped like the ones the public CI rebuild writes. */
+const MEASURED = {
+  method: "public-ci-rebuild" as const,
+  verdict: "NOT-REPRODUCED-RECIPE-NONDETERMINISTIC" as const,
+  optionAAvailable: false,
+  optionBAvailable: false,
+  run: "https://github.com/anonrouter/confidential-content-plane/actions/runs/1",
+  builderWorkflowRef: "https://github.com/anonrouter/x/.github/workflows/y.yml@refs/heads/main",
+  builderWorkflowSha: "d".repeat(40),
+  rebuiltDigest: `sha256:${"7".repeat(64)}`,
+  rebuiltAgainDigest: `sha256:${"8".repeat(64)}`,
+  sourceDateEpochRebuildDigest: null,
+  obstructions: [{ id: "recipe-nondeterministic", detail: "two identical invocations disagreed" }],
+  evidenceFile: ".evidence/doi-base-rebuild/example-verdict.json",
+  measuredAt: "2026-09-02T22:16:47.000Z"
+};
+
 function ledgerWith(
   binding: unknown,
   pinnedDigest: string | null = `sha256:${"b".repeat(64)}`,
@@ -365,6 +382,145 @@ describe("registry provenance is recorded without being mistaken for a binding",
       { status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`,
       { registryProvenance: { ...provenance, sourceCommit: "v22.1.0" } }
     ))).toThrow();
+  });
+});
+
+describe("a measured impossibility is recorded as one, and cannot be read as a binding", () => {
+  const ledger = loadLedger();
+
+  it("records what the public CI rebuild actually measured for both base images", () => {
+    // The distinction this block exists for: "nobody has rebuilt it yet" and
+    // "no rebuild by anyone can ever match it" are different facts, and only
+    // the first improves by trying again. Without the measurement a reader
+    // draws the first conclusion, which for these two is wrong in the
+    // direction that would waste somebody's week.
+    for (const id of ["caddy-edge-base", "node-base-image"]) {
+      const component = ledger.components.find((c) => c.id === id);
+      expect(component?.reproducibility, id).toBeTruthy();
+      expect(component?.reproducibility?.verdict, id).toBe("NOT-REPRODUCED-RECIPE-NONDETERMINISTIC");
+      expect(component?.reproducibility?.optionAAvailable, id).toBe(false);
+      expect(component?.reproducibility?.optionBAvailable, id).toBe(false);
+      // Two runs of the same recipe, and they must be different images or the
+      // "non-deterministic" verdict is not what was measured.
+      expect(component?.reproducibility?.rebuiltAgainDigest, id).not.toBe(
+        component?.reproducibility?.rebuiltDigest
+      );
+      // And neither may be the deployed digest, which the schema also refuses.
+      expect(component?.reproducibility?.rebuiltDigest, id).not.toBe(component?.pinned.digest);
+    }
+  });
+
+  it("leaves both components RECORDED GAPS, which is the whole point", () => {
+    for (const id of ["caddy-edge-base", "node-base-image"]) {
+      const component = ledger.components.find((c) => c.id === id);
+      expect(component?.binding.status, id).toBe("NONE");
+      expect(recordedGaps(ledger).map((c) => c.id)).toContain(id);
+    }
+  });
+
+  it("refuses REBUILT beside a measurement that says otherwise", () => {
+    // The most dangerous state this file can be in, because both halves look
+    // deliberate. The measurement wins: it came from a public CI run and the
+    // status is a word somebody typed.
+    const raw = JSON.parse(ledgerWith({ status: "REBUILT", evidence: REBUILT }));
+    raw.components[0].reproducibility = { ...MEASURED, rebuiltDigest: `sha256:${"7".repeat(64)}` };
+    expect(() => parseLedger(JSON.stringify(raw))).toThrow(/did not reproduce the deployed digest is not a binding/);
+  });
+
+  it("refuses REBUILT when the measurement says option A cannot succeed", () => {
+    const raw = JSON.parse(ledgerWith({ status: "REBUILT", evidence: REBUILT }));
+    raw.components[0].reproducibility = {
+      ...MEASURED,
+      verdict: "REPRODUCED",
+      optionAAvailable: false,
+      rebuiltDigest: `sha256:${"7".repeat(64)}`
+    };
+    expect(() => parseLedger(JSON.stringify(raw))).toThrow(/records option A as unavailable/);
+  });
+
+  it("refuses a measurement that names the deployed digest while reporting failure", () => {
+    // A rebuild that produced the deployed digest and a verdict of
+    // NOT-REPRODUCED cannot both be true, and the pair would read as a
+    // transcription slip in whichever direction the reader preferred.
+    const raw = JSON.parse(ledgerWith({ status: "NONE", evidence: null }));
+    raw.components[0].reproducibility = { ...MEASURED, rebuiltDigest: `sha256:${"b".repeat(64)}` };
+    expect(() => parseLedger(JSON.stringify(raw))).toThrow(/cannot both be true/);
+  });
+
+  it("requires a measurement to name at least one obstruction", () => {
+    const raw = JSON.parse(ledgerWith({ status: "NONE", evidence: null }));
+    raw.components[0].reproducibility = { ...MEASURED, obstructions: [] };
+    expect(() => parseLedger(JSON.stringify(raw))).toThrow();
+  });
+
+  it("tells a README reader the gap cannot be closed by trying harder", () => {
+    const readme = buildPublicReadme(ledger);
+    expect(readme).toMatch(/not "not done yet"/);
+    expect(readme).toMatch(/unavailable for this artifact/);
+    // And it must still be a gap in the reader's eyes, not a resolved item.
+    expect(readme).toMatch(/NOT established/);
+  });
+});
+
+describe("a controlled equivalent is an alternative, never a proof about the deployed digest", () => {
+  const equivalent = {
+    image: "ghcr.io/anonrouter/mirror/example-base",
+    digest: `sha256:${"1".repeat(64)}`,
+    sourceRepository: "anonrouter/confidential-content-plane",
+    sourceCommit: "2".repeat(40),
+    builderWorkflowRef: "https://github.com/anonrouter/x/.github/workflows/y.yml@refs/heads/main",
+    builderWorkflowSha: "3".repeat(40),
+    certificateIdentity: "https://github.com/anonrouter/x/.github/workflows/y.yml@refs/heads/main",
+    certificateOidcIssuer: "https://token.actions.githubusercontent.com",
+    independentlyReproducedDigest: `sha256:${"1".repeat(64)}`,
+    deployed: false,
+    note: "undeployed candidate"
+  };
+
+  it("parses beside a gap without closing it", () => {
+    const parsed = parseLedger(
+      ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+        controlledEquivalent: equivalent
+      })
+    );
+    expect(recordedGaps(parsed)).toHaveLength(1);
+    expect(establishedBindings(parsed)).toHaveLength(0);
+  });
+
+  it("refuses to share the pinned digest, which would make a replacement read as a binding", () => {
+    expect(() =>
+      parseLedger(
+        ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+          controlledEquivalent: { ...equivalent, digest: `sha256:${"b".repeat(64)}`, independentlyReproducedDigest: `sha256:${"b".repeat(64)}` }
+        })
+      )
+    ).toThrow(/would make a replacement read as a binding/);
+  });
+
+  it("refuses one that was only built once", () => {
+    // A digest produced once on one machine is not a reproducibility claim.
+    // The project's own bar, from the DCAP phase-one gap list: two independent
+    // builders producing the same digest.
+    expect(() =>
+      parseLedger(
+        ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+          controlledEquivalent: { ...equivalent, independentlyReproducedDigest: `sha256:${"9".repeat(64)}` }
+        })
+      )
+    ).toThrow(/not independently reproduced/);
+  });
+
+  it("cannot claim to be deployed", () => {
+    // Promoting one changes the measured Compose, the app id and the policy.
+    // That is a measured-release decision, so the schema will not let a ledger
+    // edit express it.
+    expect(() =>
+      parseLedger(
+        ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+          controlledEquivalent: { ...equivalent, deployed: true }
+        })
+      )
+    ).toThrow();
   });
 });
 

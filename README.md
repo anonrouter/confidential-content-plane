@@ -85,6 +85,32 @@ its trust root is whoever can push to that registry repository, not an identity 
 It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
 the image in service came from that commit.
 
+**This gap has been measured, and it is not "not done yet".** AnonRouter's public CI replayed
+upstream's own recorded build invocation for this exact digest, natively on `linux/amd64`, with every
+argument read out of the deployed image's own SLSA statement rather than from any file in this
+repository. Result: `NOT-REPRODUCED-RECIPE-NONDETERMINISTIC`.
+
+Two **identical** invocations, minutes apart on the same runner with a cold cache, produced
+`sha256:814143b2fffc1e6d557976099a3e32914668bb203a5a43c23c8aa989325a7a87` and `sha256:eec80ff07eb230cb95bc5e53bc63729f85e09a07d0b7ff05507c0230e85425d8`. Those are different images, so no
+rebuild by any party can match a fixed digest. Option A is **unavailable for this artifact**, not
+merely unattempted, and trying harder does not change that. Why, precisely:
+
+- **`recipe-nondeterministic`** Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:814143b2 and sha256:eec80ff0. No rebuild by any party can match a fixed digest.
+- **`build-clock-in-layer-content`** /var/log/apk.log ships inside the image and its first line records the second the build ran: 'Running `apk add --no-cache ca-certificates curl libcap mailcap` at 2026-06-22 20:09:02'. File content, not metadata, so no normalisation flag rewrites it.
+- **`build-clock-in-image-config`** 21 history timestamps differ between two runs of the same recipe, at sub-second precision.
+- **`build-clock-in-manifest-annotation`** org.opencontainers.image.created is derived from `env.SOURCE_DATE_EPOCH // now` by docker-library's meta.jq, and the recorded build set no epoch. The annotation is manifest bytes, so it is part of the digest.
+- **`mutable-archive`** `apk add --no-cache` resolves against Alpine v3.23's live repository. Against the deployed image the rebuild differs by c-ares 1.34.6 -> 1.34.7, a rebuilt curl and libcurl, and the matching lib/apk/db/installed entries. The contents were never recoverable from the source after the fact.
+- **`option-b-absent`** No OCI referrer on the child or the index, no cosign .sig sibling tag, no GitHub attestation under docker-library. One Rekor entry names this digest and carries a bare public key rather than a certificate, so it attests to no identity at all.
+
+Full comparison, layer by layer and path by path: [`.evidence/doi-base-rebuild/caddy-edge-base-verdict.json`](.evidence/doi-base-rebuild/caddy-edge-base-verdict.json).
+The run is public: https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190
+
+Option B was measured on the same run and is also unavailable: no OCI referrer, no cosign signature
+tag, no attestation under the builder's GitHub org. Where the Sigstore transparency log carries an
+entry over the digest at all, it is a bare public key with no certificate, so it names nobody and
+cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the
+log would have accepted it.
+
 **`node-base-image`** Base image of the content-plane image; runs every line of code that handles plaintext. Deployed at `node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066`.
 
 The registry publishes an **unsigned** in-toto SLSA statement whose subject is that exact
@@ -93,6 +119,32 @@ digest, naming upstream commit `bc0a422bce0f729dd85790639d9f1918143f1235`
 its trust root is whoever can push to that registry repository, not an identity we pinned.
 It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
 the image in service came from that commit.
+
+**This gap has been measured, and it is not "not done yet".** AnonRouter's public CI replayed
+upstream's own recorded build invocation for this exact digest, natively on `linux/amd64`, with every
+argument read out of the deployed image's own SLSA statement rather than from any file in this
+repository. Result: `NOT-REPRODUCED-RECIPE-NONDETERMINISTIC`.
+
+Two **identical** invocations, minutes apart on the same runner with a cold cache, produced
+`sha256:6babfba1586e01cc2da1e051f5c879b37c259f0f83db9f03370bcd8498d24953` and `sha256:c1d12a978b22af8334fe0a8001e93c8f9b41a20558fd7e5ed642d22ab498c921`. Those are different images, so no
+rebuild by any party can match a fixed digest. Option A is **unavailable for this artifact**, not
+merely unattempted, and trying harder does not change that. Why, precisely:
+
+- **`recipe-nondeterministic`** Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:6babfba1 and sha256:c1d12a97. No rebuild by any party can match a fixed digest.
+- **`build-clock-in-layer-content`** The ENTIRE difference between those two runs is four shipped log files: /var/log/dpkg.log, /var/log/alternatives.log, /var/log/apt/history.log and /var/log/apt/term.log. apt and dpkg write the wall clock into them and the image ships them. The deployed dpkg.log carries 1,052 such stamps. File content, not metadata.
+- **`build-clock-in-image-config`** 9 history timestamps differ between two runs of the same recipe.
+- **`build-clock-in-manifest-annotation`** org.opencontainers.image.created is derived from `env.SOURCE_DATE_EPOCH // now` by docker-library's meta.jq, and the recorded build set no epoch.
+- **`build-day-in-etc-shadow`** /etc/shadow differs from the deployed image because the node account's last-changed field is a count of days since the epoch. Day resolution, so two runs on the same day agree and a rebuild on any other day cannot.
+- **`option-b-absent`** No OCI referrer on the child or the index, no cosign .sig sibling tag, no GitHub attestation under docker-library, and no Sigstore transparency-log entry over this digest at all.
+
+Full comparison, layer by layer and path by path: [`.evidence/doi-base-rebuild/node-base-image-verdict.json`](.evidence/doi-base-rebuild/node-base-image-verdict.json).
+The run is public: https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190
+
+Option B was measured on the same run and is also unavailable: no OCI referrer, no cosign signature
+tag, no attestation under the builder's GitHub org. Where the Sigstore transparency log carries an
+entry over the digest at all, it is a bare public key with no certificate, so it names nobody and
+cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the
+log would have accepted it.
 
 This is stated here, in the README, because a transparency chain that quietly
 rounds an unverifiable link up to "verified" is worse than no chain: it

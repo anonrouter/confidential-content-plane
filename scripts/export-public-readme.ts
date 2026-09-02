@@ -117,6 +117,64 @@ function gapProse(component: Component): string[] {
     );
   }
   lines.push("");
+
+  // The measurement, when one exists, and it changes what the gap MEANS.
+  //
+  // Without this a reader is left with the natural assumption: the binding is
+  // missing because nobody has done the work yet, and it will appear when
+  // somebody does. For these components that is the wrong conclusion, and wrong
+  // in the direction that would send a reader off to attempt something that
+  // cannot succeed.
+  if (component.reproducibility) {
+    const r = component.reproducibility;
+    lines.push(
+      `**This gap has been measured, and it is not "not done yet".** AnonRouter's public CI replayed`,
+      "upstream's own recorded build invocation for this exact digest, natively on `linux/amd64`, with every",
+      "argument read out of the deployed image's own SLSA statement rather than from any file in this",
+      `repository. Result: \`${r.verdict}\`.`,
+      "",
+      `Two **identical** invocations, minutes apart on the same runner with a cold cache, produced`,
+      `\`${r.rebuiltDigest}\` and \`${r.rebuiltAgainDigest ?? "(second run not available)"}\`. Those are different images, so no`,
+      "rebuild by any party can match a fixed digest. Option A is **unavailable for this artifact**, not",
+      "merely unattempted, and trying harder does not change that. Why, precisely:",
+      ""
+    );
+    for (const obstruction of r.obstructions) {
+      lines.push(`- **\`${obstruction.id}\`** ${obstruction.detail}`);
+    }
+    lines.push(
+      "",
+      `Full comparison, layer by layer and path by path: [\`${r.evidenceFile}\`](${r.evidenceFile}).`,
+      `The run is public: ${r.run}`,
+      ""
+    );
+    if (!r.optionBAvailable) {
+      lines.push(
+        "Option B was measured on the same run and is also unavailable: no OCI referrer, no cosign signature",
+        "tag, no attestation under the builder's GitHub org. Where the Sigstore transparency log carries an",
+        "entry over the digest at all, it is a bare public key with no certificate, so it names nobody and",
+        "cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the",
+        "log would have accepted it.",
+        ""
+      );
+    }
+  }
+
+  if (component.controlledEquivalent) {
+    const e = component.controlledEquivalent;
+    lines.push(
+      `**There is a replacement candidate, and it is NOT deployed.** \`${e.image}@${e.digest}\` is built by`,
+      `AnonRouter from \`${e.sourceRepository}@${e.sourceCommit}\` and reproduced independently by a second CI`,
+      "run at the same digest. It has a real source-to-digest binding because it was built to be",
+      "reproducible.",
+      "",
+      "It proves **nothing about the artifact above**. A replacement is not a binding for the thing in",
+      "service, and saying otherwise would be the exact rounding-up this document exists to refuse.",
+      "Promoting it changes the measured Compose, the app id and the attestation policy, so it is a",
+      "measured-release decision rather than a documentation edit.",
+      ""
+    );
+  }
   return lines;
 }
 

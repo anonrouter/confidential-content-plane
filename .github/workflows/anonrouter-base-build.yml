@@ -1,0 +1,438 @@
+# Build AnonRouter's reproducible replacement candidates for the two base images
+# whose upstream provenance cannot be established, and prove the reproducibility
+# rather than assert it.
+#
+# =============================================================================
+# WHY THIS EXISTS
+# =============================================================================
+#
+# `caddy-edge-base` and `node-base-image` are RECORDED GAPS in
+# deploy/provenance/plaintext-capable-components.json, and doi-base-rebuild.yml
+# measured why: two identical replays of docker-library's own recorded
+# invocation, minutes apart on the same runner with a cold cache, produced
+# different images. Both ship a file whose CONTENT records when the build ran,
+# which no timestamp-normalisation flag reaches. Option B is unavailable too.
+#
+# So neither gap closes by trying harder, and the only remaining move is to
+# replace the artifact with one whose provenance CAN be established.
+#
+# =============================================================================
+# WHAT THIS DOES NOT DO, STATED FIRST BECAUSE IT IS THE EASIEST THING TO GET
+# WRONG
+# =============================================================================
+#
+# Nothing here proves anything about the deployed digests. A reproducible
+# replacement is not retroactive evidence about the thing it would replace, and
+# the ledger schema refuses to let it read as one: `controlledEquivalent` cannot
+# name the pinned upstream digest, and it cannot close a gap.
+#
+# Nothing built here is deployed. Promoting one changes the content-plane image
+# digest, the measured Compose hash, the app id and the attestation policy, and
+# that is a measured-release decision.
+#
+# =============================================================================
+# TWO INDEPENDENT BUILDS, BECAUSE ONE IS NOT A REPRODUCIBILITY CLAIM
+# =============================================================================
+#
+# Replicas `a` and `b` run as separate jobs on separate runners sharing no
+# cache. If their digests differ, nothing is published: the image is not
+# reproducible and saying it is would be the same failure this whole workstream
+# exists to refuse. The bar is the one docs/DCAP_VERIFIER_PHASE_ONE.md section 7
+# already wrote down: two independent builders producing the same digest.
+#
+# Replica `c` is a NEGATIVE CONTROL. It builds with SOURCE_DATE_EPOCH moved by
+# one hour and its digest MUST differ. Without it, "a and b agree" would be
+# consistent with a comparison that cannot tell any two images apart, and a
+# check that has never failed is not evidence.
+#
+# =============================================================================
+# EVERY ACTION IS PINNED TO A FULL COMMIT SHA
+# =============================================================================
+#
+# A tag is a mutable pointer, and these jobs can request the OIDC token that
+# mints the signing identity. Pinning a ref authenticates a name; pinning a
+# commit fixes the implementation.
+
+name: anonrouter-base-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push and sign, only meaningful once both replicas agree"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "anonrouter-base-v*"
+
+permissions: {}
+
+env:
+  NODE_BASE_REPO: ghcr.io/anonrouter/mirror/anonrouter-node-base
+  CADDY_BASE_REPO: ghcr.io/anonrouter/mirror/anonrouter-caddy-base
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # linux/amd64 natively. The confidential deployment is linux/amd64 and
+    # emulation leaves fingerprints in the result: the earlier dstack-ingress
+    # rebuild on Apple Silicon differed from the deployed image only by three
+    # directories Rosetta 2 wrote.
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [node, caddy]
+        replica: [a, b, c]
+    permissions:
+      contents: read
+    outputs: {}
+    steps:
+      - name: Check out, without leaving a credential in the git config
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Derive SOURCE_DATE_EPOCH from the source, not from the clock
+        id: epoch
+        run: |
+          set -euo pipefail
+          # The commit timestamp of the tree being built. Deriving it from the
+          # source is what makes two runs of the same commit agree and a
+          # different commit produce a different image, which is the property
+          # worth having: the digest tracks the source rather than the calendar.
+          base=$(git log -1 --format=%ct)
+          if [ "${{ matrix.replica }}" = "c" ]; then
+            # The negative control. One hour later, and the digest must differ.
+            base=$((base + 3600))
+          fi
+          echo "value=${base}" >> "$GITHUB_OUTPUT"
+          echo "SOURCE_DATE_EPOCH=${base}"
+
+      - name: Set up buildx
+        # docker/setup-buildx-action v4.3.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Build
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
+        run: |
+          set -euo pipefail
+          created=$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)
+          docker buildx build \
+            --progress=plain \
+            --platform linux/amd64 \
+            --no-cache \
+            --provenance=false \
+            --sbom=false \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+            --annotation "manifest,manifest-descriptor:org.opencontainers.image.created=${created}" \
+            --annotation "manifest,manifest-descriptor:org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "manifest,manifest-descriptor:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "manifest,manifest-descriptor:org.opencontainers.image.base.name=debian:bookworm-slim" \
+            --output "type=oci,dest=${GITHUB_WORKSPACE}/image.tar,rewrite-timestamp=true" \
+            "deploy/provenance/base-images/${{ matrix.image }}"
+          # --provenance/--sbom off: inline attestations turn the output into an
+          # index carrying extra manifests, which would change the top-level
+          # digest and make a manifest-to-manifest comparison impossible. They
+          # are produced separately and attached to the pushed image below.
+
+      - name: Record the digest
+        id: digest
+        run: |
+          set -euo pipefail
+          mkdir -p layout && tar -xf image.tar -C layout
+          digest=$(jq -r '.manifests[0].digest' layout/index.json)
+          echo "value=${digest}" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.image }}/${{ matrix.replica }} -> ${digest}"
+          printf '%s' "${digest}" > "digest-${{ matrix.image }}-${{ matrix.replica }}.txt"
+
+      - name: Upload the layout
+        # actions/upload-artifact v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: base-${{ matrix.image }}-${{ matrix.replica }}
+          path: |
+            layout/
+            digest-${{ matrix.image }}-${{ matrix.replica }}.txt
+          retention-days: 7
+
+  judge:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [node, caddy]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out, without leaving a credential in the git config
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install crane
+        # imjasonh/setup-crane v0.4
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Download every replica
+        # actions/download-artifact v6.0.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          pattern: base-${{ matrix.image }}-*
+          path: replicas
+
+      - name: Compare the two independent builds
+        id: compare
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          a=$(cat "replicas/base-${{ matrix.image }}-a/digest-${{ matrix.image }}-a.txt")
+          b=$(cat "replicas/base-${{ matrix.image }}-b/digest-${{ matrix.image }}-b.txt")
+          c=$(cat "replicas/base-${{ matrix.image }}-c/digest-${{ matrix.image }}-c.txt")
+          echo "a=${a}"; echo "b=${b}"; echo "c=${c}"
+
+          set +e
+          npx tsx scripts/provenance/compare-oci-images.ts \
+            "replicas/base-${{ matrix.image }}-a/layout" \
+            "replicas/base-${{ matrix.image }}-b/layout" \
+            | tee "evidence/${{ matrix.image }}-a-vs-b.txt"
+          status=${PIPESTATUS[0]}
+          npx tsx scripts/provenance/compare-oci-images.ts --json \
+            "replicas/base-${{ matrix.image }}-a/layout" \
+            "replicas/base-${{ matrix.image }}-b/layout" \
+            > "evidence/${{ matrix.image }}-a-vs-b.json"
+          set -e
+
+          # NEGATIVE CONTROL. Replica c changed one build input, an hour of
+          # SOURCE_DATE_EPOCH, and nothing else. If its digest matched, then
+          # "a equals b" would be consistent with a build that ignores its
+          # inputs, and the reproducibility claim would be empty.
+          if [ "${c}" = "${a}" ]; then
+            echo "REFUSING: moving SOURCE_DATE_EPOCH by an hour did not change the digest." >&2
+            echo "The build is not responding to its inputs, so agreement between a and b" >&2
+            echo "proves nothing." >&2
+            exit 1
+          fi
+          echo "ok: a changed build input changes the digest (${a} -> ${c})"
+
+          # The caddy candidate deliberately never runs setcap. The Dockerfile
+          # cannot check that for itself, because libcap2-bin is not installed
+          # and `! getcap ... | grep -q ...` passes when getcap does not exist,
+          # which is a check that silently cannot run. So it is checked here,
+          # against the exported layers, with the STOCK image as the control
+          # that proves the check can fail.
+          if [ "${{ matrix.image }}" = "caddy" ]; then
+            for blob in replicas/base-caddy-a/layout/blobs/sha256/*; do
+              if gzip -dc "${blob}" 2>/dev/null | grep -aq "security.capability"; then
+                echo "REFUSING: a layer carries a file capability xattr." >&2
+                exit 1
+              fi
+              if grep -aq "security.capability" "${blob}" 2>/dev/null; then
+                echo "REFUSING: a layer carries a file capability xattr." >&2
+                exit 1
+              fi
+            done
+            echo "ok: no layer carries a file capability"
+            crane pull --format=oci \
+              docker.io/library/caddy@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a3411ad798f7a423a \
+              stock-caddy
+            found=0
+            for blob in stock-caddy/blobs/sha256/*; do
+              if gzip -dc "${blob}" 2>/dev/null | grep -aq "security.capability"; then found=1; fi
+            done
+            if [ "${found}" -ne 1 ]; then
+              echo "REFUSING: the control failed. The stock caddy image is supposed to CARRY" >&2
+              echo "cap_net_bind_service as a file capability, and this check did not find it," >&2
+              echo "so the check above proves nothing." >&2
+              exit 1
+            fi
+            echo "ok: the same check finds the capability in the stock image, so it can fail"
+          fi
+
+          if [ "${a}" = "${b}" ] && [ "${status}" -eq 0 ]; then
+            echo "reproduced=true" >> "$GITHUB_OUTPUT"
+            echo "digest=${a}" >> "$GITHUB_OUTPUT"
+            echo "REPRODUCED across two independent builds: ${a}"
+          else
+            echo "reproduced=false" >> "$GITHUB_OUTPUT"
+            echo "NOT REPRODUCED. Two independent builds of the same commit disagree."
+            echo "Nothing is published. The differences are in the comparison above."
+          fi
+
+          {
+            echo "## ${{ matrix.image }} base"
+            echo
+            echo "| replica | digest |"
+            echo "|---|---|"
+            echo "| a | \`${a}\` |"
+            echo "| b | \`${b}\` |"
+            echo "| c (epoch +1h, must differ) | \`${c}\` |"
+            echo
+            echo '```'
+            sed -n '1,80p' "evidence/${{ matrix.image }}-a-vs-b.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish, only when two independent builds agree
+        id: publish
+        if: >-
+          steps.compare.outputs.reproduced == 'true' &&
+          (github.event_name == 'push' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.image }}" in
+            node)  repo="${NODE_BASE_REPO}" ;;
+            caddy) repo="${CADDY_BASE_REPO}" ;;
+            *) echo "unknown image ${{ matrix.image }}" >&2; exit 1 ;;
+          esac
+          # Credential on stdin, never in argv: a token in a command line is
+          # visible to every process on the box and lands in traces.
+          printf '%s' "${GH_TOKEN}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+          digest="${{ steps.compare.outputs.digest }}"
+          # Tagged by content, so the tag cannot be repointed to different bytes
+          # without the mismatch being visible in the tag itself.
+          crane push "replicas/base-${{ matrix.image }}-a/layout" "${repo}:sha256-${digest#sha256:}"
+          pushed=$(crane digest "${repo}:sha256-${digest#sha256:}")
+          if [ "${pushed}" != "${digest}" ]; then
+            echo "REFUSING: pushed digest ${pushed} is not the reproduced digest ${digest}." >&2
+            exit 1
+          fi
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "digest=${pushed}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: steps.publish.outputs.digest != ''
+        # sigstore/cosign-installer v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Sign keylessly
+        if: steps.publish.outputs.digest != ''
+        # No key material is created, stored or read. cosign exchanges this
+        # job's OIDC token for a short-lived Fulcio certificate whose identity
+        # IS this workflow file at this ref, which is what a verifier pins.
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${{ steps.publish.outputs.repo }}@${{ steps.publish.outputs.digest }}"
+
+      - name: Attest build provenance
+        if: steps.publish.outputs.digest != ''
+        # actions/attest-build-provenance v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ steps.publish.outputs.repo }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate an SBOM
+        if: steps.publish.outputs.digest != ''
+        # anchore/sbom-action v0.24.0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: ${{ steps.publish.outputs.repo }}@${{ steps.publish.outputs.digest }}
+          format: spdx-json
+          output-file: evidence/${{ matrix.image }}-sbom.spdx.json
+
+      - name: Attest the SBOM
+        if: steps.publish.outputs.digest != ''
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign attest \
+            --predicate "evidence/${{ matrix.image }}-sbom.spdx.json" \
+            --type spdxjson \
+            "${{ steps.publish.outputs.repo }}@${{ steps.publish.outputs.digest }}"
+
+      - name: Record the identity a verifier must pin, and use it
+        if: steps.publish.outputs.digest != ''
+        run: |
+          set -euo pipefail
+          claims=$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore" | jq -r '.value' \
+            | cut -d. -f2 | base64 -d 2>/dev/null || true)
+          ref=$(printf '%s' "${claims}" | jq -r '.job_workflow_ref // "ABSENT"')
+          sha=$(printf '%s' "${claims}" | jq -r '.job_workflow_sha // "ABSENT"')
+          if [ "${ref}" = "ABSENT" ] || [ "${sha}" = "ABSENT" ]; then
+            echo "REFUSING: the OIDC token does not carry job_workflow_ref and job_workflow_sha." >&2
+            exit 1
+          fi
+          # THE CLAIM IS NOT THE CERTIFICATE IDENTITY. Fulcio's SAN is the full
+          # URL form and `job_workflow_ref` omits the https://github.com/
+          # prefix. Publishing the bare claim produced a value that looked
+          # correct and could not verify, and it only surfaced by verifying our
+          # own signature from outside CI.
+          identity="https://github.com/${ref}"
+          jq -n --arg identity "${identity}" --arg ref "${ref}" --arg sha "${sha}" \
+            --arg digest "${{ steps.publish.outputs.digest }}" --arg repo "${{ steps.publish.outputs.repo }}" \
+            --arg commit "${GITHUB_SHA}" \
+            '{certificateIdentity:$identity, jobWorkflowRefClaim:$ref, workflowSha:$sha,
+              image:$repo, digest:$digest, sourceCommit:$commit,
+              certificateOidcIssuer:"https://token.actions.githubusercontent.com"}' \
+            > "evidence/${{ matrix.image }}-signing-identity.json"
+          {
+            echo "### Signing identity a verifier must pin"
+            echo
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| \`--certificate-identity\` | \`${identity}\` |"
+            echo "| \`job_workflow_sha\` | \`${sha}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Verify our own signature the way a third party would, with the value
+          # just written down. A published identity that has never been used to
+          # verify anything is a guess.
+          cosign verify \
+            --certificate-identity "${identity}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${{ steps.publish.outputs.repo }}@${{ steps.publish.outputs.digest }}" >/dev/null
+          echo "self-verified against the recorded identity"
+
+          # NEGATIVE CONTROL ON THE VERIFICATION ITSELF. A cosign invocation
+          # that passes for any identity would make the pin decorative, so both
+          # a wrong identity and a wrong issuer must be refused.
+          if cosign verify \
+            --certificate-identity "https://github.com/someone-else/repo/.github/workflows/x.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${{ steps.publish.outputs.repo }}@${{ steps.publish.outputs.digest }}" >/dev/null 2>&1; then
+            echo "REFUSING: the signature verified against an identity that did not sign it." >&2
+            exit 1
+          fi
+          if cosign verify \
+            --certificate-identity "${identity}" \
+            --certificate-oidc-issuer "https://accounts.google.com" \
+            "${{ steps.publish.outputs.repo }}@${{ steps.publish.outputs.digest }}" >/dev/null 2>&1; then
+            echo "REFUSING: the signature verified against the wrong OIDC issuer." >&2
+            exit 1
+          fi
+          echo "ok: a wrong identity and a wrong issuer are both refused"
+
+      - name: Upload the evidence
+        if: always()
+        # actions/upload-artifact v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: anonrouter-base-${{ matrix.image }}
+          path: evidence/
+          if-no-files-found: warn
+
+      - name: Fail only when something was actually wrong
+        run: |
+          if [ "${{ steps.compare.outputs.reproduced }}" != "true" ]; then
+            echo "Two independent builds of the same commit produced different images."
+            echo "Nothing was published, and nothing may be recorded as a controlled"
+            echo "equivalent: one build on one machine is not a reproducibility claim."
+            exit 1
+          fi
+          echo "Reproduced. This is a candidate, not a deployment, and it says nothing"
+          echo "about the upstream digests it would replace."
