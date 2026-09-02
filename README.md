@@ -111,6 +111,16 @@ entry over the digest at all, it is a bare public key with no certificate, so it
 cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the
 log would have accepted it.
 
+**There is a replacement candidate, and it is NOT deployed.** `ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:d4d19b5aca911b75005f21d5b20da5ed884e2bf9865dbfc3c7d8f797ae023a46` is built by
+AnonRouter from `anonrouter/confidential-content-plane@642d158e664520361311dfaa79953e110bc776d6` and reproduced independently by a second CI
+run at the same digest. It has a real source-to-digest binding because it was built to be
+reproducible.
+
+It proves **nothing about the artifact above**. A replacement is not a binding for the thing in
+service, and saying otherwise would be the exact rounding-up this document exists to refuse.
+Promoting it changes the measured Compose, the app id and the attestation policy, so it is a
+measured-release decision rather than a documentation edit.
+
 **`node-base-image`** Base image of the content-plane image; runs every line of code that handles plaintext. Deployed at `node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066`.
 
 The registry publishes an **unsigned** in-toto SLSA statement whose subject is that exact
@@ -145,6 +155,16 @@ tag, no attestation under the builder's GitHub org. Where the Sigstore transpare
 entry over the digest at all, it is a bare public key with no certificate, so it names nobody and
 cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the
 log would have accepted it.
+
+**There is a replacement candidate, and it is NOT deployed.** `ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:5a2c48b28e876edaa8d0dcc7a85db244004dd641af89521c37ac9097c3785879` is built by
+AnonRouter from `anonrouter/confidential-content-plane@642d158e664520361311dfaa79953e110bc776d6` and reproduced independently by a second CI
+run at the same digest. It has a real source-to-digest binding because it was built to be
+reproducible.
+
+It proves **nothing about the artifact above**. A replacement is not a binding for the thing in
+service, and saying otherwise would be the exact rounding-up this document exists to refuse.
+Promoting it changes the measured Compose, the app id and the attestation policy, so it is a
+measured-release decision rather than a documentation edit.
 
 This is stated here, in the README, because a transparency chain that quietly
 rounds an unverifiable link up to "verified" is worse than no chain: it
