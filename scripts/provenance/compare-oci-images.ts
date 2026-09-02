@@ -123,6 +123,31 @@ function open(reference: string): Layout {
     layers: Array<{ digest: string }>;
     annotations?: Record<string, string>;
   };
+
+  // EVERY referenced blob, not just the manifest.
+  //
+  // This check was missing, and a test caught what that costs: a layout whose
+  // config blob had been rewritten in place still compared as IDENTICAL,
+  // because the manifest digest is computed over the manifest and the manifest
+  // had not changed. So the one comparison this project relies on to say "these
+  // are the same image" could be made to say it about an image whose contents
+  // had been swapped underneath it.
+  //
+  // It matters most where the tool is used unattended: the no-upstream restore
+  // drill compares an escrowed archive against a rebuild, and a corrupted or
+  // tampered archive is exactly the condition that drill exists to detect.
+  for (const referenced of [manifest.config.digest, ...manifest.layers.map((l) => l.digest)]) {
+    const path = blobPath(directory, referenced);
+    if (!existsSync(path)) fail(`${reference}: blob ${referenced} is referenced by the manifest and missing`);
+    if (sha256(readFileSync(path)) !== referenced) {
+      fail(
+        `${reference}: blob stored as ${referenced} does not hash to that digest.\n` +
+          "The layout is corrupt or tampered with. Comparing against it would produce a confident answer about\n" +
+          "bytes nobody can name."
+      );
+    }
+  }
+
   return {
     directory,
     manifestDigest,

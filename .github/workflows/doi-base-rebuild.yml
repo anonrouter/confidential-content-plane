@@ -284,12 +284,31 @@ jobs:
       - name: CONTROL, the judge rejects a copy with one field changed
         run: |
           set -euo pipefail
+          # A DIFFERENT BUILD, not a tampered layout: the config changes and
+          # every digest above it moves with it, so the copy stays internally
+          # consistent. That is what a real one-field difference looks like, and
+          # it is what the judge has to report rather than round away.
           cp -r deployed mutated
-          config=$(jq -r '.config.digest' \
-            "mutated/blobs/sha256/$(jq -r '.manifests[0].digest' mutated/index.json | cut -d: -f2)")
-          path="mutated/blobs/sha256/${config#sha256:}"
-          jq '.architecture = "not-the-deployed-architecture"' "${path}" > "${path}.new"
-          mv "${path}.new" "${path}"
+          manifest_digest=$(jq -r '.manifests[0].digest' mutated/index.json)
+          manifest_path="mutated/blobs/sha256/${manifest_digest#sha256:}"
+          config_digest=$(jq -r '.config.digest' "${manifest_path}")
+          config_path="mutated/blobs/sha256/${config_digest#sha256:}"
+
+          jq '.architecture = "not-the-deployed-architecture"' "${config_path}" > new-config.json
+          new_config="sha256:$(sha256sum new-config.json | cut -d' ' -f1)"
+          new_config_size=$(stat -c%s new-config.json)
+          mv new-config.json "mutated/blobs/sha256/${new_config#sha256:}"
+
+          jq --arg d "${new_config}" --argjson s "${new_config_size}" \
+            '.config.digest = $d | .config.size = $s' "${manifest_path}" > new-manifest.json
+          new_manifest="sha256:$(sha256sum new-manifest.json | cut -d' ' -f1)"
+          new_manifest_size=$(stat -c%s new-manifest.json)
+          mv new-manifest.json "mutated/blobs/sha256/${new_manifest#sha256:}"
+
+          jq --arg d "${new_manifest}" --argjson s "${new_manifest_size}" \
+            '.manifests[0].digest = $d | .manifests[0].size = $s' mutated/index.json > new-index.json
+          mv new-index.json mutated/index.json
+
           set +e
           npx tsx scripts/provenance/judge-doi-rebuild.ts \
             --component "${{ matrix.component }}-mutation" \
@@ -303,6 +322,36 @@ jobs:
           fi
           grep -q "not-the-deployed-architecture" evidence/control-mutation.json
           echo "ok: the judge reports a one-field mutation"
+
+      - name: CONTROL, the comparison refuses a layout tampered under its own digest
+        run: |
+          set -euo pipefail
+          # The FIRST run of this workflow found a real hole here, which is why
+          # this control exists separately from the one above. Rewriting a blob
+          # in place leaves the manifest digest unchanged, and the comparison
+          # verified only the manifest. It therefore called two layouts
+          # IDENTICAL while their contents differed. A comparison used to decide
+          # what a deployment is built from must fail closed on that, not
+          # produce a confident answer about bytes nobody can name.
+          cp -r deployed tampered
+          manifest_digest=$(jq -r '.manifests[0].digest' tampered/index.json)
+          config_digest=$(jq -r '.config.digest' "tampered/blobs/sha256/${manifest_digest#sha256:}")
+          config_path="tampered/blobs/sha256/${config_digest#sha256:}"
+          jq '.architecture = "swapped-underneath"' "${config_path}" > swapped.json
+          mv swapped.json "${config_path}"
+          set +e
+          output=$(npx tsx scripts/provenance/judge-doi-rebuild.ts \
+            --component "${{ matrix.component }}-tamper" \
+            --deployed deployed --rebuild tampered 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "${output}" | tee evidence/control-tamper.txt
+          if [ "${status}" -eq 0 ]; then
+            echo "REFUSING: the comparison accepted a layout whose config blob was swapped." >&2
+            exit 1
+          fi
+          printf '%s' "${output}" | grep -q "does not hash to that digest"
+          echo "ok: the comparison refuses a tampered layout"
 
       - name: Judge the rebuild
         id: judge
