@@ -98,11 +98,25 @@ jobs:
         id: epoch
         run: |
           set -euo pipefail
-          # The commit timestamp of the tree being built. Deriving it from the
-          # source is what makes two runs of the same commit agree and a
-          # different commit produce a different image, which is the property
-          # worth having: the digest tracks the source rather than the calendar.
-          base=$(git log -1 --format=%ct)
+          # The commit timestamp of the IMAGE'S OWN directory, not of HEAD.
+          #
+          # Deriving it from the source rather than the clock is what makes two
+          # runs agree, and that much is obvious. Scoping it to the image's
+          # directory is the part worth explaining: with HEAD's timestamp, every
+          # commit to this repository moved the published base-image digest,
+          # including commits that only touched this workflow's own comments.
+          # The ledger records that digest, so an unrelated edit would silently
+          # invalidate a recorded artifact.
+          #
+          # This does not weaken the binding. The workflow is still a build
+          # input and a change to it that affects the output still changes the
+          # digest, because the output changes. What stops moving is the digest
+          # of an image nobody edited.
+          base=$(git log -1 --format=%ct -- "deploy/provenance/base-images/${{ matrix.image }}")
+          if [ -z "${base}" ]; then
+            echo "REFUSING: no commit touches deploy/provenance/base-images/${{ matrix.image }}." >&2
+            exit 1
+          fi
           if [ "${{ matrix.replica }}" = "c" ]; then
             # The negative control. One hour later, and the digest must differ.
             base=$((base + 3600))
@@ -242,11 +256,23 @@ jobs:
             # The first run of this workflow did exactly that, and the control
             # below is what caught it: the candidate "passed" and the stock
             # image, which definitely carries the capability, "passed" too.
+            # `SCHILY.xattr.security.capability`, not `security.capability`.
+            #
+            # The shorter string is a FALSE POSITIVE on any image containing
+            # libcap: the literal appears in libcap.so's and libcap-ng.so's own
+            # string tables, and debian:bookworm-slim ships both. The first
+            # working version of this check therefore refused the candidate for
+            # carrying a capability it does not have.
+            #
+            # The longer string is the PAX extended-header keyword a layer tar
+            # actually uses to record the xattr, so it appears once per file
+            # that carries one and nowhere else. Measured: 1 occurrence in the
+            # stock caddy image's binary layer, 0 in every candidate layer.
             carries_capability() {
               local blob="$1" count
-              count=$( { gzip -dc "${blob}" 2>/dev/null || true; } | grep -ac "security.capability" || true)
+              count=$( { gzip -dc "${blob}" 2>/dev/null || true; } | grep -ac "SCHILY.xattr.security.capability" || true)
               if [ "${count:-0}" -gt 0 ]; then return 0; fi
-              count=$(grep -ac "security.capability" "${blob}" 2>/dev/null || true)
+              count=$(grep -ac "SCHILY.xattr.security.capability" "${blob}" 2>/dev/null || true)
               [ "${count:-0}" -gt 0 ]
             }
 
