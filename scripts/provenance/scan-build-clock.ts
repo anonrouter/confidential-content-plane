@@ -37,7 +37,7 @@
 //   npx tsx scripts/provenance/scan-build-clock.ts <layout-or-reference> <rfc3339-start> <rfc3339-end> [--json]
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,10 +96,29 @@ export function minutesInWindow(start: string, end: string): string[] {
   return minutes;
 }
 
+/**
+ * Same forced-open walk as the comparison tool, for the same reason: Debian
+ * ships `/var/lock/lvm` at mode 0700 owned by root, so an unprivileged
+ * extraction produces a directory whose contents cannot be listed. A scan that
+ * gave up there would report "no build clock found" for precisely the images
+ * most likely to contain one.
+ *
+ * `lstat`, so a symlink is skipped as a symlink rather than followed and its
+ * target scanned twice.
+ */
 function walk(directory: string, base: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(directory)) {
+  let entries: string[];
+  try {
+    entries = readdirSync(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
+    const stats = lstatSync(directory, { throwIfNoEntry: false });
+    chmodSync(directory, ((stats?.mode ?? 0) & 0o7777) | 0o700);
+    entries = readdirSync(directory);
+  }
+  for (const entry of entries) {
     const full = join(directory, entry);
-    const stats = statSync(full, { throwIfNoEntry: false });
+    const stats = lstatSync(full, { throwIfNoEntry: false });
     if (!stats) continue;
     if (stats.isSymbolicLink()) continue;
     if (stats.isDirectory()) walk(full, base, out);
