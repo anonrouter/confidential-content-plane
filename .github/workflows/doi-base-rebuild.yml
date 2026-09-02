@@ -1,0 +1,362 @@
+# Rebuild the Docker Official Image base of a plaintext-capable container, and
+# judge the result in public.
+#
+# =============================================================================
+# WHAT THIS IS TRYING TO ESTABLISH
+# =============================================================================
+#
+# Two components in deploy/provenance/plaintext-capable-components.json are
+# still RECORDED GAPS: `caddy-edge-base`, the base of the in-CVM L7 edge that
+# proxies customer requests after TLS terminates inside the trust domain, and
+# `node-base-image`, which runs every line of code that handles plaintext.
+#
+# Both are Docker Official Images, and for both the ledger records only a pinned
+# digest and an UNSIGNED registry attestation. WO-07 section 2.2 says that is not
+# a binding. Option A closes it by rebuilding from pinned upstream source and
+# matching the deployed digest. This workflow is that rebuild, run natively on
+# linux/amd64 in public CI so a reader can check it rather than trust whoever
+# ran it.
+#
+# =============================================================================
+# THE RECIPE IS READ OUT OF THE DEPLOYED ARTIFACT
+# =============================================================================
+#
+# Nothing here takes this repository's word for what to build. Docker Official
+# Images attach a `mode=max` in-toto SLSA statement to the multi-architecture
+# index whose subject is the exact digest we deploy, and it records the git URL,
+# the commit, the directory, the resolved parent image by digest, the Dockerfile
+# frontend by digest and every build argument.
+#
+# scripts/provenance/doi-source-recipe.ts reads that statement, verifies its
+# subject is our pinned digest and that the registry serves manifest bytes which
+# hash to it, and emits the recipe. Every `docker buildx build` argument below
+# comes from that file. The same discipline as the dstack-ingress rebuild, which
+# read its commit out of /etc/.GIT_REV and immediately retracted a claim this
+# project had been making for weeks.
+#
+# The statement is unsigned, and using it is not a contradiction: the rebuild
+# does not trust it. A wrong commit would produce a different image and the
+# comparison would say so.
+#
+# =============================================================================
+# THREE BUILDS, BECAUSE ONE ANSWERS THE WEAKER QUESTION
+# =============================================================================
+#
+#   R1  the recorded invocation, replayed
+#   R2  the same invocation again, minutes later, --no-cache
+#   R3  the same invocation with SOURCE_DATE_EPOCH set to the deployed build clock
+#
+# R1 against the deployed image asks "did WE reproduce it", and a failure there
+# is ambiguous: our builder could be at fault. That is exactly what the earlier
+# dstack-ingress near-miss turned out to be, where the whole delta was three
+# directories Rosetta 2 wrote.
+#
+# R1 against R2 asks something stronger and unambiguous: is this recipe
+# reproducible BY ANYONE. Two identical invocations disagreeing means no rebuild
+# by any party can match a fixed target, which is the difference between "not
+# done yet" and "cannot be done".
+#
+# R3 closes the remaining fork. docker-library derives
+# org.opencontainers.image.created from `env.SOURCE_DATE_EPOCH // now` and the
+# recorded build set no epoch, so the honest replay cannot produce that
+# annotation. Setting the epoch produces it and collapses the per-step config
+# timestamps the deployed image records at sub-second precision. Running both
+# means neither branch is left as an untested excuse.
+#
+# =============================================================================
+# THE REPLAY IS HANDED THE DEPLOYED ANNOTATIONS ON PURPOSE
+# =============================================================================
+#
+# R1, R2 and R3 all pass the deployed manifest's own annotations, including the
+# build clock, as `--annotation` inputs. That makes the test maximally
+# favourable, which is the right way round while it FAILS: a refutation that
+# survives being handed the answer is a strong refutation.
+#
+# It would not be acceptable if it passed, and the judge knows: supplying the
+# target's metadata sets `bindingEligible: false` even on an exact match, so a
+# surprising pass becomes something to review rather than something to record.
+#
+# =============================================================================
+# EVERY ACTION IS PINNED TO A FULL COMMIT SHA
+# =============================================================================
+#
+# Same reasoning as release.yml and dstack-ingress-rebuild.yml: a tag is a
+# mutable pointer, and an action runs inside this job. Pinning a ref
+# authenticates a name; pinning a commit fixes the implementation.
+
+name: doi-base-rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Which ledger component to rebuild"
+        type: choice
+        options:
+          - both
+          - caddy-edge-base
+          - node-base-image
+        default: both
+
+permissions: {}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      components: ${{ steps.plan.outputs.components }}
+    steps:
+      - id: plan
+        run: |
+          set -euo pipefail
+          case "${{ inputs.component }}" in
+            both) echo 'components=["caddy-edge-base","node-base-image"]' >> "$GITHUB_OUTPUT" ;;
+            *)    echo 'components=["${{ inputs.component }}"]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  rebuild:
+    needs: plan
+    runs-on: ubuntu-latest
+    # ubuntu-latest is linux/amd64 natively. Not a convenience: the earlier
+    # Apple Silicon rebuild of dstack-ingress matched 10 of 11 layers and
+    # differed only by /root/.cache/rosetta. Emulation leaves fingerprints, so
+    # the comparison must run without any.
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.plan.outputs.components) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out, without leaving a credential in the git config
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install crane
+        # imjasonh/setup-crane v0.4
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Prepare the evidence directory
+        run: mkdir -p evidence
+
+      # -----------------------------------------------------------------------
+      # Read the recipe out of the artifact. This is the step that makes the
+      # rest of the job about the right bytes.
+      # -----------------------------------------------------------------------
+      - name: Read the deployed image's own build recipe
+        id: recipe
+        run: |
+          set -euo pipefail
+          npx tsx scripts/provenance/doi-source-recipe.ts "${{ matrix.component }}" --json \
+            > "evidence/${{ matrix.component }}-recipe.json"
+          npx tsx scripts/provenance/doi-source-recipe.ts "${{ matrix.component }}" \
+            | tee "evidence/${{ matrix.component }}-recipe.txt"
+          jq -r '"reference=" + .registry.pullReference' \
+            "evidence/${{ matrix.component }}-recipe.json" >> "$GITHUB_OUTPUT"
+          jq -r '"started=" + .build.buildStartedOn' \
+            "evidence/${{ matrix.component }}-recipe.json" >> "$GITHUB_OUTPUT"
+          jq -r '"finished=" + .build.buildFinishedOn' \
+            "evidence/${{ matrix.component }}-recipe.json" >> "$GITHUB_OUTPUT"
+          jq -r '"digest=" + .registry.imageDigest' \
+            "evidence/${{ matrix.component }}-recipe.json" >> "$GITHUB_OUTPUT"
+
+      - name: NEGATIVE CONTROL, the recipe reader refuses a digest its index does not contain
+        run: |
+          set -euo pipefail
+          # A reader that accepts any digest would happily attach one image's
+          # provenance to another, and every value in the result would look
+          # right. Prove the refusal is real by asking for it.
+          index=$(jq -r '.registry.indexDigest' "evidence/${{ matrix.component }}-recipe.json")
+          repo=$(jq -r '.registry.repository' "evidence/${{ matrix.component }}-recipe.json")
+          foreign=sha256:0000000000000000000000000000000000000000000000000000000000000000
+          if npx tsx scripts/provenance/doi-source-recipe.ts \
+               --repo "${repo}" --index "${index}" --digest "${foreign}" >/dev/null 2>&1; then
+            echo "REFUSING: the recipe reader accepted a digest the index does not contain." >&2
+            exit 1
+          fi
+          echo "ok: the recipe reader refuses a foreign digest"
+
+      - name: Pull the deployed image as an OCI layout
+        run: |
+          set -euo pipefail
+          crane pull --format=oci "${{ steps.recipe.outputs.reference }}" deployed
+          # A registry that serves different bytes for a digest is broken or
+          # hostile, and crane pull alone does not say so out loud.
+          actual=$(jq -r '.manifests[0].digest' deployed/index.json)
+          if [ "${actual}" != "${{ steps.recipe.outputs.digest }}" ]; then
+            echo "REFUSING: pulled layout names ${actual}, requested ${{ steps.recipe.outputs.digest }}." >&2
+            exit 1
+          fi
+
+      # -----------------------------------------------------------------------
+      # Does the artifact record its own build clock in a file it ships? This
+      # is a different question from "are the timestamps normalised", and no
+      # normalisation flag fixes it.
+      # -----------------------------------------------------------------------
+      - name: Scan the deployed image for its own build clock
+        run: |
+          set -euo pipefail
+          set +e
+          npx tsx scripts/provenance/scan-build-clock.ts deployed \
+            "${{ steps.recipe.outputs.started }}" "${{ steps.recipe.outputs.finished }}" \
+            | tee "evidence/${{ matrix.component }}-build-clock.txt"
+          set -e
+          npx tsx scripts/provenance/scan-build-clock.ts --json deployed \
+            "${{ steps.recipe.outputs.started }}" "${{ steps.recipe.outputs.finished }}" \
+            > "evidence/${{ matrix.component }}-build-clock.json" || true
+
+      - name: Set up buildx
+        # docker/setup-buildx-action v4.3.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Record the builder this run used
+        run: |
+          set -euo pipefail
+          # The recipe pins the Dockerfile FRONTEND by digest and names no
+          # buildkitd version, so the daemon that compresses the layers cannot
+          # be matched to the original. Recording ours is the honest response to
+          # a value the recipe does not carry.
+          docker buildx version | tee evidence/builder.txt
+          docker buildx inspect --bootstrap | sed -n '1,20p' | tee -a evidence/builder.txt
+
+      - name: Replay the recorded invocation
+        run: |
+          set -euo pipefail
+          bash scripts/provenance/replay-doi-build.sh \
+            "evidence/${{ matrix.component }}-recipe.json" rebuild-1.tar
+
+      - name: Replay it again, from a cold cache
+        run: |
+          set -euo pipefail
+          # --no-cache is load bearing. Without it BuildKit would hand the second
+          # run the first run's layers and the two would agree for a reason that
+          # has nothing to do with the recipe being deterministic, which is the
+          # exact question this comparison exists to answer.
+          bash scripts/provenance/replay-doi-build.sh \
+            "evidence/${{ matrix.component }}-recipe.json" rebuild-2.tar
+
+      - name: Replay it with SOURCE_DATE_EPOCH set to the deployed build clock
+        run: |
+          set -euo pipefail
+          created=$(jq -r '.deployedArtifact.annotations["org.opencontainers.image.created"] // empty' \
+            "evidence/${{ matrix.component }}-recipe.json")
+          if [ -z "${created}" ]; then
+            echo "the deployed manifest carries no created annotation; skipping the epoch variant"
+            exit 0
+          fi
+          SOURCE_DATE_EPOCH=$(date -u -d "${created}" +%s)
+          export SOURCE_DATE_EPOCH
+          echo "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} (${created})"
+          bash scripts/provenance/replay-doi-build.sh \
+            "evidence/${{ matrix.component }}-recipe.json" rebuild-sde.tar
+
+      - name: Unpack the rebuilds
+        run: |
+          set -euo pipefail
+          for name in rebuild-1 rebuild-2 rebuild-sde; do
+            [ -f "${name}.tar" ] || continue
+            mkdir -p "${name}"
+            tar -xf "${name}.tar" -C "${name}"
+            echo "${name} $(jq -r '.manifests[0].digest' "${name}/index.json")"
+          done
+
+      # -----------------------------------------------------------------------
+      # Controls on the controls, per WO-07 section 10. A judge that rejects
+      # everything proves nothing, so it has to be shown accepting a true match
+      # and rejecting a trivially mutated one.
+      # -----------------------------------------------------------------------
+      - name: CONTROL, the judge accepts an image compared with itself
+        run: |
+          set -euo pipefail
+          npx tsx scripts/provenance/judge-doi-rebuild.ts \
+            --component "${{ matrix.component }}-selfcheck" \
+            --deployed deployed --rebuild deployed \
+            --out evidence/control-identity.json
+          test "$(jq -r '.verdict' evidence/control-identity.json)" = "REPRODUCED"
+          test "$(jq -r '.bindingEligible' evidence/control-identity.json)" = "true"
+          echo "ok: the judge can say yes"
+
+      - name: CONTROL, the judge rejects a copy with one field changed
+        run: |
+          set -euo pipefail
+          cp -r deployed mutated
+          config=$(jq -r '.config.digest' \
+            "mutated/blobs/sha256/$(jq -r '.manifests[0].digest' mutated/index.json | cut -d: -f2)")
+          path="mutated/blobs/sha256/${config#sha256:}"
+          jq '.architecture = "not-the-deployed-architecture"' "${path}" > "${path}.new"
+          mv "${path}.new" "${path}"
+          set +e
+          npx tsx scripts/provenance/judge-doi-rebuild.ts \
+            --component "${{ matrix.component }}-mutation" \
+            --deployed deployed --rebuild mutated \
+            --out evidence/control-mutation.json
+          status=$?
+          set -e
+          if [ "${status}" -eq 0 ]; then
+            echo "REFUSING: the judge accepted a mutated copy." >&2
+            exit 1
+          fi
+          grep -q "not-the-deployed-architecture" evidence/control-mutation.json
+          echo "ok: the judge reports a one-field mutation"
+
+      - name: Judge the rebuild
+        id: judge
+        run: |
+          set -euo pipefail
+          args=( --component "${{ matrix.component }}"
+                 --deployed deployed
+                 --rebuild rebuild-1
+                 --annotations-from-deployed
+                 --out "evidence/${{ matrix.component }}-verdict.json" )
+          [ -d rebuild-2 ]   && args+=( --rebuild-again rebuild-2 )
+          [ -d rebuild-sde ] && args+=( --rebuild-source-date-epoch rebuild-sde )
+          set +e
+          npx tsx scripts/provenance/judge-doi-rebuild.ts "${args[@]}" \
+            | tee "evidence/${{ matrix.component }}-verdict.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          verdict=$(jq -r '.verdict' "evidence/${{ matrix.component }}-verdict.json")
+          eligible=$(jq -r '.bindingEligible' "evidence/${{ matrix.component }}-verdict.json")
+          echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
+          echo "eligible=${eligible}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## ${{ matrix.component }}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| verdict | \`${verdict}\` |"
+            echo "| may be recorded as a binding | \`${eligible}\` |"
+            echo "| deployed | \`$(jq -r '.deployedDigest' "evidence/${{ matrix.component }}-verdict.json")\` |"
+            echo "| rebuilt | \`$(jq -r '.rebuiltDigest' "evidence/${{ matrix.component }}-verdict.json")\` |"
+            echo "| rebuilt again | \`$(jq -r '.rebuiltAgainDigest // "not run"' "evidence/${{ matrix.component }}-verdict.json")\` |"
+            echo "| with SOURCE_DATE_EPOCH | \`$(jq -r '.sourceDateEpochRebuildDigest // "not run"' "evidence/${{ matrix.component }}-verdict.json")\` |"
+            echo
+            echo '```'
+            sed -n '1,120p' "evidence/${{ matrix.component }}-verdict.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "judge exited ${status}"
+
+      - name: Upload the evidence
+        if: always()
+        # actions/upload-artifact v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: doi-base-rebuild-${{ matrix.component }}
+          path: evidence/
+          if-no-files-found: warn
+
+      - name: Say what was established, and only that
+        run: |
+          if [ "${{ steps.judge.outputs.eligible }}" = "true" ]; then
+            echo "REPRODUCED. This rebuild is eligible to be recorded as a WO-07 option A binding."
+          else
+            echo "NOT a binding. The ledger keeps ${{ matrix.component }} at status NONE."
+            echo "That is the result, not a broken job: a near match is not a partial pass,"
+            echo "and an explained difference is still a difference. Read the verdict file."
+          fi

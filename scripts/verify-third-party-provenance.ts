@@ -93,6 +93,59 @@ const sourcePinSchema = z.object({
  * a gap nobody can act on into one with a defined next step, which is what
  * separates a recorded gap from an admission of ignorance.
  */
+/**
+ * What production actually runs, when that is not the pinned upstream artifact.
+ *
+ * `pinned` records the third-party artifact whose provenance this entry is
+ * about. That is usually also the thing production pulls, and for
+ * `dstack-ingress` it is not: production runs an AnonRouter image derived from
+ * the pinned one, so a reader told only about `pinned` would conclude the
+ * deployment pulls from a competitor's registry at boot. It does not, and has
+ * not for some time.
+ *
+ * The field exists because the public README is generated from this file and
+ * said exactly that. A wrong sentence in a transparency document is worse than
+ * a missing one: it is checkable, it is checked, and it is wrong.
+ */
+const runtimeArtifactSchema = z.object({
+  image: z.string().min(1),
+  digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  /**
+   * `identical` means production pulls the pinned artifact itself.
+   * `derived-from-pinned` means it pulls an AnonRouter image built FROM it, so
+   * the pinned artifact remains a build-time dependency and stops being a
+   * runtime one.
+   */
+  relationship: z.enum(["identical", "derived-from-pinned"]),
+  note: z.string().min(1)
+});
+
+/**
+ * The commit the DEPLOYED artifact records as its own source.
+ *
+ * Read OUT OF the artifact, never asserted about it. Upstream dstack-ingress
+ * bakes `git rev-parse HEAD` into /etc/.GIT_REV, which turns the source commit
+ * into a property of the image rather than a claim someone makes on its behalf.
+ *
+ * This field exists because the two can disagree and did. `sourcePin` records
+ * the tree we reviewed; this records the tree the running image was built from.
+ * Nothing in the original schema could express that difference, so a rebuild of
+ * the pinned commit could have been compared against the deployed digest and
+ * reported a confident result about the wrong bytes.
+ */
+const deployedSourceSchema = z.object({
+  commit: z.string().regex(/^[0-9a-f]{40}$/),
+  /**
+   * Only one value, deliberately. If a weaker method is ever added it must be a
+   * visible schema change, because "upstream told us" and "the image says so"
+   * are not the same kind of fact and should never share a field.
+   */
+  method: z.literal("artifact-embedded"),
+  /** Where inside the artifact the value was read from. */
+  path: z.string().min(1),
+  observedAt: z.string().datetime()
+});
+
 const registryProvenanceSchema = z.object({
   method: z.literal("registry-provenance"),
   attestedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
@@ -123,9 +176,25 @@ const componentSchema = z
     pinned: z.object({
       image: z.string().nullable(),
       digest: z.string().regex(/^sha256:[0-9a-f]{64}$/).nullable(),
-      revision: z.string().nullable()
+      revision: z.string().nullable(),
+      /**
+       * The multi-architecture index the pinned child manifest belongs to.
+       *
+       * Not decoration, and not the pin. Two things need it. A reader checking
+       * that `digest` really is this repository's linux/amd64 child has to be
+       * able to walk the index; and the registry's SLSA statement hangs off the
+       * INDEX rather than the child, so without this the recipe is unreachable
+       * for any image whose tag has since moved. `node:22-bookworm-slim` had
+       * already moved when this field was added, which is how the requirement
+       * surfaced.
+       */
+      indexDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+      /** Which child of that index. Recorded so "amd64" is a claim we made, not one inferred. */
+      platform: z.string().optional()
     }),
     sourcePin: sourcePinSchema.nullable().optional(),
+    runtime: runtimeArtifactSchema.nullable().optional(),
+    deployedSource: deployedSourceSchema.nullable().optional(),
     registryProvenance: registryProvenanceSchema.nullable().optional(),
     binding: z.object({
       status: z.enum(["REBUILT", "ATTESTED", "NONE"]),
@@ -135,6 +204,26 @@ const componentSchema = z
   })
   .superRefine((component, ctx) => {
     const { status, evidence } = component.binding;
+
+    // `identical` means what it says. If production runs the pinned artifact,
+    // the two digests must agree, otherwise the field is describing a third
+    // image nobody named.
+    if (component.runtime?.relationship === "identical"
+      && component.pinned.digest !== null
+      && component.runtime.digest !== component.pinned.digest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: runtime claims to be identical to the pinned artifact but names a different digest`
+      });
+    }
+    if (component.runtime?.relationship === "derived-from-pinned"
+      && component.pinned.digest !== null
+      && component.runtime.digest === component.pinned.digest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: runtime claims to be derived from the pinned artifact but names the same digest`
+      });
+    }
 
     // Registry provenance must describe the digest we actually deploy. Provenance
     // for a different digest is provenance for a different image, and recording
@@ -191,10 +280,18 @@ const componentSchema = z
     // If we pinned a source, a rebuild claim must be a rebuild OF THAT SOURCE.
     // Otherwise the ledger could pin one commit, build another, and read as
     // consistent.
-    if (evidence.method === "rebuild" && component.sourcePin && evidence.sourceCommit !== component.sourcePin.commit) {
+    //
+    // `deployedSource` takes precedence when the two disagree, and that
+    // precedence is the whole reason the field exists. A rebuild is trying to
+    // reproduce the DEPLOYED artifact; building the reviewed commit instead
+    // would compare the right procedure against the wrong bytes and report the
+    // difference as a reproducibility failure rather than as the pin being off.
+    const mustRebuildFrom = component.deployedSource?.commit ?? component.sourcePin?.commit;
+    if (evidence.method === "rebuild" && mustRebuildFrom && evidence.sourceCommit !== mustRebuildFrom) {
+      const which = component.deployedSource ? "the commit the deployed image records" : "the pinned source";
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `${component.id}: rebuilt from ${evidence.sourceCommit}, but the pinned source is ${component.sourcePin.commit}`
+        message: `${component.id}: rebuilt from ${evidence.sourceCommit}, but ${which} is ${mustRebuildFrom}`
       });
     }
   });
@@ -267,6 +364,16 @@ function report(ledger: Ledger): number {
       say(`                  tree ${component.sourcePin.treeDigest}`);
       say("                  SOURCE PINNED AND VERIFIED, NOT REBUILT. Still a gap:");
       say("                  nothing yet ties a running image to these bytes.");
+    }
+    if (component.deployedSource) {
+      say(`         deployed ${component.deployedSource.commit}`);
+      say(`                  read from ${component.deployedSource.path} inside the artifact itself`);
+      if (component.sourcePin && component.sourcePin.commit !== component.deployedSource.commit) {
+        say("                  DIVERGENT: the reviewed commit is NOT the commit the");
+        say("                  deployed image was built from. A rebuild must target the");
+        say("                  deployed one, or it compares the right procedure against");
+        say("                  the wrong bytes.");
+      }
     }
     if (component.registryProvenance) {
       const rp = component.registryProvenance;

@@ -41,6 +41,12 @@ export interface FileFacts {
   sha256: string | null;
 }
 
+export interface KeyedDifference {
+  key: string;
+  a: string | null;
+  b: string | null;
+}
+
 export interface ImageComparison {
   identical: boolean;
   manifestDigestA: string;
@@ -48,6 +54,20 @@ export interface ImageComparison {
   layerDigestsA: string[];
   layerDigestsB: string[];
   configDifferences: string[];
+  /**
+   * Annotations live in the MANIFEST, not the config, so nothing below the
+   * manifest can report them and the digests can differ with every other field
+   * agreeing. Docker Official Images set `org.opencontainers.image.created` from
+   * the builder's wall clock, which is exactly a difference of this shape.
+   */
+  manifestAnnotationDifferences: KeyedDifference[];
+  /**
+   * `history[i].created` timestamps, separated from `configDifferences` because
+   * they are the single most common reason two builds of identical bytes
+   * disagree, and burying them in a list of free-text strings makes a
+   * reproducibility verdict unreadable.
+   */
+  historyTimestampDifferences: KeyedDifference[];
   onlyInA: string[];
   onlyInB: string[];
   changed: Array<{ path: string; reasons: string[] }>;
@@ -58,6 +78,7 @@ interface Layout {
   manifestDigest: string;
   configDigest: string;
   layerDigests: string[];
+  annotations: Record<string, string>;
   cleanup: () => void;
 }
 
@@ -100,12 +121,14 @@ function open(reference: string): Layout {
   const manifest = JSON.parse(manifestBytes.toString("utf8")) as {
     config: { digest: string };
     layers: Array<{ digest: string }>;
+    annotations?: Record<string, string>;
   };
   return {
     directory,
     manifestDigest,
     configDigest: manifest.config.digest,
     layerDigests: manifest.layers.map((l) => l.digest),
+    annotations: manifest.annotations ?? {},
     cleanup
   };
 }
@@ -183,7 +206,11 @@ function factsOf(path: string): FileFacts {
 
 function compareConfigs(a: Record<string, any>, b: Record<string, any>): string[] {
   const differences: string[] = [];
-  for (const key of ["created", "architecture", "os", "variant"]) {
+  // `created` is deliberately absent: it is a build timestamp, and it is
+  // reported by compareHistoryTimestamps alongside the per-step ones it belongs
+  // with. Reporting it in both places printed the same fact twice under two
+  // headings, which is how a reader stops reading.
+  for (const key of ["architecture", "os", "variant"]) {
     if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) {
       differences.push(`config.${key}: ${JSON.stringify(a[key])} vs ${JSON.stringify(b[key])}`);
     }
@@ -193,8 +220,8 @@ function compareConfigs(a: Record<string, any>, b: Record<string, any>): string[
     const right = JSON.stringify(b.config?.[key]);
     if (left !== right) differences.push(`config.config.${key}: ${left} vs ${right}`);
   }
-  const historyA = (a.history ?? []) as Array<{ created_by?: string }>;
-  const historyB = (b.history ?? []) as Array<{ created_by?: string }>;
+  const historyA = (a.history ?? []) as Array<{ created_by?: string; created?: string }>;
+  const historyB = (b.history ?? []) as Array<{ created_by?: string; created?: string }>;
   if (historyA.length !== historyB.length) {
     differences.push(`history length: ${historyA.length} vs ${historyB.length}`);
   } else {
@@ -209,6 +236,36 @@ function compareConfigs(a: Record<string, any>, b: Record<string, any>): string[
   return differences;
 }
 
+/**
+ * `history[i].created`, reported separately and structurally.
+ *
+ * A build clock differing is not the same KIND of fact as a changed script, and
+ * a verdict that cannot tell them apart is a verdict nobody can act on. It is
+ * still a difference: this exists to name the cause precisely, never to excuse
+ * it.
+ */
+function compareHistoryTimestamps(a: Record<string, any>, b: Record<string, any>): KeyedDifference[] {
+  const historyA = (a.history ?? []) as Array<{ created?: string }>;
+  const historyB = (b.history ?? []) as Array<{ created?: string }>;
+  const differences: KeyedDifference[] = [];
+  if ((a.created ?? null) !== (b.created ?? null)) {
+    differences.push({ key: "config.created", a: a.created ?? null, b: b.created ?? null });
+  }
+  for (let i = 0; i < Math.max(historyA.length, historyB.length); i += 1) {
+    const left = historyA[i]?.created ?? null;
+    const right = historyB[i]?.created ?? null;
+    if (left !== right) differences.push({ key: `history[${i}].created`, a: left, b: right });
+  }
+  return differences;
+}
+
+function compareAnnotations(a: Record<string, string>, b: Record<string, string>): KeyedDifference[] {
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+  return keys
+    .filter((key) => (a[key] ?? null) !== (b[key] ?? null))
+    .map((key) => ({ key, a: a[key] ?? null, b: b[key] ?? null }));
+}
+
 export function compareImages(referenceA: string, referenceB: string): ImageComparison {
   const a = open(referenceA);
   const b = open(referenceB);
@@ -220,16 +277,19 @@ export function compareImages(referenceA: string, referenceB: string): ImageComp
       layerDigestsA: a.layerDigests,
       layerDigestsB: b.layerDigests,
       configDifferences: [],
+      manifestAnnotationDifferences: [],
+      historyTimestampDifferences: [],
       onlyInA: [],
       onlyInB: [],
       changed: []
     };
     if (result.identical) return result;
 
-    result.configDifferences = compareConfigs(
-      JSON.parse(readFileSync(blobPath(a.directory, a.configDigest), "utf8")),
-      JSON.parse(readFileSync(blobPath(b.directory, b.configDigest), "utf8"))
-    );
+    const configA = JSON.parse(readFileSync(blobPath(a.directory, a.configDigest), "utf8"));
+    const configB = JSON.parse(readFileSync(blobPath(b.directory, b.configDigest), "utf8"));
+    result.configDifferences = compareConfigs(configA, configB);
+    result.historyTimestampDifferences = compareHistoryTimestamps(configA, configB);
+    result.manifestAnnotationDifferences = compareAnnotations(a.annotations, b.annotations);
 
     const filesA = flatten(a);
     const filesB = flatten(b);
@@ -283,9 +343,25 @@ export function renderComparison(comparison: ImageComparison): string {
   }
   lines.push("");
 
+  if (comparison.manifestAnnotationDifferences.length > 0) {
+    lines.push("manifest annotations:");
+    for (const difference of comparison.manifestAnnotationDifferences) {
+      lines.push(`  ${difference.key}\n      A ${difference.a ?? "(absent)"}\n      B ${difference.b ?? "(absent)"}`);
+    }
+    lines.push("");
+  }
+
   if (comparison.configDifferences.length > 0) {
     lines.push("image configuration:");
     for (const difference of comparison.configDifferences) lines.push(`  ${difference}`);
+    lines.push("");
+  }
+
+  if (comparison.historyTimestampDifferences.length > 0) {
+    lines.push(`build timestamps: ${comparison.historyTimestampDifferences.length} differing`);
+    for (const difference of comparison.historyTimestampDifferences) {
+      lines.push(`  ${difference.key}: ${difference.a ?? "(absent)"} vs ${difference.b ?? "(absent)"}`);
+    }
     lines.push("");
   }
 

@@ -35,23 +35,22 @@ source here or follow a reference to pinned upstream source. Which applies:
 | classifier (in-process on the relay) | the truncated latest user turn | here |
 | `compat` broker | full bodies **and** the caller's static `ar_` key | here |
 | `<provider>-worker` | full bodies plus one provider credential | here |
-| `edge` (in-CVM L7 router) | full bodies, after TLS terminates in-TD | here (configuration); **its base image is UPSTREAM, see the gaps below** |
+| `edge` (in-CVM L7 router) | full bodies, after TLS terminates in-TD | here (configuration); its base image is **UPSTREAM, caddyserver/caddy-docker. Apache-2.0. Source-to-digest binding NOT established; see the gaps below** |
 | `<provider>-egress` | ciphertext only (SNI passthrough) | here (configuration) |
 | `gateway-attestation` | **no content at all** | here |
-| `dstack-ingress` | ciphertext, then the plaintext stream in transit | **UPSTREAM, Phala. Apache-2.0. See the gaps below** |
+| `dstack-ingress` | ciphertext, then the plaintext stream in transit | **UPSTREAM, Dstack-TEE/dstack-examples. Apache-2.0. Rebuilt in this repository's CI from pinned upstream source, byte-identical to the deployed digest; see below** |
 
 The `relay`, `compat`, `worker` and `gateway-attestation` roles are all the
 same first-party image, selected by `RUNTIME_ROLE`. Its **base image** is
-upstream and is one of the gaps below: it runs every line of code in this
-repository, so it is plaintext-capable whatever the code above it does.
+upstream: it runs every line of code in this repository, so it is
+plaintext-capable whatever the code above it does, and it is covered by the
+ledger like any other third-party component.
 
-### The 3 unproven links, stated rather than rounded up
+### What a binding is
 
-3 plaintext-capable components in this deployment are not built from this
-source, and for each of them the source-to-digest binding is **NOT established**: `caddy-edge-base`, `dstack-ingress`, `node-base-image`.
-
-A binding means one of exactly two things, and neither has been done for any
-of them:
+Exactly one of two things. Nothing else counts, and in particular a pinned
+digest is not one, a stated Git revision is not one, and an unsigned
+attestation published by a registry is not one:
 
 - **Rebuild.** Build the component in our public CI from pinned upstream source
   and confirm the digest equals the deployed one. A near miss is not a partial
@@ -61,6 +60,22 @@ of them:
   **pinned** upstream identity, both certificate identity and OIDC issuer, over
   the digest actually deployed.
 
+### 1 established binding
+
+**`dstack-ingress`** Terminates customer TLS inside the trust domain. This is the serving path, not an optional one: every request arrives through it. Production runs `ghcr.io/anonrouter/anonrouter-dstack-ingress@sha256:bb6fbf4f89b1f12442c2ae0cbb3f640562fa7362adc6c7ef2bb3d898c02906bd`, an AnonRouter image built FROM `dstacktee/dstack-ingress:2.3@sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe`. So the upstream artifact is a build-time dependency and not a runtime one: nothing is pulled from the upstream registry at boot. Its provenance is still the question this entry is about, because the derived image contains it.
+
+Rebuilt by `https://github.com/anonrouter/confidential-content-plane/.github/workflows/dstack-ingress-rebuild.yml@refs/heads/main` (workflow commit
+`f65f11652a97c29412863398309946289a6f59f9`) from `Dstack-TEE/dstack-examples@b322d14e74920c6523dc7ac7e2974e0414df82d0`,
+producing `sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe`, which is the deployed digest.
+
+The commit was not chosen. It was read from `/etc/.GIT_REV` inside the deployed
+image before any source was fetched, so it is a property of the artifact rather than a claim about it.
+
+### The 2 unproven links, stated rather than rounded up
+
+2 plaintext-capable components in this deployment are not built from this
+source, and for each of them the source-to-digest binding is **NOT established**: `caddy-edge-base`, `node-base-image`.
+
 **`caddy-edge-base`** Base image of the in-CVM L7 edge, which proxies customer plaintext after TLS terminates inside the trust domain. Deployed at `caddy:2.11.4-alpine@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a3411ad798f7a423a`.
 
 The registry publishes an **unsigned** in-toto SLSA statement whose subject is that exact
@@ -69,14 +84,6 @@ digest, naming upstream commit `fba2853501d36e8a72f946ac8cb7ff64d07e48f2`
 its trust root is whoever can push to that registry repository, not an identity we pinned.
 It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
 the image in service came from that commit.
-
-**`dstack-ingress`** Terminates customer TLS inside the trust domain. This is the serving path, not an optional one: every request arrives through it. Deployed at `dstacktee/dstack-ingress:2.3@sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe`.
-
-The upstream source is pinned to commit `b1a90408c314b3bccf8aa529585c01de2fe0fa56` and verified file by
-file against that commit's tree (`sha256:e1ebefae81cee3e5018a508cabf62860746c295f11c72861a766a1bdc67073bb`), licence read and
-confirmed `Apache-2.0`. That is **not a binding** either. A source pin says
-which bytes we intend to build. A binding says the running image came from them. Only the
-second is what is missing.
 
 **`node-base-image`** Base image of the content-plane image; runs every line of code that handles plaintext. Deployed at `node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066`.
 
