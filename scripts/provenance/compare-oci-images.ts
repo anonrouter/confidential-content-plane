@@ -27,7 +27,7 @@
 // Each argument is either an OCI layout directory or a registry reference.
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -182,7 +182,7 @@ function flatten(layout: Layout): Map<string, FileFacts> {
         allowFailure: true,
         maxBuffer: 64 * 1024 * 1024
       });
-      for (const path of walk(extracted, extracted)) {
+      for (const { path, facts } of walk(extracted, extracted)) {
         const name = path.replace(/^\.?\//, "");
         const base = name.split("/").pop() ?? "";
         if (base === ".wh..wh..opq") {
@@ -198,7 +198,7 @@ function flatten(layout: Layout): Map<string, FileFacts> {
           files.delete(`${name.slice(0, name.length - base.length)}${base.slice(4)}`);
           continue;
         }
-        files.set(name, factsOf(join(extracted, path)));
+        files.set(name, facts);
       }
     }
   } finally {
@@ -207,22 +207,57 @@ function flatten(layout: Layout): Map<string, FileFacts> {
   return files;
 }
 
-function walk(directory: string, base: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(directory)) {
+/**
+ * Walk the extracted layer, recording each entry's facts as it is visited.
+ *
+ * Facts are captured DURING the walk rather than afterwards, because of the
+ * directories this has to open by force. A layer tar can carry a directory an
+ * unprivileged extraction cannot then read: Debian ships `/var/lock/lvm` as mode
+ * 0700 owned by root, and `node:22-bookworm-slim` has one, which made every
+ * comparison of a Debian-based image die with EACCES.
+ *
+ * Refusing there would mean never comparing a Debian-based image, and silently
+ * skipping the subtree would hide whatever is inside it, which is worse. So the
+ * mode is recorded first and the directory is opened by adding the owner bits
+ * back afterwards. The recorded facts are the ones from before the chmod, so
+ * the report describes the image rather than what this process did to it.
+ */
+function walk(
+  directory: string,
+  base: string,
+  out: Array<{ path: string; facts: FileFacts }> = []
+): Array<{ path: string; facts: FileFacts }> {
+  let entries: string[];
+  try {
+    entries = readdirSync(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
+    const stats = lstatSync(directory, { throwIfNoEntry: false });
+    chmodSync(directory, ((stats?.mode ?? 0) & 0o7777) | 0o700);
+    entries = readdirSync(directory);
+  }
+  for (const entry of entries) {
     const full = join(directory, entry);
-    const stats = statSync(full, { throwIfNoEntry: false });
-    out.push(relative(base, full));
-    if (stats?.isDirectory() && !stats.isSymbolicLink()) walk(full, base, out);
+    const stats = lstatSync(full, { throwIfNoEntry: false });
+    out.push({ path: relative(base, full), facts: factsOf(full, stats) });
+    if (stats?.isDirectory()) walk(full, base, out);
   }
   return out;
 }
 
-function factsOf(path: string): FileFacts {
-  const stats = statSync(path, { throwIfNoEntry: false });
+/**
+ * `lstat`, not `stat`.
+ *
+ * With `stat` a symlink reads as its target, so a file replaced by a symlink to
+ * an identical file compared as unchanged, and a dangling symlink -- of which a
+ * Debian image has many -- reported as "other" with no target recorded. Neither
+ * is a difference a reader should have to take on trust.
+ */
+function factsOf(path: string, stats = lstatSync(path, { throwIfNoEntry: false })): FileFacts {
   if (!stats) return { kind: "other", mode: "?", size: 0, linkTarget: null, sha256: null };
   const mode = (stats.mode & 0o7777).toString(8).padStart(4, "0");
   if (stats.isSymbolicLink()) {
-    return { kind: "symlink", mode, size: 0, linkTarget: readFileSync(path, "utf8"), sha256: null };
+    return { kind: "symlink", mode, size: 0, linkTarget: readlinkSync(path), sha256: null };
   }
   if (stats.isDirectory()) return { kind: "dir", mode, size: 0, linkTarget: null, sha256: null };
   if (!stats.isFile()) return { kind: "other", mode, size: stats.size, linkTarget: null, sha256: null };

@@ -146,6 +146,81 @@ const deployedSourceSchema = z.object({
   observedAt: z.string().datetime()
 });
 
+/**
+ * What a REBUILD ACTUALLY MEASURED, including when it failed.
+ *
+ * `binding` records whether a source-to-digest binding exists. It has three
+ * values and none of them can say WHY a gap is still a gap, so for a long time
+ * the reason lived in prose that nobody could check and that would age badly
+ * in the one direction that matters: "we have not rebuilt it yet" and "no
+ * rebuild by anyone can ever match it" are different facts with different
+ * consequences, and only the first one improves by trying harder.
+ *
+ * This field is the measurement. It is written from a public CI run's verdict
+ * file, it is allowed to record a failure, and the schema below makes it
+ * impossible for a REBUILT claim to sit next to a measurement that contradicts
+ * it.
+ */
+const reproducibilitySchema = z.object({
+  method: z.literal("public-ci-rebuild"),
+  /** Straight from judge-doi-rebuild.ts. Never hand-written. */
+  verdict: z.enum([
+    "REPRODUCED",
+    "REPRODUCED-WITH-SUPPLIED-METADATA",
+    "NOT-REPRODUCED-RECIPE-NONDETERMINISTIC",
+    "NOT-REPRODUCED"
+  ]),
+  /**
+   * Can option A ever succeed for this artifact? False means the recipe is
+   * non-deterministic or the artifact embeds its own build clock, so the answer
+   * does not change by rebuilding again on a better day.
+   */
+  optionAAvailable: z.boolean(),
+  /** Can option B ever succeed? Measured by check-upstream-signatures.ts. */
+  optionBAvailable: z.boolean(),
+  run: z.string().url(),
+  builderWorkflowRef: z.string().min(1),
+  builderWorkflowSha: z.string().regex(/^[0-9a-f]{40}$/),
+  rebuiltDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  rebuiltAgainDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).nullable(),
+  sourceDateEpochRebuildDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).nullable(),
+  /** Each derived from the artifact or from a comparison, never asserted. */
+  obstructions: z
+    .array(z.object({ id: z.string().min(1), detail: z.string().min(1) }))
+    .min(1),
+  evidenceFile: z.string().min(1),
+  measuredAt: z.string().datetime()
+});
+
+/**
+ * An AnonRouter-built artifact intended to REPLACE an upstream one whose
+ * provenance cannot be established.
+ *
+ * Deliberately not `binding` and deliberately not `runtime`. It is neither: it
+ * says nothing about the deployed digest, and recording it as though it did
+ * would be the exact rounding-up this ledger exists to prevent. A reproducible
+ * image AnonRouter can prove the provenance of does not retroactively prove
+ * anything about the one in service.
+ *
+ * `deployed: false` is the only value the schema accepts, because promoting one
+ * of these into service changes the measured compose, the app id and the policy,
+ * and that is a measured-release decision rather than a ledger edit.
+ */
+const controlledEquivalentSchema = z.object({
+  image: z.string().min(1),
+  digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  sourceRepository: z.string().min(1),
+  sourceCommit: z.string().regex(/^[0-9a-f]{40}$/),
+  builderWorkflowRef: z.string().min(1),
+  builderWorkflowSha: z.string().regex(/^[0-9a-f]{40}$/),
+  certificateIdentity: z.string().min(1),
+  certificateOidcIssuer: z.string().url(),
+  /** Two independent CI runs producing the same digest. One run is not a reproducibility claim. */
+  independentlyReproducedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  deployed: z.literal(false),
+  note: z.union([z.string(), z.array(z.string())])
+});
+
 const registryProvenanceSchema = z.object({
   method: z.literal("registry-provenance"),
   attestedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
@@ -196,6 +271,8 @@ const componentSchema = z
     runtime: runtimeArtifactSchema.nullable().optional(),
     deployedSource: deployedSourceSchema.nullable().optional(),
     registryProvenance: registryProvenanceSchema.nullable().optional(),
+    reproducibility: reproducibilitySchema.nullable().optional(),
+    controlledEquivalent: controlledEquivalentSchema.nullable().optional(),
     binding: z.object({
       status: z.enum(["REBUILT", "ATTESTED", "NONE"]),
       evidence: z.union([rebuildEvidence, attestationEvidence]).nullable()
@@ -233,6 +310,53 @@ const componentSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `${component.id}: registryProvenance attests a different digest than the pinned one`
+      });
+    }
+
+    // A measurement that contradicts the claimed status is the most dangerous
+    // state this file can be in, because both halves look deliberate. The
+    // measurement wins: it came from a public CI run and the status is a word
+    // somebody typed.
+    if (component.reproducibility && status === "REBUILT" && component.reproducibility.verdict !== "REPRODUCED") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `${component.id}: status REBUILT, but the recorded measurement says ` +
+          `${component.reproducibility.verdict}. A rebuild that did not reproduce the deployed digest is not a binding.`
+      });
+    }
+    if (component.reproducibility && status === "REBUILT" && component.reproducibility.optionAAvailable === false) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: status REBUILT, but the measurement records option A as unavailable for this artifact.`
+      });
+    }
+    if (component.reproducibility && component.reproducibility.rebuiltDigest === component.pinned.digest
+      && component.reproducibility.verdict.startsWith("NOT-REPRODUCED")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `${component.id}: the measurement names the deployed digest as the rebuilt one while reporting ` +
+          `${component.reproducibility.verdict}. Those cannot both be true.`
+      });
+    }
+
+    // A controlled equivalent is an alternative, never a proof about the
+    // artifact in service. If it were allowed to share the pinned digest it
+    // would read as one.
+    if (component.controlledEquivalent && component.pinned.digest === component.controlledEquivalent.digest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${component.id}: controlledEquivalent names the pinned digest, which would make a replacement read as a binding`
+      });
+    }
+    if (component.controlledEquivalent
+      && component.controlledEquivalent.digest !== component.controlledEquivalent.independentlyReproducedDigest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `${component.id}: controlledEquivalent was not independently reproduced. ` +
+          "A digest produced once on one machine is not a reproducibility claim."
       });
     }
 
