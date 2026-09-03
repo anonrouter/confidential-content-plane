@@ -239,7 +239,35 @@ jobs:
         run: |
           set -euo pipefail
           ref="${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
-          raw=$(docker buildx imagetools inspect --raw "$ref")
+
+          # RETRY THE READ, NEVER THE VERDICT.
+          #
+          # This step failed once on content-plane-v1.0.10 with "not found" for
+          # a digest that existed and was correct: GHCR had not yet made the
+          # just-pushed manifest readable at the moment the very next step asked
+          # for it. Everything after this point -- the signature, the provenance
+          # attestation, the SBOM -- was therefore skipped, leaving a published
+          # image with none of them, which is worse than no image.
+          #
+          # So the FETCH is retried and the CHECKS are not. If the manifest is
+          # still unreadable after these attempts, that is a real failure and it
+          # fails. A reader can see in the log how many attempts it took, which
+          # is the difference between tolerating a registry's read-after-write
+          # latency and quietly tolerating a missing artifact.
+          raw=""
+          for attempt in 1 2 3 4 5; do
+            if raw=$(docker buildx imagetools inspect --raw "$ref" 2>/dev/null) && [ -n "$raw" ]; then
+              echo "manifest readable on attempt ${attempt}"
+              break
+            fi
+            echo "attempt ${attempt}: the registry does not serve ${ref} yet"
+            raw=""
+            sleep 5
+          done
+          if [ -z "$raw" ]; then
+            echo "REFUSING: ${ref} is still unreadable after 5 attempts over 25 seconds." >&2
+            exit 1
+          fi
           media=$(printf '%s' "$raw" | jq -r '.mediaType')
           echo "mediaType: $media"
           case "$media" in
