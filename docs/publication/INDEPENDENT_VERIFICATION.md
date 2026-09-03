@@ -301,18 +301,38 @@ Also require a **Rekor inclusion proof** against a pinned Rekor public key. An
 unlogged signature is not acceptable: it can be produced and discarded, leaving
 nothing anyone else can audit.
 
-## The three third-party gaps
+## The third-party gaps
 
-Three components can touch plaintext and are not built from this source. For all
-three, the source-to-digest binding is **NOT established**. The authoritative
-record is `deploy/provenance/plaintext-capable-components.json`; this is a
-summary of it.
+Components that can touch plaintext and are not built from this source. The
+authoritative record is `deploy/provenance/plaintext-capable-components.json`,
+the README's gap section is generated from it, and
+`tests/unit/publication-verification-doc.test.ts` fails if this section
+disagrees with either. **Two** are unproven; one was closed by rebuilding it.
 
-| Component | Role | What exists | What that is not |
-| --- | --- | --- | --- |
-| `dstack-ingress` | Terminates customer TLS in-TD. Every request arrives through it | Upstream source pinned to commit `b1a90408c314b3bccf8aa529585c01de2fe0fa56`, all 34 files re-hashed against that commit's tree, licence confirmed Apache-2.0, build inputs extracted. Deployed at `sha256:d05a7b34…` | A **source pin**. It says which bytes we intend to build. It says nothing about which bytes are running |
-| `node:22-bookworm-slim` | Base image of the content plane. Runs every line of code that handles a prompt | Pinned to the linux/amd64 **image manifest** digest `sha256:a17d50af…`, plus an unsigned registry SLSA statement naming `nodejs/docker-node@bc0a422b`, path `22/bookworm-slim` | An **unsigned registry attestation**. Its trust root is registry push access, not an identity we pinned. Anyone who can push can attach one |
-| `caddy:2.11.4-alpine` | Base image of the in-CVM L7 edge, which proxies bodies after TLS terminates in-TD | Pinned to the linux/amd64 image manifest digest `sha256:98eb57d8…`, plus an unsigned registry SLSA statement naming `caddyserver/caddy-docker@fba28535`, path `2.11/alpine` | The same. Useful for telling a rebuilder what to build; not evidence about what ran |
+| Component | Role | State |
+| --- | --- | --- |
+| `node:22-bookworm-slim` | Base image of the content plane. Runs every line of code that handles a prompt | **NOT ESTABLISHED.** Pinned to the linux/amd64 image manifest digest `sha256:a17d50af…`, plus an unsigned registry SLSA statement naming `nodejs/docker-node@bc0a422b` |
+| `caddy:2.11.4-alpine` | Base image of the in-CVM L7 edge, which proxies bodies after TLS terminates in-TD | **NOT ESTABLISHED.** Pinned to `sha256:98eb57d8…`, plus an unsigned registry SLSA statement naming `caddyserver/caddy-docker@fba28535` |
+| `dstack-ingress` | Terminates customer TLS in-TD. Every request arrives through it | **REBUILT.** No longer a gap: a public-CI rebuild from the commit the deployed image itself records reproduced the deployed digest byte for byte |
+
+An unsigned registry attestation is not a binding. Its trust root is registry
+push access, not an identity anyone pinned: whoever can push can attach one. It
+is still useful, because it names the exact commit to rebuild and compare, which
+turns a gap nobody can act on into one with a defined next step.
+
+For the two that remain, replaying the recipe docker-library publishes did not
+reproduce either digest, two identical replays disagreed with each other, and no
+signature meeting this project's bar existed when that was measured on
+2026-09-02. **That is scoped to that recipe, those inputs and that date.** It
+does not mean the digests can never be bound: upstream could publish a
+qualifying signature tomorrow and close both with no rebuild at all.
+
+AnonRouter has built replacement base images that do have a binding — `FROM
+scratch`, reproduced by two independent CI jobs, signed against a pinned
+certificate identity and OIDC issuer. **They are candidates and they are not
+deployed.** A replacement AnonRouter can prove the provenance of says nothing
+about the image in service, and the ledger's schema refuses to let it read as
+though it did.
 
 What the pins **do** buy, and it is not nothing: they are **image manifest**
 digests, not tags and not multi-arch index digests. A tag moves. An index digest
@@ -320,36 +340,42 @@ is immutable but still resolves to a different image per builder architecture, s
 two builds of identical source could differ with nothing recording which ran.
 Pinning the amd64 child means every build gets the base that actually ships.
 
-If you want to close one of these yourself, the unsigned registry statements name
-the exact commit to rebuild and compare. That is their entire value, and it is a
-real one: it turns a gap nobody can act on into one with a defined next step.
+**A near miss is not a partial pass.** If a faithful rebuild produces a different
+digest, the correct outcome is that the binding stays unestablished and the
+discrepancy is recorded.
 
-**A near miss is not a partial pass.** The deployed `dstack-ingress` digest is
-upstream's published image, and upstream did not necessarily build it from the
-pinned commit under conditions anyone can reproduce. If a faithful rebuild
-produces a different digest, the correct outcome is that the binding stays
-unestablished and the discrepancy is recorded.
+## The measurement policy exists, and it is not in this repository
 
-## The measurement policy does not exist yet
-
-There is no production measurement policy to check a deployment against, and this
-is not an oversight.
+This section previously said no production policy existed, that generating one
+before the DNS cutover would create an artifact to be discarded, and that the
+one file in the repository was marked `$superseded` and described a legacy
+Amsterdam identity. The first is now out of date and the last was not accurate
+about the file it named.
 
 A policy binds an **origin** and the **TLS SPKI observed on that origin**, along
 with `mrTd`, `rtmr0` to `rtmr2`, `osImageHash`, the app id, the Compose hash and
-the release id. The production origin does not exist until the DNS cutover.
-Generating a policy now against the preprod hostname would create an artifact
-that must be discarded at cutover, and an artifact that looks authoritative and
-is not is worse than an absent one.
+the release id. One exists for the live confidential origin. It is **not shipped
+in this repository**, and that is deliberate rather than an omission:
 
-The only policy in the repository, `deploy/phala/measurement-policy.production.json`,
-is marked `$superseded`: it describes a legacy Amsterdam identity that is not part
-of the intended launch architecture. **Do not use it.** It was never published
-externally and no live endpoint serves it.
+- a policy is the list of builds *you* accept, so downloading it from the
+  gateway you are checking would let the gateway decide what you accept, which
+  is not verification. `verifyProxy` requires `--policy` to be a file on your
+  own disk for exactly this reason;
+- it moves whenever the deployment's measurement moves, and it has: the guest
+  was resized from `tdx.xlarge` to `tdx.large` on 2026-09-03, which changed
+  `rtmr0`, and every policy issued before that correctly fails against the guest
+  running now.
 
-Until a production policy exists, step 4 above has nothing to check measurements
-against. You can still verify structure, freshness, nonce binding and the TLS
-observation. You cannot verify that the measurements are ones anybody reviewed.
+So the honest instruction is: **obtain a current policy, check its version and
+`rtmr0` before you use it, and do not reuse an old one.** A stale policy does
+not fail safe — it fails against a healthy deployment, at which point the
+temptation is to relax the verifier rather than to fetch the right file.
+
+Everything else in step 4 works today without one. The confidential origin
+serves nonce-bound, in-TD attestation: structure, freshness, nonce binding, the
+in-TEE transport claim and the TLS SPKI observation are all checkable by anyone
+right now. What a policy adds is the last question — whether the measurements
+you just verified are ones somebody reviewed.
 
 ## What a fully green run still does not prove
 

@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 182,
+  "copiedSourceFiles": 183,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 190,
+  "fileCount": 191,
   "files": [
     {
       "path": ".dockerignore",
@@ -161,8 +161,8 @@
     },
     {
       "path": "docs/publication/INDEPENDENT_VERIFICATION.md",
-      "sha256": "06ab81e36083750f83c89a32b69d478008847440825b1c0103db0b42b96ae449",
-      "bytes": 20976
+      "sha256": "5cba6e1c34fd779941e46d52d3f5e1a19100053dcdb9f1d69620ba24aebe1539",
+      "bytes": 22129
     },
     {
       "path": "package-lock.json",
@@ -958,6 +958,11 @@
       "path": "tests/unit/privacy-tiers.test.ts",
       "sha256": "4b997637ae8c85f17f053e5bd2045c4408dec0e79f0ce81794923a8e3ca7b230",
       "bytes": 1579
+    },
+    {
+      "path": "tests/unit/publication-verification-doc.test.ts",
+      "sha256": "16238769dd494e8a86a057288ece5efc55f422901d30f3bfa2e186fbb4de48b1",
+      "bytes": 5595
     },
     {
       "path": "tests/unit/routing-privacy-exclusion.test.ts",
