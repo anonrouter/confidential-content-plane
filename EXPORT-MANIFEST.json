@@ -61,8 +61,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "4836ee5cd34251fe893cf8253ea4e5919695db0de743e4b8acfcb6425c8bdf38",
-      "bytes": 19148
+      "sha256": "18cf471203cb8d6d544fbef85790dcea6875e4782b7d3e6fc5a2c4353862f0ab",
+      "bytes": 20551
     },
     {
       "path": ".github/workflows/verify-chain.yml",
