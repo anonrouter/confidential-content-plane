@@ -27,12 +27,12 @@
     }
   ],
   "copiedSourceFiles": 182,
-  "generatedFiles": 7,
+  "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 189,
+  "fileCount": 190,
   "files": [
     {
       "path": ".dockerignore",
@@ -68,6 +68,11 @@
       "path": ".github/workflows/verify-chain.yml",
       "sha256": "e73c22bc362c143c003b2a9b08d5cfd01386e99bcad5fe29d3b6da301294a8e8",
       "bytes": 16363
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "3fb07066e1f51cb1fa2fca887e15692d4b38d31f0fe801546fb39940a93fef1e",
+      "bytes": 34
     },
     {
       "path": "Dockerfile",
@@ -201,8 +206,8 @@
     },
     {
       "path": "scripts/provenance/content-plane-compat-harness.sh",
-      "sha256": "368cabd4870fb315059a63162fc429a300c66eea7cdcbd3d386b0ecee4b66d65",
-      "bytes": 19311
+      "sha256": "e465dbf3456012859650468393d918a2861cc4f45f19bbd53ff24f7b2b91d8bb",
+      "bytes": 22653
     },
     {
       "path": "scripts/provenance/doi-source-recipe.ts",

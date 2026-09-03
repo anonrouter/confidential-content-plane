@@ -118,22 +118,58 @@ open(out, "w").write(out_text)
 PY
 }
 
-# On a scratch base there is no apt, so the `apt-get install ca-certificates`
-# block has to go with it. It is removed only for the non-stock variants, and
-# the base supplies the bundle instead -- which the matrix then checks.
-strip_apt() {
+# =============================================================================
+# THE STOCK VARIANT HAS TO BE THE ARRANGEMENT THAT IS DEPLOYED
+# =============================================================================
+#
+# This used to STRIP an `apt-get install ca-certificates` block from the
+# candidate and broken variants, keeping it for stock, because a scratch base
+# has no apt and the deployed image gets its trust store that way.
+#
+# Then the exporter moved the trust store into the base and deleted the apt
+# block, and the strip became a no-op nobody noticed. The stock variant was
+# suddenly `node:22-bookworm-slim` with NO OS trust store -- an arrangement
+# that has never been deployed and could not be, since aws_signing_helper is a
+# Go binary that verifies AWS endpoints against that store. The harness then
+# reported `tls-roots: stock=absent, candidate=150` and called the candidate
+# incompatible, when what it had actually measured was the candidate being
+# correct and the comparison being broken.
+#
+# That failure is worth more than the fix: a differential is only as good as
+# its baseline, and a baseline derived by SUBTRACTING from the current source
+# tracks the source rather than the deployment. So the block is now INSERTED
+# into the stock variant rather than retained in it, and the harness refuses to
+# report anything if the stock variant does not end up with a trust store.
+insert_apt_ca_certificates() {
   python3 - "$1" <<'PY'
-import sys, re
+import sys
 p = sys.argv[1]
-s = open(p).read()
-s = re.sub(r"RUN apt-get update \\\n(?:.*\\\n)*?.*rm -rf /var/lib/apt/lists/\*\n", "", s)
-open(p, "w").write(s)
+lines = open(p).read().split("\n")
+if any("apt-get install" in l and "ca-certificates" in l for l in lines):
+    raise SystemExit(0)  # already there; nothing to reproduce
+out, done = [], False
+for line in lines:
+    out.append(line)
+    if not done and line.startswith("FROM ") and line.rstrip().endswith("AS production"):
+        out += [
+            "# INSERTED BY THE HARNESS, to reproduce the arrangement that is deployed:",
+            "# the slim base omits the OS CA trust store, and the deployed image installs",
+            "# it here. The candidate gets the same store from its base instead, and",
+            "# whether those two arrangements are equivalent is the question being asked.",
+            "RUN apt-get update \\",
+            "  && apt-get install -y --no-install-recommends ca-certificates \\",
+            "  && rm -rf /var/lib/apt/lists/*",
+        ]
+        done = True
+if not done:
+    raise SystemExit("no `AS production` stage to insert into")
+open(p, "w").write("\n".join(out))
 PY
 }
 
 mkdir -p "$WORK/df"
-make_dockerfile "$STOCK_BASE" "$WORK/df/stock"
-make_dockerfile "$CANDIDATE" "$WORK/df/candidate"; strip_apt "$WORK/df/candidate"
+make_dockerfile "$STOCK_BASE" "$WORK/df/stock"; insert_apt_ca_certificates "$WORK/df/stock"
+make_dockerfile "$CANDIDATE" "$WORK/df/candidate"
 # The broken control: same candidate base with the CA bundle emptied. It must
 # change at least one observable, or the matrix is not measuring the base.
 cat > "$WORK/df/broken-base" <<EOF
@@ -141,7 +177,7 @@ FROM ${CANDIDATE}
 COPY --from=${CANDIDATE} /etc/passwd /etc/ssl/certs/ca-certificates.crt
 EOF
 docker build --platform linux/amd64 -q -t "cp-compat-brokenbase-$TAG" -f "$WORK/df/broken-base" "$WORK/df" >/dev/null
-make_dockerfile "cp-compat-brokenbase-$TAG" "$WORK/df/broken"; strip_apt "$WORK/df/broken"
+make_dockerfile "cp-compat-brokenbase-$TAG" "$WORK/df/broken"
 
 for v in stock candidate broken; do
   echo "building the content-plane image on the ${v} base..."
@@ -276,6 +312,32 @@ probe() { # probe <variant>
 for v in stock candidate broken; do echo "probing ${v}..."; probe "$v"; done
 
 MATRIX="build deps-load native-sharp native-onnx tls-roots dns uid workdir write-app write-tmp aws-helper boot-healthz sigterm"
+
+# THE BASELINE HAS TO BE THE DEPLOYED ARRANGEMENT, and once it silently was not.
+#
+# A differential reports "identical" or "differs" with equal confidence whether
+# or not its baseline resembles anything that runs. When the exporter moved the
+# CA store into the base, the stock variant lost its trust store, and the
+# harness dutifully reported a difference in the one check where the candidate
+# was RIGHT. Nothing failed; the number was simply about a different question.
+#
+# So the baseline is now asserted before any verdict is printed. A stock variant
+# without an OS trust store is not the content plane as deployed -- Bedrock
+# could not obtain credentials in it -- and a run that produced one has measured
+# nothing worth reading.
+case "${RESULT[stock|tls-roots]:-absent}" in
+  ''|absent|*[!0-9]*)
+    echo
+    echo "REFUSING TO REPORT: the stock variant has no OS trust store"
+    echo "  tls-roots on stock: ${RESULT[stock|tls-roots]:-absent}"
+    echo
+    echo "  That arrangement has never been deployed and could not be: the"
+    echo "  Bedrock worker's aws_signing_helper verifies AWS endpoints against"
+    echo "  that store. The baseline is wrong, so every 'same' below would be"
+    echo "  a comparison against something nobody ships."
+    exit 1
+    ;;
+esac
 
 echo
 echo "DIFFERENTIAL MATRIX  (candidate must equal stock)"
