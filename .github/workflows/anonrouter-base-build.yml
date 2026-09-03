@@ -96,8 +96,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          # FULL HISTORY, because the step below asks git when the image's own
+          # directory last changed. At the default depth of 1 that question has
+          # no answer for any commit that did not touch the directory -- which
+          # is precisely the case the scoping exists to handle -- and the job
+          # refuses. Every run so far happened to be a commit that DID touch it,
+          # so the guard was never exercised and the defect was invisible.
+          fetch-depth: 0
 
-      - name: Derive SOURCE_DATE_EPOCH from the source, not from the clock
+      - name: Derive the build clock AND the recorded revision from the source
         id: epoch
         run: |
           set -euo pipefail
@@ -115,17 +122,36 @@ jobs:
           # input and a change to it that affects the output still changes the
           # digest, because the output changes. What stops moving is the digest
           # of an image nobody edited.
-          base=$(git log -1 --format=%ct -- "deploy/provenance/base-images/${{ matrix.image }}")
-          if [ -z "${base}" ]; then
-            echo "REFUSING: no commit touches deploy/provenance/base-images/${{ matrix.image }}." >&2
+          dir="deploy/provenance/base-images/${{ matrix.image }}"
+          base=$(git log -1 --format=%ct -- "${dir}")
+          rev=$(git log -1 --format=%H -- "${dir}")
+          if [ -z "${base}" ] || [ -z "${rev}" ]; then
+            echo "REFUSING: no commit touches ${dir}." >&2
             exit 1
           fi
+          # THE RECORDED REVISION IS SCOPED THE SAME WAY, and it has to be.
+          #
+          # The manifest annotation used to be GITHUB_SHA, which quietly undid
+          # everything the paragraph above argues for: the revision is part of
+          # the manifest, so the manifest bytes changed on every commit to this
+          # repository, so the digest changed, so an unrelated edit invalidated
+          # the digest the ledger records. Scoping the clock and not the
+          # revision fixes the visible half of the problem and leaves the half
+          # that actually moves the digest.
+          #
+          # Nothing is lost by scoping it. `image.revision` is defined as the
+          # revision of the SOURCE the image was built from, and the source of
+          # this image is that directory. The exact commit the run executed at
+          # is still recorded, in the SLSA provenance attestation, which is the
+          # authoritative record of the run rather than of the source.
           if [ "${{ matrix.replica }}" = "c" ]; then
             # The negative control. One hour later, and the digest must differ.
             base=$((base + 3600))
           fi
           echo "value=${base}" >> "$GITHUB_OUTPUT"
+          echo "revision=${rev}" >> "$GITHUB_OUTPUT"
           echo "SOURCE_DATE_EPOCH=${base}"
+          echo "image revision=${rev}"
 
       - name: Set up buildx
         # docker/setup-buildx-action v4.3.0
@@ -137,6 +163,28 @@ jobs:
         run: |
           set -euo pipefail
           created=$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)
+
+          # THE UNPACK IMAGE IS NOT A BASE, and the annotation may not say it is.
+          #
+          # This used to emit `org.opencontainers.image.base.name=debian:bookworm-slim`,
+          # which is the field a consumer reads to learn what an image inherits.
+          # Both of these images are FROM scratch and inherit nothing; the
+          # ledger's central claim about them is `inheritedBaseImages: []`. So
+          # the image was contradicting the ledger in the one field a reader
+          # would check first, and doing it with a FLOATING TAG, which this
+          # project's own rule says is never evidence.
+          #
+          # What is true is that a pinned Debian image runs dpkg-deb and
+          # ldconfig during the build and contributes no bytes to the result.
+          # There is no OCI key for that, so it gets a namespaced one, and the
+          # value is read out of the Dockerfile by digest so it cannot drift
+          # from the image that actually ran.
+          unpack=$(awk '/AS unpack$/{print $2; exit}' "deploy/provenance/base-images/${{ matrix.image }}/Dockerfile")
+          case "${unpack}" in
+            *@sha256:*) ;;
+            *) echo "REFUSING: the unpack stage is not pinned by digest: ${unpack}" >&2; exit 1 ;;
+          esac
+
           docker buildx build \
             --progress=plain \
             --platform linux/amd64 \
@@ -145,9 +193,9 @@ jobs:
             --sbom=false \
             --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
             --annotation "manifest,manifest-descriptor:org.opencontainers.image.created=${created}" \
-            --annotation "manifest,manifest-descriptor:org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "manifest,manifest-descriptor:org.opencontainers.image.revision=${{ steps.epoch.outputs.revision }}" \
             --annotation "manifest,manifest-descriptor:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            --annotation "manifest,manifest-descriptor:org.opencontainers.image.base.name=debian:bookworm-slim" \
+            --annotation "manifest,manifest-descriptor:ai.anonrouter.image.unpack-image=${unpack}" \
             --output "type=oci,dest=${GITHUB_WORKSPACE}/image.tar,rewrite-timestamp=true" \
             "deploy/provenance/base-images/${{ matrix.image }}"
           # --provenance/--sbom off: inline attestations turn the output into an
@@ -193,6 +241,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          # FULL HISTORY, because the step below asks git when the image's own
+          # directory last changed. At the default depth of 1 that question has
+          # no answer for any commit that did not touch the directory -- which
+          # is precisely the case the scoping exists to handle -- and the job
+          # refuses. Every run so far happened to be a commit that DID touch it,
+          # so the guard was never exercised and the defect was invisible.
+          fetch-depth: 0
 
       - name: Install crane
         # imjasonh/setup-crane v0.4
@@ -359,6 +414,53 @@ jobs:
           fi
           echo "repo=${repo}" >> "$GITHUB_OUTPUT"
           echo "digest=${pushed}" >> "$GITHUB_OUTPUT"
+
+          # ---------------------------------------------------------------
+          # THE SHIPPED METADATA HAS TO BE TRUE, and it was not.
+          # ---------------------------------------------------------------
+          #
+          # Two false provenance statements shipped inside the first published
+          # pair, and neither broke anything, which is why neither was caught by
+          # a test that runs things:
+          #
+          #   * the manifest annotated `image.base.name=debian:bookworm-slim` on
+          #     an image that is FROM scratch, contradicting the ledger's
+          #     `inheritedBaseImages: []` in the field a reader checks first;
+          #   * the caddy config carried
+          #     `image.source=https://github.com/caddyserver/caddy-docker`,
+          #     copied from the image it replaces, pointing a verifier at a
+          #     repository that cannot rebuild these bytes.
+          #
+          # They were found by diffing the candidate against the deployed image
+          # and reading what MOVED. Nothing else would have found them, so the
+          # check now runs against the registry, on the artifact as published.
+          annotations=$(crane manifest "${repo}@${pushed}" | jq -r '.annotations // {}')
+          labels=$(crane config "${repo}@${pushed}" | jq -r '.config.Labels // {}')
+
+          if [ "$(printf '%s' "${annotations}" | jq -r 'has("org.opencontainers.image.base.name")')" != "false" ]; then
+            echo "REFUSING: a FROM scratch image annotated image.base.name." >&2
+            printf '%s\n' "${annotations}" >&2
+            exit 1
+          fi
+
+          src_annotation=$(printf '%s' "${annotations}" | jq -r '.["org.opencontainers.image.source"] // ""')
+          if [ "${src_annotation}" != "https://github.com/${GITHUB_REPOSITORY}" ]; then
+            echo "REFUSING: manifest image.source is '${src_annotation}', not this repository." >&2
+            exit 1
+          fi
+
+          src_label=$(printf '%s' "${labels}" | jq -r '.["org.opencontainers.image.source"] // ""')
+          if [ -n "${src_label}" ] && [ "${src_label}" != "https://github.com/${GITHUB_REPOSITORY}" ]; then
+            echo "REFUSING: config label image.source is '${src_label}', a repository that did not build this image." >&2
+            exit 1
+          fi
+
+          unpack_annotation=$(printf '%s' "${annotations}" | jq -r '.["ai.anonrouter.image.unpack-image"] // ""')
+          case "${unpack_annotation}" in
+            *@sha256:*) echo "ok: unpack image recorded by digest as ${unpack_annotation}" ;;
+            *) echo "REFUSING: unpack image is not recorded by digest: '${unpack_annotation}'" >&2; exit 1 ;;
+          esac
+          echo "ok: shipped metadata names only this repository"
 
       - name: Install cosign
         if: steps.publish.outputs.digest != ''
