@@ -144,10 +144,27 @@ ENV XDG_DATA_HOME=/data
 # removes a dependency on that default.
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
+# The label set is deliberately smaller than the stock image's, because every
+# label here has to be true OF THIS IMAGE.
+#
+# This one previously read `image.source=https://github.com/caddyserver/caddy-docker`,
+# copied from the image being replaced so the two would look alike. On the stock
+# image that is true. Here it is false: caddy-docker's Dockerfile does not
+# produce these bytes and cannot, and `image.source` is defined by the OCI spec
+# as the URL to get the source code FOR BUILDING THE IMAGE. Shipping a pointer
+# to a repository that did not build the artifact, inside the artifact whose
+# entire purpose is a source-to-digest binding, is the exact failure this work
+# exists to remove -- and it would have been the only false provenance statement
+# in the chain. tests/unit/base-image-labels.test.ts now refuses it.
+#
+# The dropped labels (description, documentation, url, vendor) are all about the
+# Caddy project rather than about this image. They are not false so much as not
+# ours to assert, and the four that remain are checkable: the binary IS caddy
+# v2.11.4, released under Apache-2.0, and the recipe IS in the repository named.
 LABEL org.opencontainers.image.version=v2.11.4
 LABEL org.opencontainers.image.title=Caddy
 LABEL org.opencontainers.image.licenses=Apache-2.0
-LABEL org.opencontainers.image.source="https://github.com/caddyserver/caddy-docker"
+LABEL org.opencontainers.image.source="https://github.com/anonrouter/confidential-content-plane"
 
 EXPOSE 80
 EXPOSE 443
