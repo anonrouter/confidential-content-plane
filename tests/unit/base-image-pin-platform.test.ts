@@ -43,12 +43,27 @@ const REVIEWED: Record<string, string> = {
   "haproxy:2.9-alpine": "sha256:45ea835f850da6ba34d5756b0010e202750aa5011a80c99d9b72ff26fc90dbcc",
   "alpine:3.21": "sha256:483f502c0e6aff6d80a807f25d3f88afa40439c29fdd2d21a0912e0f42db842a",
   // FIRST-PARTY base, not a public one. The xlarge edge layers only a Caddyfile
-  // on top of the measured single-provider edge, because that image already has
-  // the caddy file capability stripped and verified and a RUN step needs a
-  // builder this machine does not have. Confirmed a single-platform OCI manifest
-  // rather than an index (`crane manifest` reports no `manifests` array), which
-  // is a property build-image-crane.sh guarantees by construction.
-  "ghcr.io/anonrouter/anonrouter-edge-ingress": "sha256:66868f6d8819b676c10e2c4910186f0d382df758b2e25899096766ee4c3af6e1",
+  // on top of the single-provider edge, which reduces the build to "pinned base
+  // plus one file" and needs no builder. Confirmed a single-platform OCI
+  // manifest rather than an index (`crane manifest` reports no `manifests`
+  // array), which build-image-crane.sh guarantees by construction.
+  //
+  // MOVED FROM `sha256:66868f6d…` on 2026-09-03, twice, and this assertion
+  // caught the second move.
+  //
+  // The edge no longer STRIPS the caddy file capability, because the image
+  // under it never sets one: its base is AnonRouter's own scratch-built caddy
+  // base. That base was then rebuilt to correct three false provenance
+  // statements it shipped, so the edge had to be rebuilt on the corrected base.
+  //
+  // The second rebuild is the interesting one. A search-and-replace across the
+  // tree updated the generator's record of WHICH BASE THE EDGE WAS BUILT ON
+  // without rebuilding the edge, and the generator's own guard passed because
+  // it compares two values that were both just rewritten. This map is
+  // maintained by hand and is checked against the Dockerfiles, so it disagreed
+  // and said so. `derived-from-pinned-base` in the outside-CI verifier now
+  // proves the same thing against the registry, where a lie cannot be written.
+  "ghcr.io/anonrouter/anonrouter-edge-ingress": "sha256:154de881e313db9181b714cba7592d1aa4e0952b2e7bf631812b4eab8a56c21f",
   // The upstream base of the delegated ingress, which is what production
   // actually derives from.
   //

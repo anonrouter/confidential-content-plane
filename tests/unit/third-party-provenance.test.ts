@@ -227,6 +227,68 @@ describe("the ledger cannot claim a binding it has no evidence for", () => {
   });
 });
 
+describe("a clean chain is a claim about a deployment, so it needs a deployment", () => {
+  // THE HOLE THIS FILLS. Every other guard in this suite is about artifacts,
+  // and the README's strongest sentence is not: "every plaintext-capable
+  // component IN THIS DEPLOYMENT has an established binding" is a claim about a
+  // running system. When the two base images are promoted their entries stop
+  // being candidates and become ordinary bindings, at which point the gap count
+  // reaches zero from a text edit. If nobody redeployed, the README announces a
+  // clean chain about a CVM still running the previous images, and every schema
+  // check passes, because no per-component record knows what is running.
+  const CLEAN = () => ledgerWith({ status: "REBUILT", evidence: REBUILT });
+  const ATTESTATION = {
+    composeHash: "e".repeat(64),
+    appId: "0123456789abcdef0123456789abcdef01234567",
+    observedImageDigests: [`sha256:${"b".repeat(64)}`],
+    attestedAt: "2026-09-03T00:00:00.000Z",
+    evidenceFile: ".evidence/release/attestation.json",
+    composeFile: "deploy/phala/docker-compose.prod5-xl.yml"
+  };
+  const withAttestation = (overrides: Record<string, unknown> = {}) => {
+    const parsed = JSON.parse(CLEAN());
+    parsed.deploymentAttestation = { ...ATTESTATION, ...overrides };
+    return JSON.stringify(parsed);
+  };
+
+  it("refuses to generate the clean README with no deployment measurement", () => {
+    const ledger = parseLedger(CLEAN());
+    expect(recordedGaps(ledger)).toEqual([]);
+    expect(() => buildPublicReadme(ledger)).toThrow(/no `deploymentAttestation`/);
+  });
+
+  it("refuses when the measurement did not observe a component it vouches for", () => {
+    // The compose can request a digest the guest never ran. That is the whole
+    // difference between a request and a measurement, and it is the failure a
+    // reader of this README would have no way to detect.
+    const ledger = parseLedger(withAttestation({ observedImageDigests: [`sha256:${"9".repeat(64)}`] }));
+    expect(() => buildPublicReadme(ledger)).toThrow(/does not observe every plaintext-capable component/);
+  });
+
+  it("generates it, and names the measurement, once the guest has been observed", () => {
+    const readme = buildPublicReadme(parseLedger(withAttestation()));
+    expect(readme).toContain("### No unproven links");
+    expect(readme).toContain(ATTESTATION.appId);
+    expect(readme).toContain(ATTESTATION.composeHash);
+    expect(readme).toContain(ATTESTATION.composeFile);
+  });
+
+  it("still refuses a measurement of the wrong deployment, recorded honestly", () => {
+    // A preproduction measurement is a real measurement of a real guest. It is
+    // simply about a different deployment, which is why the compose file it
+    // covers is recorded rather than assumed.
+    const ledger = parseLedger(withAttestation({ composeFile: "deploy/phala/docker-compose.prod5-xl-preprod.yml" }));
+    const readme = buildPublicReadme(ledger);
+    expect(readme).toContain("docker-compose.prod5-xl-preprod.yml");
+  });
+
+  it("the committed ledger still records gaps, so none of this is load-bearing yet", () => {
+    // If this ever fails, the two base images have been promoted, and the
+    // assertions above stop being hypothetical.
+    expect(recordedGaps(loadLedger()).map((c) => c.id)).toEqual(["caddy-edge-base", "node-base-image"]);
+  });
+});
+
 describe("a source pin is not a binding", () => {
   const ledger = loadLedger();
   const ingress = ledger.components.find((c) => c.id === "dstack-ingress");

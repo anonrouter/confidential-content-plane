@@ -296,6 +296,60 @@ function boundProse(component: Component): string[] {
  * it here keeps this function pure, so the test and the exporter cannot end up
  * reading different files.
  */
+/**
+ * The clean claim is about a DEPLOYMENT, so it needs a deployment measurement.
+ *
+ * "Every plaintext-capable component in this deployment has an established
+ * binding" is the strongest sentence this README makes, and every other input
+ * to it is about artifacts. Artifacts cannot support it. A digest pinned in a
+ * compose file is a request; the sentence is about what was granted.
+ *
+ * The specific way this goes wrong is not hypothetical. When the two base
+ * images are promoted, their ledger entries stop being candidates and become
+ * ordinary bindings. At that moment the gap count reaches zero from a text
+ * edit, and if the CVM has not been redeployed and re-attested, the README
+ * announces a clean chain about a deployment still running the previous images
+ * -- with every schema check passing, because nothing in a per-component record
+ * knows what is running.
+ *
+ * So the generator refuses. Not a warning and not a softer sentence: producing
+ * the file at all is what publishes the claim, and a refusal that names the
+ * missing evidence is the only version of this that cannot be skimmed past.
+ */
+function requireDeploymentAttestation(ledger: Ledger): void {
+  const attestation = ledger.deploymentAttestation;
+  const plaintextCapable = ledger.components.filter((c) => c.plaintextCapable);
+  if (!attestation) {
+    throw new Error(
+      "REFUSING to generate a README claiming no unproven links.\n\n" +
+        "Every plaintext-capable component now records a binding, which is a claim about\n" +
+        "ARTIFACTS. The sentence this README would print is about a DEPLOYMENT, and the\n" +
+        "ledger has no `deploymentAttestation`: nobody has recorded that a guest measured\n" +
+        "the promoted compose, produced an app id and re-attested.\n\n" +
+        "Add `deploymentAttestation` with the compose hash, app id, the image digests the\n" +
+        "GUEST reported, the time, the compose file measured, and the evidence path."
+    );
+  }
+  const observed = new Set(attestation.observedImageDigests);
+  // A null pinned digest means the component is not deployed at all, so there
+  // is nothing for a deployment measurement to have observed. Those are
+  // skipped rather than reported missing: demanding that a guest observe an
+  // image nobody deploys would make this refusal permanent and therefore
+  // something to be removed rather than satisfied.
+  const missing = plaintextCapable
+    .map((c) => ({ id: c.id, digest: c.pinned?.digest ?? null }))
+    .filter((c): c is { id: string; digest: string } => c.digest !== null && !observed.has(c.digest));
+  if (missing.length > 0) {
+    throw new Error(
+      "REFUSING to generate a README claiming no unproven links.\n\n" +
+        `The recorded deployment attestation (app ${attestation.appId}, ${attestation.attestedAt})\n` +
+        "does not observe every plaintext-capable component it would be vouching for:\n" +
+        missing.map((c) => `  ${c.id} pinned at ${c.digest}`).join("\n") +
+        "\n\nA measurement of a different deployment is not evidence about this one."
+    );
+  }
+}
+
 export function buildPublicReadme(ledger: Ledger): string {
   const gaps = gapsOf(ledger);
   const bound = boundOf(ledger);
@@ -303,6 +357,7 @@ export function buildPublicReadme(ledger: Ledger): string {
   const count = gaps.length;
   const word = count === 1 ? "link" : "links";
   const byId = (id: string) => ledger.components.find((c) => c.id === id);
+  if (count === 0) requireDeploymentAttestation(ledger);
 
   return [
     "# AnonRouter confidential content plane",
@@ -383,6 +438,16 @@ export function buildPublicReadme(ledger: Ledger): string {
           "about provenance and nothing else: it says the running bytes came from the",
           "named source, not that the named source is free of defects, and it says",
           "nothing at all about components outside the trust domain.",
+          "",
+          "It is also a statement about a DEPLOYMENT rather than about a set of files,",
+          "so it is not made until a guest has measured the compose and re-attested.",
+          `The measurement behind this section is app \`${ledger.deploymentAttestation?.appId}\`,`,
+          `compose hash \`${ledger.deploymentAttestation?.composeHash}\`, over`,
+          `\`${ledger.deploymentAttestation?.composeFile}\` at ${ledger.deploymentAttestation?.attestedAt},`,
+          `observing ${ledger.deploymentAttestation?.observedImageDigests.length ?? 0} image digests.`,
+          "Without that record the generator refuses to produce this file at all, because",
+          "the digests a compose REQUESTS and the digests a guest RUNS are different",
+          "facts, and only the second one supports the sentence above.",
           ""
         ]
       : [
