@@ -128,15 +128,15 @@ different kind of evidence after review. The claim is scoped to the published
 recipe, the inputs reachable from it, and the measurement date.
 
 **There is a replacement candidate. It is integrated in source and NOT deployed.**
-`ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec` is built by AnonRouter from
-`anonrouter/confidential-content-plane@7814865e24ff0caa9d28e25a8fa917710c1f2768`, reproduced independently by a second CI job at the same
+`ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:62c3df7708bf00f13240cb028cba40d44757ea5c6c8584bc8867e288a61555f5` is built by AnonRouter from
+`anonrouter/confidential-content-plane@8e79c05de21e8efcfad4a04a45d267eb2009fd9b`, reproduced independently by a second CI job at the same
 digest, and signed against a pinned identity and issuer:
 
 ```
 cosign verify \
   --certificate-identity 'https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec
+  ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:62c3df7708bf00f13240cb028cba40d44757ea5c6c8584bc8867e288a61555f5
 ```
 
 **It inherits no container base image.** `inheritedBaseImages` is empty and the ledger schema will
@@ -214,7 +214,7 @@ different kind of evidence after review. The claim is scoped to the published
 recipe, the inputs reachable from it, and the measurement date.
 
 **There is a replacement candidate. It is integrated in source and NOT deployed.**
-`ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1` is built by AnonRouter from
+`ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d` is built by AnonRouter from
 `anonrouter/confidential-content-plane@7814865e24ff0caa9d28e25a8fa917710c1f2768`, reproduced independently by a second CI job at the same
 digest, and signed against a pinned identity and issuer:
 
@@ -222,7 +222,7 @@ digest, and signed against a pinned identity and issuer:
 cosign verify \
   --certificate-identity 'https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1
+  ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d
 ```
 
 **It inherits no container base image.** `inheritedBaseImages` is empty and the ledger schema will

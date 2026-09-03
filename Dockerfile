@@ -58,13 +58,13 @@ RUN npm ci --omit=dev && npm cache clean --force
 #   cosign verify \
 #     --certificate-identity 'https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main' \
 #     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-#     ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1
+#     ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d
 #
 # Compatibility evidence, against the base this replaces, under the real
 # runtime policy: .evidence/base-image-compat/content-plane-compat-local.json.
 # 13 of 13 differential checks identical, every production dependency loads,
 # sharp encodes, onnxruntime loads, the application answers /healthz.
-FROM ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1 AS production
+FROM ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d AS production
 ENV NODE_ENV=production \
     ROUTER_MODEL_CACHE_DIR=/opt/anonrouter-router-model \
     ROUTER_ARTIFACT_PATH=/app/src/routing/artifacts/embeddinggemma-q4-v1.json \
