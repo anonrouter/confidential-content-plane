@@ -263,6 +263,55 @@ const controlledEquivalentSchema = z.object({
   certificateOidcIssuer: z.string().url(),
   /** Two independent CI runs producing the same digest. One run is not a reproducibility claim. */
   independentlyReproducedDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  /**
+   * Container images this artifact INHERITS, which must be empty.
+   *
+   * A replacement built `FROM debian:bookworm-slim` inherits a Docker Official
+   * Image with exactly the unbound provenance of the component it replaces: the
+   * gap moves down a layer and the paperwork moves with it. The first version
+   * of both candidates did precisely that.
+   *
+   * The field is a literal empty array rather than optional, because "we did
+   * not think about it" and "there is nothing to inherit" must not look the
+   * same in the ledger.
+   */
+  inheritedBaseImages: z.array(z.string()).max(0),
+  /**
+   * Images used to BUILD it that never ship. A different and weaker exposure
+   * than an inherited base, and not zero, so it is named rather than omitted.
+   */
+  buildToolDependencies: z.array(
+    z.object({
+      image: z.string().min(1),
+      digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+      why: z.string().min(1),
+      shipsBytes: z.literal(false)
+    })
+  ),
+  /**
+   * Evidence that the replacement behaves like the thing it replaces, under the
+   * real deployment policy.
+   *
+   * `differingChecks: 0` is required to record it at all. A candidate that
+   * behaves differently is a candidate, not a replacement, and "two CI jobs
+   * produced the same digest" says nothing about whether the image works.
+   */
+  compatibility: z.object({
+    method: z.literal("differential-harness"),
+    harness: z.string().min(1),
+    comparedAgainst: z.string().min(1),
+    checks: z.number().int().positive(),
+    differingChecks: z.literal(0),
+    /** A matrix that cannot tell two images apart proves nothing by agreeing. */
+    controlDetectedDifferences: z.number().int().positive(),
+    evidenceFile: z.string().min(1)
+  }),
+  /**
+   * Where the replacement is referenced in source. Integration and deployment
+   * are different states, and collapsing them is how a "candidate" quietly
+   * becomes what production builds.
+   */
+  integratedIn: z.array(z.string()),
   deployed: z.literal(false),
   note: z.union([z.string(), z.array(z.string())])
 });
@@ -573,6 +622,10 @@ function report(ledger: Ledger): number {
       const e = component.controlledEquivalent;
       say(`         candidate ${e.image}@${e.digest}`);
       say(`                  built from ${e.sourceRepository}@${e.sourceCommit}, reproduced independently`);
+      say(`                  inherits no base image; ${e.buildToolDependencies.length} build-tool dependency/ies`);
+      for (const tool of e.buildToolDependencies) say(`                    build tool ${tool.image}@${tool.digest.slice(0, 19)}…`);
+      say(`                  compatibility ${e.compatibility.checks} checks, ${e.compatibility.differingChecks} differing, control caught ${e.compatibility.controlDetectedDifferences}`);
+      for (const where of e.integratedIn) say(`                  integrated in ${where}`);
       say("                  UNDEPLOYED. A replacement is not a binding for the artifact in");
       say("                  service, and promoting one is a measured-release decision.");
     }

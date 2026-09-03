@@ -64,7 +64,26 @@ const REVIEWED: Record<string, string> = {
   // manifest` reports 11 layers and no `manifests` array, and the escrow
   // mirroring tool refuses an index outright, so this digest could not have
   // been mirrored if it were one.
-  "dstacktee/dstack-ingress:2.3": "sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe"
+  "dstacktee/dstack-ingress:2.3": "sha256:527c53523b9226782a11dbd800a3ff55e8a1f0b88e6224e8f7e4db7419769fbe",
+  // AnonRouter's own scratch-built replacement for the caddy base, which the
+  // edge now derives from. It is here for the same reason as every other entry
+  // -- a pin nobody reviewed is what this suite exists to catch -- and it earns
+  // a stronger review than the public ones can get: it was produced by two
+  // independent public-CI jobs at this digest and is signed against a pinned
+  // OIDC identity, so a reader can check the pin rather than take it.
+  //
+  //   cosign verify \
+  //     --certificate-identity 'https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main' \
+  //     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  //     ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:b834a839...
+  "ghcr.io/anonrouter/mirror/anonrouter-caddy-base":
+    "sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec",
+  // The same, for the content-plane runtime base. Referenced by the Dockerfile
+  // the exporter generates rather than by a file in this repository, so it is
+  // listed here to keep the reviewed set complete rather than because this
+  // suite's discovery finds it.
+  "ghcr.io/anonrouter/mirror/anonrouter-node-base":
+    "sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1"
 };
 
 /** Digests that are known INDEXES. Naming them is what makes the failure legible. */

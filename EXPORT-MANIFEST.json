@@ -71,8 +71,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "6cc32b93cdcff19b438a293bdad8c92d2ecbf48ea29f1a8fe3c0e03ef9fc8b1d",
-      "bytes": 3692
+      "sha256": "4d763693d1e1685318515a5b67b4e4f36e4146baca023a4af3c5c22ebdff8345",
+      "bytes": 5527
     },
     {
       "path": "LICENSE",
@@ -86,8 +86,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "e35a8f5172b5b56fde245ba8422a5e1511205d73b09368d5e901cee8ce151377",
-      "bytes": 17892
+      "sha256": "6342b497b50ec657c14429bdb361ffa0350197d1bdb8bbd33979c3c65c2dc54c",
+      "bytes": 21786
     },
     {
       "path": "deploy/phala/docker-compose.production.yml",
@@ -151,8 +151,8 @@
     },
     {
       "path": "deploy/provenance/plaintext-capable-components.json",
-      "sha256": "27a3e259b498ae702e0a2ac59b15ec391d4fcfa36c0bb97f0a91793568ee5650",
-      "bytes": 43526
+      "sha256": "141e444b9ebb499e7d059d3f86a43964f3b0a3fef210ba414a9f010bb0d10cea",
+      "bytes": 47345
     },
     {
       "path": "docs/publication/INDEPENDENT_VERIFICATION.md",
@@ -171,8 +171,8 @@
     },
     {
       "path": "scripts/export-public-readme.ts",
-      "sha256": "52e2175a9e249e512efec3805c5d738de5225bafa41e7190fdcd836290c25731",
-      "bytes": 21124
+      "sha256": "690cfc0512955f18b5ce000ef1b3658f60be64e82a056c9e15224cbae5029ad2",
+      "bytes": 23272
     },
     {
       "path": "scripts/finalize-phala-release.mjs",
@@ -201,8 +201,8 @@
     },
     {
       "path": "scripts/provenance/content-plane-compat-harness.sh",
-      "sha256": "fea87dd99c819e0193d6237142c7ce33614a42890ac1239250c9413d456fe2e9",
-      "bytes": 18621
+      "sha256": "368cabd4870fb315059a63162fc429a300c66eea7cdcbd3d386b0ecee4b66d65",
+      "bytes": 19311
     },
     {
       "path": "scripts/provenance/doi-source-recipe.ts",
@@ -246,8 +246,8 @@
     },
     {
       "path": "scripts/verify-third-party-provenance.ts",
-      "sha256": "1a28d1ea0c9d2f3683ba89e418ae604410e76bf83705ff57631f9ed86aa984eb",
-      "bytes": 28224
+      "sha256": "a3a91af94aec3700ac0dc6095db6ab548239d718c2946f24242fc1a5157e689f",
+      "bytes": 30744
     },
     {
       "path": "src/compat/broker.ts",
@@ -896,8 +896,8 @@
     },
     {
       "path": "tests/unit/base-image-pin-platform.test.ts",
-      "sha256": "376256b5b2a235c4b54434e96d67c1a9089f45618eefadcd3c4238d2e41810af",
-      "bytes": 8535
+      "sha256": "f11a4aa26347b527247214e484644d701f0573d4251f445e82e6b46145cdc987",
+      "bytes": 9870
     },
     {
       "path": "tests/unit/catalog-provider-binding.test.ts",
@@ -961,8 +961,8 @@
     },
     {
       "path": "tests/unit/third-party-provenance.test.ts",
-      "sha256": "1b63c6c82bed56ed0881dedad9e7886120df722e8c4c43184fd4193e7cff7185",
-      "bytes": 30675
+      "sha256": "058b73cb4eaf694366c31b3310403d05ae73a1f195a4bbac7325f12c5d296d89",
+      "bytes": 35560
     },
     {
       "path": "tsconfig.json",

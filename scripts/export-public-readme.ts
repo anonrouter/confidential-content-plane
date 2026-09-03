@@ -173,15 +173,52 @@ function gapProse(component: Component): string[] {
   if (component.controlledEquivalent) {
     const e = component.controlledEquivalent;
     lines.push(
-      `**There is a replacement candidate, and it is NOT deployed.** \`${e.image}@${e.digest}\` is built by`,
-      `AnonRouter from \`${e.sourceRepository}@${e.sourceCommit}\` and reproduced independently by a second CI`,
-      "run at the same digest. It has a real source-to-digest binding because it was built to be",
-      "reproducible.",
+      `**There is a replacement candidate. It is integrated in source and NOT deployed.**`,
+      `\`${e.image}@${e.digest}\` is built by AnonRouter from`,
+      `\`${e.sourceRepository}@${e.sourceCommit}\`, reproduced independently by a second CI job at the same`,
+      "digest, and signed against a pinned identity and issuer:",
+      "",
+      "```",
+      "cosign verify \\",
+      `  --certificate-identity '${e.certificateIdentity}' \\`,
+      `  --certificate-oidc-issuer '${e.certificateOidcIssuer}' \\`,
+      `  ${e.image}@${e.digest}`,
+      "```",
+      "",
+      // The recursive part, and the reason the first version of these candidates
+      // was not good enough. A replacement that inherits an unbound base has
+      // moved the gap down a layer, and a reader has no way to tell from a
+      // digest and a signature.
+      `**It inherits no container base image.** \`inheritedBaseImages\` is empty and the ledger schema will`,
+      "not accept a non-empty one. Everything in it is a release artifact pinned by a digest upstream",
+      "publishes, a file from a Debian package pinned by a sha256 that also appears in the index Debian's",
+      "OpenPGP-signed `Release` covers, or a literal in a published assembly script.",
+      ""
+    );
+    if (e.buildToolDependencies.length > 0) {
+      lines.push(
+        "It is not zero-dependency, and the remainder is named rather than omitted. These images BUILD it",
+        "and none of their bytes ship:",
+        ""
+      );
+      for (const tool of e.buildToolDependencies) {
+        lines.push(`- \`${tool.image}@${tool.digest}\` — ${tool.why}`);
+      }
+      lines.push("");
+    }
+    lines.push(
+      `**Compatibility was measured, not asserted.** \`${e.compatibility.harness}\` builds the same source on`,
+      `the base this replaces and on the candidate, runs an identical matrix under the real deployment`,
+      `policy, and requires them to agree: ${e.compatibility.checks} checks, ${e.compatibility.differingChecks} differing. A deliberately broken`,
+      `variant is the control, and the matrix detected it in ${e.compatibility.controlDetectedDifferences} check(s) — without that, agreement`,
+      `would be consistent with a matrix that cannot tell two images apart. Evidence:`,
+      `[\`${e.compatibility.evidenceFile}\`](${e.compatibility.evidenceFile}).`,
       "",
       "It proves **nothing about the artifact above**. A replacement is not a binding for the thing in",
       "service, and saying otherwise would be the exact rounding-up this document exists to refuse.",
-      "Promoting it changes the measured Compose, the app id and the attestation policy, so it is a",
-      "measured-release decision rather than a documentation edit.",
+      `Referenced now by ${e.integratedIn.map((w) => `\`${w}\``).join(", ")}, so the NEXT build uses it;`,
+      "nothing running does. Promoting it moves the measured Compose hash, the app id and the attestation",
+      "policy, which makes it a measured-release decision rather than a documentation edit.",
       ""
     );
   }
