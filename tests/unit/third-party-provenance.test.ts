@@ -541,6 +541,25 @@ describe("a controlled equivalent is an alternative, never a proof about the dep
     certificateIdentity: "https://github.com/anonrouter/x/.github/workflows/y.yml@refs/heads/main",
     certificateOidcIssuer: "https://token.actions.githubusercontent.com",
     independentlyReproducedDigest: `sha256:${"1".repeat(64)}`,
+    inheritedBaseImages: [],
+    buildToolDependencies: [
+      {
+        image: "debian:bookworm-slim",
+        digest: `sha256:${"5".repeat(64)}`,
+        why: "runs dpkg-deb; none of its bytes ship",
+        shipsBytes: false
+      }
+    ],
+    compatibility: {
+      method: "differential-harness",
+      harness: "scripts/provenance/example-harness.sh",
+      comparedAgainst: "the base it replaces",
+      checks: 12,
+      differingChecks: 0,
+      controlDetectedDifferences: 1,
+      evidenceFile: ".evidence/base-image-compat/example.json"
+    },
+    integratedIn: ["some/Dockerfile"],
     deployed: false,
     note: "undeployed candidate"
   };
@@ -605,6 +624,101 @@ describe("a controlled equivalent is an alternative, never a proof about the dep
     const readme = buildPublicReadme(loadLedger());
     expect(readme).toMatch(/NOT deployed/);
     expect(readme).toMatch(/proves \*\*nothing about the artifact above\*\*/);
+  });
+
+  it("tells a README reader that it inherits no base and what it does depend on", () => {
+    // The recursive accounting has to reach the reader, not just the ledger.
+    // A signed, reproducible replacement that quietly sits on an unbound Docker
+    // Official Image looks identical from outside to one that does not, and the
+    // first version of both candidates was the former.
+    const readme = buildPublicReadme(loadLedger());
+    expect(readme).toMatch(/inherits no container base image/);
+    expect(readme).toMatch(/none of their bytes ship/);
+    // And the compatibility claim must carry its control, since agreement from
+    // a matrix that cannot tell two images apart is not evidence.
+    expect(readme).toMatch(/checks, 0 differing/);
+    expect(readme).toMatch(/deliberately broken/);
+  });
+
+  it("refuses one that INHERITS a base image, which is how the gap moves instead of closing", () => {
+    // THE CORRECTION THIS FIELD EXISTS FOR. The first version of both
+    // candidates was `FROM debian:bookworm-slim`, a Docker Official Image with
+    // exactly the unbound provenance of the components being replaced. It was
+    // reproducible, it was signed, and it closed nothing.
+    //
+    // An empty array rather than an optional field, so "we did not think about
+    // it" and "there is nothing to inherit" cannot look the same.
+    expect(() =>
+      parseLedger(
+        ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+          controlledEquivalent: { ...equivalent, inheritedBaseImages: ["debian:bookworm-slim@sha256:5ae3"] }
+        })
+      )
+    ).toThrow();
+  });
+
+  it("refuses a build tool that claims its bytes ship", () => {
+    // A build tool whose bytes reach the image is an inherited base wearing a
+    // different label.
+    expect(() =>
+      parseLedger(
+        ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+          controlledEquivalent: {
+            ...equivalent,
+            buildToolDependencies: [{ ...equivalent.buildToolDependencies[0], shipsBytes: true }]
+          }
+        })
+      )
+    ).toThrow();
+  });
+
+  it("refuses a compatibility record with any differing check", () => {
+    // "Two CI jobs produced the same digest" is necessary and not sufficient.
+    // A candidate that behaves differently from the thing it replaces is a
+    // candidate, not a replacement.
+    expect(() =>
+      parseLedger(
+        ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+          controlledEquivalent: {
+            ...equivalent,
+            compatibility: { ...equivalent.compatibility, differingChecks: 1 }
+          }
+        })
+      )
+    ).toThrow();
+  });
+
+  it("refuses a compatibility record whose control caught nothing", () => {
+    // A matrix that cannot tell two images apart proves nothing by agreeing,
+    // and this is the shape of result that looks most like success.
+    expect(() =>
+      parseLedger(
+        ledgerWith({ status: "NONE", evidence: null }, `sha256:${"b".repeat(64)}`, {
+          controlledEquivalent: {
+            ...equivalent,
+            compatibility: { ...equivalent.compatibility, controlDetectedDifferences: 0 }
+          }
+        })
+      )
+    ).toThrow();
+  });
+
+  it("records both committed candidates as inheriting nothing and behaving identically", () => {
+    const ledger = loadLedger();
+    for (const id of ["caddy-edge-base", "node-base-image"]) {
+      const candidate = ledger.components.find((c) => c.id === id)?.controlledEquivalent;
+      expect(candidate?.inheritedBaseImages, id).toEqual([]);
+      expect(candidate?.compatibility.differingChecks, id).toBe(0);
+      expect(candidate?.compatibility.controlDetectedDifferences, id).toBeGreaterThan(0);
+      expect(candidate?.buildToolDependencies.length, id).toBeGreaterThan(0);
+      for (const tool of candidate?.buildToolDependencies ?? []) {
+        expect(tool.shipsBytes, `${id} build tool ${tool.image}`).toBe(false);
+      }
+      // Integrated in source and still not deployed. Those are different states
+      // and collapsing them is how a candidate quietly becomes production.
+      expect(candidate?.integratedIn.length, id).toBeGreaterThan(0);
+      expect(candidate?.deployed, id).toBe(false);
+    }
   });
 
   it("cannot claim to be deployed", () => {

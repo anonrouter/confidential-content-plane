@@ -187,14 +187,26 @@ ROUTER_ENABLED=false
 REQUEST_BODY_LIMIT_BYTES=10000000
 CONTROL_RPC_URL=http://control.invalid:8444
 WORKER_RPC_URL=http://venice-worker:3000
-RELAY_RPC_TOKEN=9f2c4a7e51b0d38c6ea94157b2d0fc83a516e7429db8c05f
-WORKER_RPC_TOKEN=41d7b93e08fa5c2617be4d093c8a71feb52049ac6d18e73f
-COMPAT_RPC_TOKEN=7b1e6c04af395d82e17c9b40fd2a5836ce09147bd6e2803a
 ALLOW_COMPAT_MODE=true
 CONTROL_RPC_TIMEOUT_MS=15000
 WORKER_RPC_TIMEOUT_MS=620000
 GATEWAY_ATTESTATION_ENABLED=false
 EOF
+
+# The three RPC tokens are GENERATED HERE rather than written above, and that
+# is a deliberate consequence of what the export scanner is for. `loadConfig`
+# refuses a split-role configuration whose tokens are shorter than 32 bytes or
+# look like placeholders, so they have to be long and unplaceholder-like -- and
+# a committed literal with those properties is indistinguishable from a leaked
+# credential to any entropy scanner, which is exactly what the publication scan
+# reported when they were hardcoded.
+#
+# Generating them means nothing secret-shaped is committed and nothing is
+# waived. They authorise nothing: no control plane is reachable from this
+# network and they exist only to get past a length check.
+for var in RELAY_RPC_TOKEN WORKER_RPC_TOKEN COMPAT_RPC_TOKEN; do
+  printf '%s=%s\n' "$var" "$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$ENVFILE"
+done
 
 run_probe() { # run_probe <variant> <script>
   docker run --rm --platform linux/amd64 --network "$NET" \

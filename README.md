@@ -127,15 +127,40 @@ recipe could produce evidence this run cannot; and this project could accept a
 different kind of evidence after review. The claim is scoped to the published
 recipe, the inputs reachable from it, and the measurement date.
 
-**There is a replacement candidate, and it is NOT deployed.** `ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:d4d19b5aca911b75005f21d5b20da5ed884e2bf9865dbfc3c7d8f797ae023a46` is built by
-AnonRouter from `anonrouter/confidential-content-plane@642d158e664520361311dfaa79953e110bc776d6` and reproduced independently by a second CI
-run at the same digest. It has a real source-to-digest binding because it was built to be
-reproducible.
+**There is a replacement candidate. It is integrated in source and NOT deployed.**
+`ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec` is built by AnonRouter from
+`anonrouter/confidential-content-plane@7814865e24ff0caa9d28e25a8fa917710c1f2768`, reproduced independently by a second CI job at the same
+digest, and signed against a pinned identity and issuer:
+
+```
+cosign verify \
+  --certificate-identity 'https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec
+```
+
+**It inherits no container base image.** `inheritedBaseImages` is empty and the ledger schema will
+not accept a non-empty one. Everything in it is a release artifact pinned by a digest upstream
+publishes, a file from a Debian package pinned by a sha256 that also appears in the index Debian's
+OpenPGP-signed `Release` covers, or a literal in a published assembly script.
+
+It is not zero-dependency, and the remainder is named rather than omitted. These images BUILD it
+and none of their bytes ship:
+
+- `debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867` — the unpack stage runs dpkg-deb and ldconfig. None of its bytes reach the shipped image, every input it consumes is hash-pinned before it runs, and two independent CI jobs must agree on the output digest. A weaker exposure than an inherited rootfs, and not zero.
+
+**Compatibility was measured, not asserted.** `scripts/provenance/edge-compat-harness.sh` builds the same source on
+the base this replaces and on the candidate, runs an identical matrix under the real deployment
+policy, and requires them to agree: 24 checks, 0 differing. A deliberately broken
+variant is the control, and the matrix detected it in 1 check(s) — without that, agreement
+would be consistent with a matrix that cannot tell two images apart. Evidence:
+[`.evidence/base-image-compat/edge-compat-local.json`](.evidence/base-image-compat/edge-compat-local.json).
 
 It proves **nothing about the artifact above**. A replacement is not a binding for the thing in
 service, and saying otherwise would be the exact rounding-up this document exists to refuse.
-Promoting it changes the measured Compose, the app id and the attestation policy, so it is a
-measured-release decision rather than a documentation edit.
+Referenced now by `deploy/phala/images/edge/Dockerfile`, so the NEXT build uses it;
+nothing running does. Promoting it moves the measured Compose hash, the app id and the attestation
+policy, which makes it a measured-release decision rather than a documentation edit.
 
 **`node-base-image`** Base image of the content-plane image; runs every line of code that handles plaintext. Deployed at `node:22-bookworm-slim@sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066`.
 
@@ -188,15 +213,40 @@ recipe could produce evidence this run cannot; and this project could accept a
 different kind of evidence after review. The claim is scoped to the published
 recipe, the inputs reachable from it, and the measurement date.
 
-**There is a replacement candidate, and it is NOT deployed.** `ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:5a2c48b28e876edaa8d0dcc7a85db244004dd641af89521c37ac9097c3785879` is built by
-AnonRouter from `anonrouter/confidential-content-plane@642d158e664520361311dfaa79953e110bc776d6` and reproduced independently by a second CI
-run at the same digest. It has a real source-to-digest binding because it was built to be
-reproducible.
+**There is a replacement candidate. It is integrated in source and NOT deployed.**
+`ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1` is built by AnonRouter from
+`anonrouter/confidential-content-plane@7814865e24ff0caa9d28e25a8fa917710c1f2768`, reproduced independently by a second CI job at the same
+digest, and signed against a pinned identity and issuer:
+
+```
+cosign verify \
+  --certificate-identity 'https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1
+```
+
+**It inherits no container base image.** `inheritedBaseImages` is empty and the ledger schema will
+not accept a non-empty one. Everything in it is a release artifact pinned by a digest upstream
+publishes, a file from a Debian package pinned by a sha256 that also appears in the index Debian's
+OpenPGP-signed `Release` covers, or a literal in a published assembly script.
+
+It is not zero-dependency, and the remainder is named rather than omitted. These images BUILD it
+and none of their bytes ship:
+
+- `debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867` — the unpack stage runs dpkg-deb and ldconfig. None of its bytes reach the shipped image, every input it consumes is hash-pinned before it runs, and two independent CI jobs must agree on the output digest. A weaker exposure than an inherited rootfs, and not zero.
+
+**Compatibility was measured, not asserted.** `scripts/provenance/content-plane-compat-harness.sh` builds the same source on
+the base this replaces and on the candidate, runs an identical matrix under the real deployment
+policy, and requires them to agree: 13 checks, 0 differing. A deliberately broken
+variant is the control, and the matrix detected it in 1 check(s) — without that, agreement
+would be consistent with a matrix that cannot tell two images apart. Evidence:
+[`.evidence/base-image-compat/content-plane-compat-local.json`](.evidence/base-image-compat/content-plane-compat-local.json).
 
 It proves **nothing about the artifact above**. A replacement is not a binding for the thing in
 service, and saying otherwise would be the exact rounding-up this document exists to refuse.
-Promoting it changes the measured Compose, the app id and the attestation policy, so it is a
-measured-release decision rather than a documentation edit.
+Referenced now by `the production stage of the Dockerfile generated by scripts/export-content-plane.ts`, so the NEXT build uses it;
+nothing running does. Promoting it moves the measured Compose hash, the app id and the attestation
+policy, which makes it a measured-release decision rather than a documentation edit.
 
 This is stated here, in the README, because a transparency chain that quietly
 rounds an unverifiable link up to "verified" is worse than no chain: it
