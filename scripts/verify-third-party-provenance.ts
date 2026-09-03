@@ -312,8 +312,68 @@ const controlledEquivalentSchema = z.object({
    * becomes what production builds.
    */
   integratedIn: z.array(z.string()),
-  deployed: z.literal(false),
+  /**
+   * Whether this replacement is what production is RUNNING.
+   *
+   * It was `z.literal(false)`, which was right while promotion was impossible
+   * and wrong as soon as it became possible: a schema that cannot express the
+   * promoted state forces whoever promotes to edit the schema, and an edit made
+   * under deadline is where the requirement quietly disappears.
+   *
+   * So the flag opens, and the requirements attach to the open position. Setting
+   * it true without `liveAttestation` is refused, because the claim a promotion
+   * unlocks -- that this component's plaintext-capable base image is no longer
+   * an unproven third-party link -- is not true when the digest is merely
+   * PINNED in a compose file. It becomes true when the guest has measured that
+   * compose, produced an app id, and re-attested. Until then the artifact is
+   * bound and the deployment is not.
+   */
+  deployed: z.boolean(),
+  /**
+   * The live measurement that makes a promotion real, recorded from the guest.
+   *
+   * Every field here is something only a running, re-attested TD can produce.
+   * None of it can be filled in from the candidate artifacts, which is the
+   * point: it is the one part of the record that a build cannot fake.
+   */
+  liveAttestation: z
+    .object({
+      composeHash: z.string().regex(/^[0-9a-f]{64}$/),
+      appId: z.string().min(1),
+      /** The image digests the guest reported running, not the ones we asked for. */
+      observedImageDigests: z.array(z.string().regex(/^sha256:[0-9a-f]{64}$/)).min(1),
+      attestedAt: z.string().datetime(),
+      evidenceFile: z.string().min(1)
+    })
+    .optional(),
   note: z.union([z.string(), z.array(z.string())])
+}).superRefine((equivalent, ctx) => {
+  if (equivalent.deployed && !equivalent.liveAttestation) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "deployed: true requires liveAttestation. A digest pinned in a compose file is a request, " +
+        "not a measurement: the guest has to have measured that compose, produced an app id and " +
+        "re-attested before this component stops being an unproven link."
+    });
+  }
+  if (equivalent.liveAttestation && !equivalent.deployed) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "liveAttestation without deployed: true. Record what is running, or record neither."
+    });
+  }
+  if (
+    equivalent.liveAttestation &&
+    !equivalent.liveAttestation.observedImageDigests.includes(equivalent.digest)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        `the guest reported running ${equivalent.liveAttestation.observedImageDigests.join(", ")}, ` +
+        `which does not include ${equivalent.digest}. A promotion nobody confirmed took effect is not a promotion.`
+    });
+  }
 });
 
 const registryProvenanceSchema = z.object({
@@ -518,9 +578,46 @@ const componentSchema = z
     }
   });
 
+/**
+ * What the guest reported after the most recent measured release.
+ *
+ * WHY THE LEDGER NEEDS THIS AT ALL. The README's strongest sentence is "every
+ * plaintext-capable component IN THIS DEPLOYMENT has an established binding".
+ * Every other field here is about artifacts, and no quantity of artifact
+ * evidence can support a claim whose subject is a running system: a digest
+ * pinned in a compose file is a request, and the sentence is about what was
+ * granted.
+ *
+ * The gap this closes is specific and easy to fall into. When the two base
+ * images are promoted, their entries stop being `controlledEquivalent`
+ * candidates and become ordinary bindings, at which point nothing in the
+ * per-component schema requires anyone to have checked that the promotion took
+ * effect. The ledger would then say zero unproven links while the CVM ran the
+ * previous images, and every check would pass.
+ */
+const deploymentAttestationSchema = z.object({
+  /** dstack's measurement of the compose text. */
+  composeHash: z.string().regex(/^[0-9a-f]{64}$/),
+  appId: z.string().min(1),
+  /** The digests the GUEST reported, not the ones the compose asked for. */
+  observedImageDigests: z.array(z.string().regex(/^sha256:[0-9a-f]{64}$/)).min(1),
+  attestedAt: z.string().datetime(),
+  evidenceFile: z.string().min(1),
+  /** Which compose file was measured, so a preprod measurement cannot stand in. */
+  composeFile: z.string().min(1)
+});
+
 export const ledgerSchema = z.object({
   $comment: z.union([z.string(), z.array(z.string())]).optional(),
   schemaVersion: z.literal(1),
+  /**
+   * Absent until a measured release records one. Optional in the schema and
+   * MANDATORY at the point of claiming zero unproven links, which is where
+   * export-public-readme.ts enforces it: the ledger can honestly describe a
+   * deployment nobody has re-attested, and the README cannot honestly call that
+   * deployment clean.
+   */
+  deploymentAttestation: deploymentAttestationSchema.optional(),
   components: z.array(componentSchema).min(1)
 });
 

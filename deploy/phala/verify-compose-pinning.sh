@@ -34,6 +34,16 @@ if [ ${#files[@]} -eq 0 ]; then
   for rendered in *.rendered.yml; do
     [ -f "$rendered" ] && files+=("$rendered")
   done
+  # And the generated production set, which was absent from this list. It is
+  # the file that is actually deployed and the one a candidate is diffed
+  # against; a hardening gate that skips it checks the least important composes
+  # in the directory. The candidate is included for the same reason: a
+  # regression introduced with a base swap would otherwise be measured into the
+  # app id before anything looked at it.
+  for generated in docker-compose.prod5-xl.yml docker-compose.prod5-xl-preprod.yml \
+                   docker-compose.prod5-xl.candidate.yml; do
+    [ -f "$generated" ] && files+=("$generated")
+  done
 fi
 
 fail=0
