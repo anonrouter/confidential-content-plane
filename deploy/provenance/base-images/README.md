@@ -32,8 +32,11 @@ ships a file whose **content** records when the build ran.
   `/var/log/apt/term.log`.
 
 `SOURCE_DATE_EPOCH` and buildkit's `rewrite-timestamp` normalise metadata.
-Neither reaches inside a log file. Option B is unavailable too, measured on the
-same run: no signature exists that verifies against a pinned upstream identity.
+Neither reaches inside a log file. Option B was measured on the same run and found
+nothing qualifying **as of that date**: no signature existed that verifies against a
+pinned upstream identity. That is a statement about a search, not about the future —
+upstream can start signing at any time, and if it does these gaps close with no
+rebuild at all.
 
 So closing these gaps means **replacing the artifact**, and that is what these
 are.

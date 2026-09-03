@@ -85,17 +85,17 @@ its trust root is whoever can push to that registry repository, not an identity 
 It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
 the image in service came from that commit.
 
-**This gap has been measured, and it is not "not done yet".** AnonRouter's public CI replayed
+**This gap has been measured, and it is not "not attempted yet".** AnonRouter's public CI replayed
 upstream's own recorded build invocation for this exact digest, natively on `linux/amd64`, with every
 argument read out of the deployed image's own SLSA statement rather than from any file in this
-repository. Result: `NOT-REPRODUCED-RECIPE-NONDETERMINISTIC`.
+repository. Result on 2026-09-02: `NOT-REPRODUCED-RECIPE-NONDETERMINISTIC`.
 
 Two **identical** invocations, minutes apart on the same runner with a cold cache, produced
-`sha256:814143b2fffc1e6d557976099a3e32914668bb203a5a43c23c8aa989325a7a87` and `sha256:eec80ff07eb230cb95bc5e53bc63729f85e09a07d0b7ff05507c0230e85425d8`. Those are different images, so no
-rebuild by any party can match a fixed digest. Option A is **unavailable for this artifact**, not
-merely unattempted, and trying harder does not change that. Why, precisely:
+`sha256:814143b2fffc1e6d557976099a3e32914668bb203a5a43c23c8aa989325a7a87` and `sha256:eec80ff07eb230cb95bc5e53bc63729f85e09a07d0b7ff05507c0230e85425d8`. Those are different images, so the
+**published recipe is not deterministic**, and no replay of it can match a fixed digest whoever runs
+the replay. Why, precisely:
 
-- **`recipe-nondeterministic`** Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:814143b2 and sha256:eec80ff0. No rebuild by any party can match a fixed digest.
+- **`recipe-nondeterministic`** Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:814143b2 and sha256:eec80ff0. The published recipe is not deterministic, so no replay of it can match a fixed digest, whoever runs the replay.
 - **`build-clock-in-layer-content`** /var/log/apk.log ships inside the image and its first line records the second the build ran: 'Running `apk add --no-cache ca-certificates curl libcap mailcap` at 2026-06-22 20:09:02'. File content, not metadata, so no normalisation flag rewrites it.
 - **`build-clock-in-image-config`** 21 history timestamps differ between two runs of the same recipe, at sub-second precision.
 - **`build-clock-in-manifest-annotation`** org.opencontainers.image.created is derived from `env.SOURCE_DATE_EPOCH // now` by docker-library's meta.jq, and the recorded build set no epoch. The annotation is manifest bytes, so it is part of the digest.
@@ -105,11 +105,27 @@ merely unattempted, and trying harder does not change that. Why, precisely:
 Full comparison, layer by layer and path by path: [`.evidence/doi-base-rebuild/caddy-edge-base-verdict.json`](.evidence/doi-base-rebuild/caddy-edge-base-verdict.json).
 The run is public: https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190
 
-Option B was measured on the same run and is also unavailable: no OCI referrer, no cosign signature
-tag, no attestation under the builder's GitHub org. Where the Sigstore transparency log carries an
-entry over the digest at all, it is a bare public key with no certificate, so it names nobody and
-cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the
-log would have accepted it.
+Option B was measured on the same run and found nothing qualifying **as of 2026-09-02**: no OCI
+referrer, no cosign signature tag, no attestation under the builder's GitHub org. Where the Sigstore
+transparency log carries an entry over the digest at all, it is a bare public key with no certificate,
+so it names nobody and cannot be pinned to an upstream identity. A check that asked only whether the
+digest appears in the log would have accepted it.
+
+**What this does and does not establish:**
+
+WHAT THIS ESTABLISHES: replaying the recipe docker-library publishes for this
+digest did not reproduce it, and two identical replays of that recipe disagreed
+with each other, so the published recipe is not deterministic. No signature
+meeting this project's option B bar existed for the digest on the date below.
+
+WHAT IT DOES NOT ESTABLISH, and an earlier revision of this entry overstated
+exactly here by phrasing a scoped negative as a universal one: this does not
+show the digest is permanently unbindable. Upstream could publish a
+qualifying signature, which would close
+this with no rebuild at all; a party holding build inputs outside the published
+recipe could produce evidence this run cannot; and this project could accept a
+different kind of evidence after review. The claim is scoped to the published
+recipe, the inputs reachable from it, and the measurement date.
 
 **There is a replacement candidate, and it is NOT deployed.** `ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:d4d19b5aca911b75005f21d5b20da5ed884e2bf9865dbfc3c7d8f797ae023a46` is built by
 AnonRouter from `anonrouter/confidential-content-plane@642d158e664520361311dfaa79953e110bc776d6` and reproduced independently by a second CI
@@ -130,17 +146,17 @@ its trust root is whoever can push to that registry repository, not an identity 
 It tells a rebuilder exactly which commit to build and compare. It does not tell anyone that
 the image in service came from that commit.
 
-**This gap has been measured, and it is not "not done yet".** AnonRouter's public CI replayed
+**This gap has been measured, and it is not "not attempted yet".** AnonRouter's public CI replayed
 upstream's own recorded build invocation for this exact digest, natively on `linux/amd64`, with every
 argument read out of the deployed image's own SLSA statement rather than from any file in this
-repository. Result: `NOT-REPRODUCED-RECIPE-NONDETERMINISTIC`.
+repository. Result on 2026-09-02: `NOT-REPRODUCED-RECIPE-NONDETERMINISTIC`.
 
 Two **identical** invocations, minutes apart on the same runner with a cold cache, produced
-`sha256:6babfba1586e01cc2da1e051f5c879b37c259f0f83db9f03370bcd8498d24953` and `sha256:c1d12a978b22af8334fe0a8001e93c8f9b41a20558fd7e5ed642d22ab498c921`. Those are different images, so no
-rebuild by any party can match a fixed digest. Option A is **unavailable for this artifact**, not
-merely unattempted, and trying harder does not change that. Why, precisely:
+`sha256:6babfba1586e01cc2da1e051f5c879b37c259f0f83db9f03370bcd8498d24953` and `sha256:c1d12a978b22af8334fe0a8001e93c8f9b41a20558fd7e5ed642d22ab498c921`. Those are different images, so the
+**published recipe is not deterministic**, and no replay of it can match a fixed digest whoever runs
+the replay. Why, precisely:
 
-- **`recipe-nondeterministic`** Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:6babfba1 and sha256:c1d12a97. No rebuild by any party can match a fixed digest.
+- **`recipe-nondeterministic`** Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:6babfba1 and sha256:c1d12a97. The published recipe is not deterministic, so no replay of it can match a fixed digest, whoever runs the replay.
 - **`build-clock-in-layer-content`** The ENTIRE difference between those two runs is four shipped log files: /var/log/dpkg.log, /var/log/alternatives.log, /var/log/apt/history.log and /var/log/apt/term.log. apt and dpkg write the wall clock into them and the image ships them. The deployed dpkg.log carries 1,052 such stamps. File content, not metadata.
 - **`build-clock-in-image-config`** 9 history timestamps differ between two runs of the same recipe.
 - **`build-clock-in-manifest-annotation`** org.opencontainers.image.created is derived from `env.SOURCE_DATE_EPOCH // now` by docker-library's meta.jq, and the recorded build set no epoch.
@@ -150,11 +166,27 @@ merely unattempted, and trying harder does not change that. Why, precisely:
 Full comparison, layer by layer and path by path: [`.evidence/doi-base-rebuild/node-base-image-verdict.json`](.evidence/doi-base-rebuild/node-base-image-verdict.json).
 The run is public: https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190
 
-Option B was measured on the same run and is also unavailable: no OCI referrer, no cosign signature
-tag, no attestation under the builder's GitHub org. Where the Sigstore transparency log carries an
-entry over the digest at all, it is a bare public key with no certificate, so it names nobody and
-cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the
-log would have accepted it.
+Option B was measured on the same run and found nothing qualifying **as of 2026-09-02**: no OCI
+referrer, no cosign signature tag, no attestation under the builder's GitHub org. Where the Sigstore
+transparency log carries an entry over the digest at all, it is a bare public key with no certificate,
+so it names nobody and cannot be pinned to an upstream identity. A check that asked only whether the
+digest appears in the log would have accepted it.
+
+**What this does and does not establish:**
+
+WHAT THIS ESTABLISHES: replaying the recipe docker-library publishes for this
+digest did not reproduce it, and two identical replays of that recipe disagreed
+with each other, so the published recipe is not deterministic. No signature
+meeting this project's option B bar existed for the digest on the date below.
+
+WHAT IT DOES NOT ESTABLISH, and an earlier revision of this entry overstated
+exactly here by phrasing a scoped negative as a universal one: this does not
+show the digest is permanently unbindable. Upstream could publish a
+qualifying signature, which would close
+this with no rebuild at all; a party holding build inputs outside the published
+recipe could produce evidence this run cannot; and this project could accept a
+different kind of evidence after review. The claim is scoped to the published
+recipe, the inputs reachable from it, and the measurement date.
 
 **There is a replacement candidate, and it is NOT deployed.** `ghcr.io/anonrouter/mirror/anonrouter-node-base@sha256:5a2c48b28e876edaa8d0dcc7a85db244004dd641af89521c37ac9097c3785879` is built by
 AnonRouter from `anonrouter/confidential-content-plane@642d158e664520361311dfaa79953e110bc776d6` and reproduced independently by a second CI

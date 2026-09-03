@@ -29,8 +29,9 @@ const REBUILT = {
 const MEASURED = {
   method: "public-ci-rebuild" as const,
   verdict: "NOT-REPRODUCED-RECIPE-NONDETERMINISTIC" as const,
-  optionAAvailable: false,
-  optionBAvailable: false,
+  optionAOutcome: "NOT-REPRODUCED-FROM-PUBLISHED-RECIPE" as const,
+  optionBOutcome: "NO-QUALIFYING-SIGNATURE-FOUND" as const,
+  claimScope: ["scoped to the published recipe, its reachable inputs and the measurement date"],
   run: "https://github.com/anonrouter/confidential-content-plane/actions/runs/1",
   builderWorkflowRef: "https://github.com/anonrouter/x/.github/workflows/y.yml@refs/heads/main",
   builderWorkflowSha: "d".repeat(40),
@@ -398,8 +399,13 @@ describe("a measured impossibility is recorded as one, and cannot be read as a b
       const component = ledger.components.find((c) => c.id === id);
       expect(component?.reproducibility, id).toBeTruthy();
       expect(component?.reproducibility?.verdict, id).toBe("NOT-REPRODUCED-RECIPE-NONDETERMINISTIC");
-      expect(component?.reproducibility?.optionAAvailable, id).toBe(false);
-      expect(component?.reproducibility?.optionBAvailable, id).toBe(false);
+      expect(component?.reproducibility?.optionAOutcome, id).toBe("NOT-REPRODUCED-FROM-PUBLISHED-RECIPE");
+      expect(component?.reproducibility?.optionBOutcome, id).toBe("NO-QUALIFYING-SIGNATURE-FOUND");
+      // The scope statement is mandatory, and it must actually say what the
+      // measurement does NOT establish. A scope field that only restates the
+      // finding would be decoration.
+      const scope = (component?.reproducibility?.claimScope ?? []).join(" ");
+      expect(scope, id).toMatch(/does not establish|DOES NOT ESTABLISH/i);
       // Two runs of the same recipe, and they must be different images or the
       // "non-deterministic" verdict is not what was measured.
       expect(component?.reproducibility?.rebuiltAgainDigest, id).not.toBe(
@@ -427,15 +433,31 @@ describe("a measured impossibility is recorded as one, and cannot be read as a b
     expect(() => parseLedger(JSON.stringify(raw))).toThrow(/did not reproduce the deployed digest is not a binding/);
   });
 
-  it("refuses REBUILT when the measurement says option A cannot succeed", () => {
+  it("refuses REBUILT when the measurement did not record option A as REPRODUCED", () => {
+    // The verdict and the option-A outcome are separate fields and can be made
+    // to disagree by hand. When they do, the one that describes what the
+    // rebuild produced wins over the one that summarises it.
     const raw = JSON.parse(ledgerWith({ status: "REBUILT", evidence: REBUILT }));
     raw.components[0].reproducibility = {
       ...MEASURED,
       verdict: "REPRODUCED",
-      optionAAvailable: false,
+      optionAOutcome: "NOT-REPRODUCED-FROM-PUBLISHED-RECIPE",
       rebuiltDigest: `sha256:${"7".repeat(64)}`
     };
-    expect(() => parseLedger(JSON.stringify(raw))).toThrow(/records option A as unavailable/);
+    expect(() => parseLedger(JSON.stringify(raw)))
+      .toThrow(/records option A as NOT-REPRODUCED-FROM-PUBLISHED-RECIPE/);
+  });
+
+  it("refuses a measurement whose scope statement says only what it DOES establish", () => {
+    // The scope field is what stops a scoped negative being read as a universal
+    // one, so a scope field that merely restates the finding is worse than
+    // none: it looks like the guard is present.
+    const raw = JSON.parse(ledgerWith({ status: "NONE", evidence: null }));
+    raw.components[0].reproducibility = {
+      ...MEASURED,
+      claimScope: ["The published recipe is not deterministic."]
+    };
+    expect(() => parseLedger(JSON.stringify(raw))).toThrow(/does NOT establish/);
   });
 
   it("refuses a measurement that names the deployed digest while reporting failure", () => {
@@ -453,12 +475,58 @@ describe("a measured impossibility is recorded as one, and cannot be read as a b
     expect(() => parseLedger(JSON.stringify(raw))).toThrow();
   });
 
-  it("tells a README reader the gap cannot be closed by trying harder", () => {
+  it("tells a README reader the measurement is about the published recipe, not the universe", () => {
     const readme = buildPublicReadme(ledger);
-    expect(readme).toMatch(/not "not done yet"/);
-    expect(readme).toMatch(/unavailable for this artifact/);
+    expect(readme).toMatch(/not "not attempted yet"/);
+    expect(readme).toMatch(/published recipe is not deterministic/);
+    // The scope paragraph must reach the reader, not just the ledger.
+    expect(readme).toMatch(/What this does and does not establish/);
     // And it must still be a gap in the reader's eyes, not a resolved item.
     expect(readme).toMatch(/NOT established/);
+  });
+
+  it("never lets an absolute impossibility claim back into the published README", () => {
+    // THE DRIFT GUARD, and it exists because the drift already happened once.
+    // The generator said the gap was "unavailable for this artifact", that
+    // "trying harder does not change that", and that "no rebuild by any party
+    // can match a fixed digest". Every one of those is a universal claim built
+    // on evidence scoped to one recipe on one day.
+    //
+    // Overstating a negative is the same failure as overstating a positive: it
+    // launders something unmeasured into an apparent proof. The banned phrases
+    // are listed literally so the ban survives a rewrite that reintroduces the
+    // meaning by copy-paste.
+    const readme = buildPublicReadme(ledger);
+    const banned = [
+      /\bcannot be closed\b/i,
+      /\bunclosable\b/i,
+      /by any party can (?:ever )?(?:match|close)/i,
+      /\bunavailable for this artifact\b/i,
+      /trying harder does not/i,
+      /\bit is impossible\b/i,
+      /\bcan never be (?:bound|reproduced)\b/i
+    ];
+    for (const pattern of banned) {
+      expect(readme, `the generated README must not claim: ${pattern}`).not.toMatch(pattern);
+    }
+  });
+
+  it("keeps the same ban over the ledger's own prose, which the README is generated from", () => {
+    // The README is derived, so a phrase banned there can still be sitting in
+    // the source it is derived from, waiting for the next generator change to
+    // surface it. Both are checked.
+    //
+    // `claimScope` is exempt: it exists to QUOTE the overstatements it corrects,
+    // and a ban that forbids naming the mistake forces the record to be deleted
+    // rather than fixed.
+    for (const component of ledger.components) {
+      const prose = [component.note ?? [], component.reproducibility?.obstructions?.map((o) => o.detail) ?? []]
+        .flat()
+        .join("\n");
+      expect(prose, component.id).not.toMatch(/by ANY party/);
+      expect(prose, component.id).not.toMatch(/\bunavailable for this artifact\b/i);
+      expect(prose, component.id).not.toMatch(/\bcannot be closed\b/i);
+    }
   });
 });
 

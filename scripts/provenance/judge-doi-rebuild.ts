@@ -23,12 +23,27 @@
 // what the Rosetta near-miss turned out to be.
 //
 // Building the same source twice, in the same environment, minutes apart,
-// answers a different and stronger question: is this recipe reproducible BY
-// ANYONE. If two identical invocations disagree, no rebuild by any party can
-// ever match a fixed target, and option A is unavailable for the component
-// rather than merely unachieved by us. That distinction decides whether the
-// ledger records "not done yet" or "cannot be done", and those are very
-// different things to tell a reader.
+// answers a different and stronger question: is THE PUBLISHED RECIPE
+// deterministic. If two identical invocations of it disagree, then no replay of
+// that recipe can match a fixed target, whoever runs it. That distinction
+// decides whether the ledger records "not attempted yet" or "attempted, and the
+// recipe as published cannot get there".
+//
+// =============================================================================
+// THE LIMIT OF THAT CLAIM, STATED HERE BECAUSE IT WAS ONCE OVERSTATED
+// =============================================================================
+//
+// An earlier version of this file said a disagreement meant "no rebuild by any
+// party can ever match" and that option A was "unavailable for the component".
+// Both are broader than the measurement. What is measured is the recipe
+// docker-library publishes, the inputs reachable from it, and the date.
+//
+// It does NOT rule out: upstream publishing a qualifying signature tomorrow,
+// which would satisfy option B without any rebuild; a party holding build
+// inputs nobody outside their infrastructure has; or this project accepting a
+// different kind of evidence after review. A verdict that forecloses those is
+// making the same mistake as a chain that rounds an unproven link up, in the
+// other direction: it launders an unmeasured universal into an apparent proof.
 //
 // =============================================================================
 // THE GENEROSITY GUARD
@@ -136,9 +151,16 @@ export function judge(inputs: JudgeInputs): DoiRebuildJudgement {
   } else {
     if (selfReproducible === false) {
       reason.push(
-        "Two identical invocations of this recipe, in the same environment minutes apart, produced different " +
-          "images. The recipe is not reproducible by ANYONE, so no rebuild can ever match a fixed digest and " +
-          "option A is unavailable for this component rather than merely unachieved."
+        "Two identical invocations of the recipe docker-library publishes for this digest, in the same " +
+          "environment minutes apart, produced different images. The published recipe is therefore not " +
+          "deterministic, so no replay of it can match a fixed digest, whoever runs the replay."
+      );
+      reason.push(
+        "SCOPE, stated because the earlier wording here was broader than the measurement: this is about the " +
+          "published recipe, the inputs reachable from it, and today's date. It does not establish that the " +
+          "digest can never be bound. Upstream could publish a qualifying signature, which would satisfy " +
+          "option B with no rebuild at all; a party holding inputs outside this recipe could produce evidence " +
+          "this run cannot; and this project could accept a different kind of evidence after review."
       );
       const clock = rebuildVsRebuildAgain?.historyTimestampDifferences.length ?? 0;
       const annotations = rebuildVsRebuildAgain?.manifestAnnotationDifferences.map((d) => d.key) ?? [];
