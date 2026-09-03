@@ -205,14 +205,14 @@
       },
       "controlledEquivalent": {
         "image": "ghcr.io/anonrouter/mirror/anonrouter-caddy-base",
-        "digest": "sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec",
+        "digest": "sha256:62c3df7708bf00f13240cb028cba40d44757ea5c6c8584bc8867e288a61555f5",
         "sourceRepository": "anonrouter/confidential-content-plane",
-        "sourceCommit": "7814865e24ff0caa9d28e25a8fa917710c1f2768",
+        "sourceCommit": "8e79c05de21e8efcfad4a04a45d267eb2009fd9b",
         "builderWorkflowRef": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main",
-        "builderWorkflowSha": "7814865e24ff0caa9d28e25a8fa917710c1f2768",
+        "builderWorkflowSha": "8e79c05de21e8efcfad4a04a45d267eb2009fd9b",
         "certificateIdentity": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main",
         "certificateOidcIssuer": "https://token.actions.githubusercontent.com",
-        "independentlyReproducedDigest": "sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec",
+        "independentlyReproducedDigest": "sha256:62c3df7708bf00f13240cb028cba40d44757ea5c6c8584bc8867e288a61555f5",
         "inheritedBaseImages": [],
         "buildToolDependencies": [
           {
@@ -648,14 +648,14 @@
       },
       "controlledEquivalent": {
         "image": "ghcr.io/anonrouter/mirror/anonrouter-node-base",
-        "digest": "sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1",
+        "digest": "sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d",
         "sourceRepository": "anonrouter/confidential-content-plane",
         "sourceCommit": "7814865e24ff0caa9d28e25a8fa917710c1f2768",
         "builderWorkflowRef": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main",
-        "builderWorkflowSha": "7814865e24ff0caa9d28e25a8fa917710c1f2768",
+        "builderWorkflowSha": "8e79c05de21e8efcfad4a04a45d267eb2009fd9b",
         "certificateIdentity": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/anonrouter-base-build.yml@refs/heads/main",
         "certificateOidcIssuer": "https://token.actions.githubusercontent.com",
-        "independentlyReproducedDigest": "sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1",
+        "independentlyReproducedDigest": "sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d",
         "inheritedBaseImages": [],
         "buildToolDependencies": [
           {

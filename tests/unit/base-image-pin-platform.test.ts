@@ -77,13 +77,13 @@ const REVIEWED: Record<string, string> = {
   //     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   //     ghcr.io/anonrouter/mirror/anonrouter-caddy-base@sha256:b834a839...
   "ghcr.io/anonrouter/mirror/anonrouter-caddy-base":
-    "sha256:b834a8396f08309f44f542c4619c40ca80b4c2666d26d14d6a1fae616423d4ec",
+    "sha256:62c3df7708bf00f13240cb028cba40d44757ea5c6c8584bc8867e288a61555f5",
   // The same, for the content-plane runtime base. Referenced by the Dockerfile
   // the exporter generates rather than by a file in this repository, so it is
   // listed here to keep the reviewed set complete rather than because this
   // suite's discovery finds it.
   "ghcr.io/anonrouter/mirror/anonrouter-node-base":
-    "sha256:6f9e38fd6478451652afe8d695b030d1f6dedf34b53ffba109aba9122a7630d1"
+    "sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d"
 };
 
 /** Digests that are known INDEXES. Naming them is what makes the failure legible. */
