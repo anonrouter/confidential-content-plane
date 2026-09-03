@@ -182,8 +182,16 @@ function flatten(layout: Layout): Map<string, FileFacts> {
         allowFailure: true,
         maxBuffer: 64 * 1024 * 1024
       });
+      const recordedModes = modesFromTarHeaders(blobPath(layout.directory, layer));
       for (const { path, facts } of walk(extracted, extracted)) {
         const name = path.replace(/^\.?\//, "");
+        // THE MODE THE IMAGE RECORDS, not the one our extraction managed to
+        // restore. An unprivileged `tar -x` silently drops setuid and setgid
+        // bits, so a binary that gains setuid between two builds extracted as
+        // 0755 on both sides and compared as unchanged. That is the single
+        // most security-relevant mode change there is, and it was invisible.
+        const recorded = recordedModes.get(name) ?? recordedModes.get(`${name}/`);
+        if (recorded) facts.mode = recorded;
         const base = name.split("/").pop() ?? "";
         if (base === ".wh..wh..opq") {
           // Opaque whiteout: everything below this directory from earlier layers
@@ -205,6 +213,48 @@ function flatten(layout: Layout): Map<string, FileFacts> {
     rmSync(scratch, { recursive: true, force: true });
   }
   return files;
+}
+
+/**
+ * The modes a layer tar RECORDS, read from its headers.
+ *
+ * Read straight from the archive rather than from the extracted tree because
+ * extraction loses information: `tar -x` as an unprivileged user drops setuid
+ * and setgid bits, so a binary that gained setuid between two builds landed on
+ * disk as 0755 on both sides and compared as unchanged. That is the mode change
+ * most worth catching and it was the one guaranteed to be missed.
+ *
+ * `tar -tv` is used rather than a tar parser because it has to work on a
+ * developer's Mac and in CI, and the two tars do not agree on the middle of the
+ * line: GNU prints `-rwxr-xr-x root/root 48521378 2026-06-03 00:24 name` and
+ * bsdtar prints `-rwxr-xr-x  0 1001   1001 48521378 Jun  3 00:24 name`. Only
+ * the permission string at the front and a `HH:MM` field before the name are
+ * common, so those are what the parse keys on. A line it cannot read is skipped
+ * rather than guessed at, and the extracted mode remains as the fallback.
+ */
+function modesFromTarHeaders(blob: string): Map<string, string> {
+  const modes = new Map<string, string>();
+  const listing = run("tar", ["-tvf", blob], { allowFailure: true, maxBuffer: 64 * 1024 * 1024 });
+  for (const line of listing.stdout.split("\n")) {
+    const head = line.match(/^[-dlcbps]([rwxSsTt-]{9})\s/);
+    if (!head) continue;
+    const permissions = head[1];
+    const timeAt = line.search(/\s\d{1,2}:\d{2}(:\d{2})?\s/);
+    if (timeAt < 0) continue;
+    const afterTime = line.slice(timeAt + 1).replace(/^\d{1,2}:\d{2}(:\d{2})?\s+/, "");
+    const name = afterTime.split(" -> ")[0].replace(/^\.?\//, "").replace(/\/$/, "");
+    if (name === "") continue;
+    let mode = 0;
+    for (let i = 0; i < 9; i += 1) if (permissions[i] !== "-") mode |= 1 << (8 - i);
+    if (permissions[2] === "s" || permissions[2] === "S") mode |= 0o4000;
+    if (permissions[5] === "s" || permissions[5] === "S") mode |= 0o2000;
+    if (permissions[8] === "t" || permissions[8] === "T") mode |= 0o1000;
+    if (permissions[2] === "S") mode &= ~0o100;
+    if (permissions[5] === "S") mode &= ~0o010;
+    if (permissions[8] === "T") mode &= ~0o001;
+    modes.set(name, mode.toString(8).padStart(4, "0"));
+  }
+  return modes;
 }
 
 /**

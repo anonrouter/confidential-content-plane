@@ -72,7 +72,9 @@
         "means provenance that Docker Official Images do not publish in a form",
         "pinnable to a single upstream identity. Same shape as node-base-image.",
         "",
-        "MEASURED 2026-09-02, AND THE ANSWER IS STRONGER THAN 'NOT DONE YET'.",
+        "MEASURED 2026-09-02, WHICH IS NOT THE SAME AS 'NOT DONE YET' AND ALSO NOT",
+        "THE SAME AS 'CAN NEVER BE DONE'. Read claimScope below for the exact",
+        "boundary; an earlier revision of this entry crossed it.",
         "",
         "AnonRouter's public CI replayed docker-library's recorded invocation for",
         "this exact digest, natively on linux/amd64, three times. Every argument",
@@ -83,11 +85,13 @@
         "deployed manifest's own annotations, including the build clock, which makes",
         "the test maximally favourable.",
         "",
-        "It failed, and it failed in a way that closes the question rather than",
-        "deferring it. Two IDENTICAL invocations, minutes apart on the same runner",
-        "with a cold cache, produced sha256:814143b2... and sha256:eec80ff0..., which",
-        "are different images. So no rebuild by ANY party can match a fixed digest:",
-        "option A is unavailable for this artifact rather than merely unachieved.",
+        "It failed, and the decisive part is not the failure against the deployed",
+        "image. Two IDENTICAL invocations, minutes apart on the same runner with a",
+        "cold cache, produced sha256:814143b2... and sha256:eec80ff0..., which are",
+        "different images. The PUBLISHED RECIPE is therefore not deterministic, so no",
+        "REPLAY of it can match a fixed digest, whoever runs the replay. That is a",
+        "statement about replaying this recipe, not about every possible route to a",
+        "binding.",
         "",
         "The whole difference between those two runs is one file, /var/log/apk.log,",
         "whose first line reads 'Running `apk add --no-cache ca-certificates curl",
@@ -109,7 +113,9 @@
         "repository, which is mutable, so the contents of this image were never",
         "recoverable from its source after the fact.",
         "",
-        "OPTION B IS UNAVAILABLE, MEASURED RATHER THAN ASSUMED. No OCI referrer on",
+        "NO QUALIFYING SIGNATURE EXISTED ON 2026-09-02, MEASURED RATHER THAN ASSUMED,",
+        "and this is the route that could change without anything on our side",
+        "changing: upstream can start signing at any time. No OCI referrer on",
         "the child manifest or the index, no cosign .sig sibling tag, no GitHub",
         "attestation under docker-library. Sigstore's transparency log DOES carry one",
         "entry over this digest and it is unusable: a hashedrekord with a bare public",
@@ -145,8 +151,23 @@
       "reproducibility": {
         "method": "public-ci-rebuild",
         "verdict": "NOT-REPRODUCED-RECIPE-NONDETERMINISTIC",
-        "optionAAvailable": false,
-        "optionBAvailable": false,
+        "optionAOutcome": "NOT-REPRODUCED-FROM-PUBLISHED-RECIPE",
+        "optionBOutcome": "NO-QUALIFYING-SIGNATURE-FOUND",
+        "claimScope": [
+          "WHAT THIS ESTABLISHES: replaying the recipe docker-library publishes for this",
+          "digest did not reproduce it, and two identical replays of that recipe disagreed",
+          "with each other, so the published recipe is not deterministic. No signature",
+          "meeting this project's option B bar existed for the digest on the date below.",
+          "",
+          "WHAT IT DOES NOT ESTABLISH, and an earlier revision of this entry overstated",
+          "exactly here by phrasing a scoped negative as a universal one: this does not",
+          "show the digest is permanently unbindable. Upstream could publish a",
+          "qualifying signature, which would close",
+          "this with no rebuild at all; a party holding build inputs outside the published",
+          "recipe could produce evidence this run cannot; and this project could accept a",
+          "different kind of evidence after review. The claim is scoped to the published",
+          "recipe, the inputs reachable from it, and the measurement date."
+        ],
         "run": "https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190",
         "builderWorkflowRef": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/doi-base-rebuild.yml@refs/heads/main",
         "builderWorkflowSha": "19576d6839ea798174045dd40f123bca2965c4d9",
@@ -156,7 +177,7 @@
         "obstructions": [
           {
             "id": "recipe-nondeterministic",
-            "detail": "Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:814143b2 and sha256:eec80ff0. No rebuild by any party can match a fixed digest."
+            "detail": "Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:814143b2 and sha256:eec80ff0. The published recipe is not deterministic, so no replay of it can match a fixed digest, whoever runs the replay."
           },
           {
             "id": "build-clock-in-layer-content",
@@ -493,9 +514,9 @@
         "which makes the test maximally favourable.",
         "",
         "Two IDENTICAL invocations, minutes apart with a cold cache, produced",
-        "sha256:6babfba1... and sha256:c1d12a97..., which are different images. Option",
-        "A is therefore unavailable to ANY party for this artifact, not merely",
-        "unachieved by us.",
+        "sha256:6babfba1... and sha256:c1d12a97..., which are different images. The",
+        "published recipe is therefore not deterministic, so no replay of it can match",
+        "a fixed digest, whoever runs the replay. Scope is in claimScope below.",
         "",
         "WHAT DIFFERED BETWEEN THOSE TWO RUNS IS THE WHOLE FINDING, and it is four",
         "files: /var/log/dpkg.log, /var/log/alternatives.log, /var/log/apt/history.log",
@@ -521,7 +542,7 @@
         "(sha256:116a5d09...), so neither half of that fork is left as an untested",
         "excuse.",
         "",
-        "OPTION B IS UNAVAILABLE, MEASURED. No OCI referrer on the child or the index,",
+        "NO QUALIFYING SIGNATURE EXISTED ON 2026-09-02, MEASURED. No OCI referrer on the child or the index,",
         "no cosign .sig sibling tag, no GitHub attestation under docker-library, and",
         "no Sigstore transparency-log entry over this digest at all."
       ],
@@ -541,8 +562,23 @@
       "reproducibility": {
         "method": "public-ci-rebuild",
         "verdict": "NOT-REPRODUCED-RECIPE-NONDETERMINISTIC",
-        "optionAAvailable": false,
-        "optionBAvailable": false,
+        "optionAOutcome": "NOT-REPRODUCED-FROM-PUBLISHED-RECIPE",
+        "optionBOutcome": "NO-QUALIFYING-SIGNATURE-FOUND",
+        "claimScope": [
+          "WHAT THIS ESTABLISHES: replaying the recipe docker-library publishes for this",
+          "digest did not reproduce it, and two identical replays of that recipe disagreed",
+          "with each other, so the published recipe is not deterministic. No signature",
+          "meeting this project's option B bar existed for the digest on the date below.",
+          "",
+          "WHAT IT DOES NOT ESTABLISH, and an earlier revision of this entry overstated",
+          "exactly here by phrasing a scoped negative as a universal one: this does not",
+          "show the digest is permanently unbindable. Upstream could publish a",
+          "qualifying signature, which would close",
+          "this with no rebuild at all; a party holding build inputs outside the published",
+          "recipe could produce evidence this run cannot; and this project could accept a",
+          "different kind of evidence after review. The claim is scoped to the published",
+          "recipe, the inputs reachable from it, and the measurement date."
+        ],
         "run": "https://github.com/anonrouter/confidential-content-plane/actions/runs/33689328190",
         "builderWorkflowRef": "https://github.com/anonrouter/confidential-content-plane/.github/workflows/doi-base-rebuild.yml@refs/heads/main",
         "builderWorkflowSha": "19576d6839ea798174045dd40f123bca2965c4d9",
@@ -552,7 +588,7 @@
         "obstructions": [
           {
             "id": "recipe-nondeterministic",
-            "detail": "Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:6babfba1 and sha256:c1d12a97. No rebuild by any party can match a fixed digest."
+            "detail": "Two identical native linux/amd64 invocations, minutes apart with a cold cache, produced sha256:6babfba1 and sha256:c1d12a97. The published recipe is not deterministic, so no replay of it can match a fixed digest, whoever runs the replay."
           },
           {
             "id": "build-clock-in-layer-content",

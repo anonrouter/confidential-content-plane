@@ -11,10 +11,13 @@
 # measured why: two identical replays of docker-library's own recorded
 # invocation, minutes apart on the same runner with a cold cache, produced
 # different images. Both ship a file whose CONTENT records when the build ran,
-# which no timestamp-normalisation flag reaches. Option B is unavailable too.
+# which no timestamp-normalisation flag reaches. Option B found no qualifying
+# signature on that date either.
 #
-# So neither gap closes by trying harder, and the only remaining move is to
-# replace the artifact with one whose provenance CAN be established.
+# So replaying the published recipe cannot close either gap, and the strongest
+# move available to us is to replace the artifact with one whose provenance CAN
+# be established. That is scoped: upstream could publish a qualifying signature
+# at any time and close them without any of this.
 #
 # =============================================================================
 # WHAT THIS DOES NOT DO, STATED FIRST BECAUSE IT IS THE EASIEST THING TO GET

@@ -16,23 +16,30 @@
 // built. No timestamp-normalisation flag rewrites it, because to the build
 // system it is ordinary data.
 //
-// That makes it a hard obstruction rather than a hard problem: two honest
-// builds of identical source, on identical inputs, in the same environment,
-// cannot produce the same bytes. It has to be measured rather than assumed,
-// because the alternative is asserting an image is irreproducible without
-// having looked, which is the same failure as asserting it is reproducible
-// without having built it.
+// That makes it a hard obstruction rather than a hard problem: two runs of the
+// same recipe, on identical inputs, in the same environment, cannot produce the
+// same bytes. It has to be measured rather than assumed, because the
+// alternative is asserting an image is irreproducible without having looked,
+// which is the same failure as asserting it is reproducible without having
+// built it.
 //
 // =============================================================================
-// WHAT THIS DOES NOT CLAIM
+// WHAT THIS DOES NOT CLAIM, IN BOTH DIRECTIONS
 // =============================================================================
 //
-// A hit is evidence that reproduction is impossible for that artifact as built.
-// NO hits is not evidence that it is possible: the clock could be embedded in a
-// binary format this scan cannot read, package versions could have moved in the
-// archive, or the build could be non-deterministic for reasons that have
-// nothing to do with time. Only a rebuild decides that, and this exists to say
-// what a rebuild would be up against before spending the compute.
+// A hit says the recipe cannot be REPLAYED to the same bytes. It does not say
+// the artifact can never be bound to its source: a signature over the digest
+// from a pinnable upstream identity would bind it without any rebuild, and a
+// party holding inputs outside the published recipe is outside what this can
+// see. Reproduction and binding are different things, and only the first one is
+// what a clock in a log file forecloses.
+//
+// NO hits is not evidence that reproduction is possible either: the clock could
+// be embedded in a binary format this scan cannot read, package versions could
+// have moved in the archive, or the build could be non-deterministic for
+// reasons that have nothing to do with time. Only a rebuild decides that, and
+// this exists to say what a rebuild would be up against before spending the
+// compute.
 //
 //   npx tsx scripts/provenance/scan-build-clock.ts <layout-or-reference> <rfc3339-start> <rfc3339-end> [--json]
 
@@ -228,9 +235,13 @@ if (invokedDirectly) {
           process.stdout.write(`      e.g. ${hit.matches.join(", ")}\n`);
         }
         process.stdout.write("\nThese are file CONTENTS, not metadata. No timestamp-normalisation flag\n");
-        process.stdout.write("rewrites them, so two honest builds of identical source cannot produce\n");
-        process.stdout.write("identical bytes. Byte-for-byte reproduction of THIS artifact is not\n");
-        process.stdout.write("difficult; it is impossible.\n");
+        process.stdout.write("rewrites them, so two runs of the same recipe cannot produce identical\n");
+        process.stdout.write("bytes: REPLAYING this recipe to the same digest is ruled out, not merely\n");
+        process.stdout.write("hard.\n");
+        process.stdout.write("\nThat is a statement about replay, not about provenance in general. A\n");
+        process.stdout.write("signature over this digest from a pinnable upstream identity would bind\n");
+        process.stdout.write("the artifact without any rebuild, and inputs held outside the published\n");
+        process.stdout.write("recipe are outside what this scan can see.\n");
       }
     }
     process.exit(scan.embedsBuildClock ? 3 : 0);

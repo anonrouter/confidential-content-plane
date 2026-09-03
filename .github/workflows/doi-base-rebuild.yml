@@ -51,10 +51,17 @@
 # dstack-ingress near-miss turned out to be, where the whole delta was three
 # directories Rosetta 2 wrote.
 #
-# R1 against R2 asks something stronger and unambiguous: is this recipe
-# reproducible BY ANYONE. Two identical invocations disagreeing means no rebuild
-# by any party can match a fixed target, which is the difference between "not
-# done yet" and "cannot be done".
+# R1 against R2 asks something stronger and unambiguous: is THE PUBLISHED RECIPE
+# deterministic. Two identical invocations disagreeing means no replay of that
+# recipe can match a fixed target, whoever runs it, which is the difference
+# between "not attempted yet" and "attempted, and this recipe cannot get there".
+#
+# It is NOT the difference between either of those and "no evidence could ever
+# exist". A qualifying upstream signature would bind the deployed digest with no
+# rebuild at all, and inputs held outside the published recipe are outside what
+# this run can see. An earlier revision of this comment claimed the universal,
+# which is the same failure as rounding an unproven link up, pointed the other
+# way.
 #
 # R3 closes the remaining fork. docker-library derives
 # org.opencontainers.image.created from `env.SOURCE_DATE_EPOCH // now` and the

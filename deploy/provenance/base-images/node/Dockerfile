@@ -1,155 +1,141 @@
 # syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 #
-# AnonRouter's reproducible replacement candidate for node:22-bookworm-slim.
+# AnonRouter's replacement candidate for node:22-bookworm-slim, built FROM
+# scratch.
 #
 # =============================================================================
 # NOT DEPLOYED, AND NOT EVIDENCE ABOUT WHAT IS
 # =============================================================================
 #
 # The image this replaces, node:22-bookworm-slim@sha256:a17d50af..., runs every
-# line of code that handles prompt plaintext, and its source-to-digest binding
-# is a RECORDED GAP that cannot be closed. Measured in public CI on 2026-09-02:
-# two identical replays of docker-library's own recorded invocation, minutes
-# apart on the same runner with a cold cache, produced different images.
-#
-# Building something reproducible here proves nothing whatsoever about that
-# image. It is a replacement, and the ledger records it as one.
+# line of code that handles prompt plaintext. Replaying the recipe
+# docker-library publishes for it does not reproduce it: two identical replays
+# produced different images. Nothing here changes that or says anything about
+# that digest.
 #
 # =============================================================================
-# WHAT MAKES THIS ONE REPRODUCIBLE, POINT BY POINT AGAINST WHAT WAS MEASURED
+# WHY `FROM scratch`, AND WHY THE PREVIOUS VERSION WAS NOT ENOUGH
 # =============================================================================
 #
-# The entire difference between the two upstream runs was four files:
-# /var/log/dpkg.log, /var/log/alternatives.log, /var/log/apt/history.log and
-# /var/log/apt/term.log. apt and dpkg write the wall clock into them and the
-# image ships them. Zero other paths differed anywhere in 5,759 files, and the
-# Debian archive had not moved. So the recipe is deterministic in every respect
-# except its own clock, and the clock is in file CONTENT where SOURCE_DATE_EPOCH
-# and rewrite-timestamp cannot reach.
+# The first version of this candidate was `FROM debian:bookworm-slim@sha256:...`.
+# It was reproducible and signed and it closed nothing: that image is a Docker
+# Official Image with the same unbound provenance as the one being replaced. A
+# replacement that inherits an unbound rootfs has moved the gap down a layer,
+# not closed it.
 #
-#   1. NO APT IN THE SHIPPED IMAGE AT ALL. Everything that needs a package
-#      manager happens in a `fetch` stage that is never shipped, and the final
-#      stage receives directories. There is therefore no dpkg log to delete and
-#      no chance of one reappearing when a future edit adds a package.
-#   2. /etc/shadow's last-changed field is a count of days since the epoch, so
-#      an account created on a different day changes the file. It is set to a
-#      fixed value.
-#   3. Every download is pinned by digest and fetched by BuildKit's own
-#      verified ADD, so there is no curl, no wget, no gnupg and no keyserver
-#      round trip in the build at all. Upstream verifies these with GPG keys
-#      fetched from a keyserver at build time, which is neither reproducible nor
-#      pinnable.
-#   4. The base is pinned to the linux/amd64 CHILD MANIFEST. An index digest is
-#      immutable and still resolves to a different image per builder
-#      architecture.
+# So the rootfs is assembled here from parts that ARE bound:
 #
-# The build must additionally set SOURCE_DATE_EPOCH and export with
-# rewrite-timestamp=true. See .github/workflows/anonrouter-base-build.yml, which
-# builds this twice in unrelated jobs and refuses to publish unless the two
-# digests are equal.
+#   * the Node release tarball, pinned by the sha256 nodejs.org publishes in its
+#     signed SHASUMS256.txt, and independently corroborated: the `node` binary
+#     inside it hashes to 3517c2df..., byte-identical to /usr/local/bin/node in
+#     the deployed image;
+#   * Debian .debs, each pinned by a sha256 that also appears in the `Packages`
+#     index that Debian's OpenPGP-signed `Release` file covers, fetched from an
+#     immutable snapshot path;
+#   * a handful of literal text files, written in assemble.sh where a reader can
+#     read them.
+#
+# WHAT IT ACTUALLY NEEDS was measured, not guessed. `ldd` over the node binary
+# and over every native module the PRODUCTION dependency set installs
+# (onnxruntime-node, @img/sharp-linux-x64, libvips-cpp, argon2) names exactly
+# three packages: libc6, libgcc-s1, libstdc++6. Nothing else, no libgomp, no
+# system libvips.
 #
 # =============================================================================
-# THE PINS WERE CORROBORATED AGAINST THE ARTIFACT IN SERVICE
+# WHAT WAS DROPPED, AND WHY THAT IS A CHOICE RATHER THAN AN OVERSIGHT
 # =============================================================================
 #
-# Each digest below was checked against the image actually running, which is a
-# source of truth that did not come from the party serving the download:
+#   yarn        the content plane never invokes it. It is ~5 MB of JavaScript
+#               with network reach in an image whose whole point is that it
+#               handles plaintext. Shipping it for drop-in parity with an image
+#               nobody else consumes is the wrong trade.
+#   apt, dpkg   nothing installs packages at runtime, and after the change to
+#               the application Dockerfile nothing installs them at build time
+#               in this image either.
+#   /etc/shadow the deployed image's copy records the build DAY in its
+#               last-changed field, which is one of the obstructions that made
+#               the original irreproducible. `USER node` needs /etc/passwd, not
+#               /etc/shadow, so the file is absent by construction rather than
+#               normalised by a sed.
 #
-#   node tarball  -> its `node` binary hashes to 3517c2df..., byte-identical to
-#                    /usr/local/bin/node inside node:22-bookworm-slim@sha256:a17d50af
-#   yarn tarball  -> bin/yarn.js hashes to 148e19db..., byte-identical to
-#                    /opt/yarn-v1.22.22/bin/yarn.js in the same image
-#   entrypoint    -> a15ac958..., byte-identical to the copy in the same image
+# =============================================================================
+# THE TRUST DEPENDENCY THAT REMAINS, NAMED RATHER THAN OMITTED
+# =============================================================================
 #
-# Licence: the Dockerfile logic below is derived from nodejs/docker-node
-# (MIT) at commit bc0a422bce0f729dd85790639d9f1918143f1235. See LICENSE.upstream.
-
-ARG DEBIAN_BASE=debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867
+# The `unpack` stage runs on the pinned Debian image because something has to
+# run `dpkg-deb -x` and `ldconfig`. That is a build TOOL: none of its bytes
+# reach the shipped image, every input it consumes is hash-pinned before it
+# runs, and two independent CI jobs must produce the same output digest.
+# Recorded in deploy/provenance/plaintext-capable-components.json under
+# `controlledEquivalent.buildToolDependencies`.
+#
+# Licence: derived from nodejs/docker-node (MIT) at commit
+# bc0a422bce0f729dd85790639d9f1918143f1235. See LICENSE.upstream.
 
 # -----------------------------------------------------------------------------
-# fetch: has a package manager, and is never shipped
+# unpack: a build tool. Nothing from this stage is shipped.
 # -----------------------------------------------------------------------------
-FROM ${DEBIAN_BASE} AS fetch
+FROM debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867 AS unpack
 
-# A pinned snapshot rather than the live archive. `deb.debian.org` serves
-# whatever is current, so a build a month from now installs different bytes and
-# nothing records which. This stage is not shipped, but xz-utils decides how the
-# tarball is unpacked, so it is pinned like everything else.
-ARG DEBIAN_SNAPSHOT=20260901T000000Z
-# `http`, not `https`. The base ships no CA bundle, so apt cannot complete a TLS
-# handshake before ca-certificates is installed. Integrity does not depend on
-# TLS here: apt verifies the Release file's OpenPGP signature against
-# debian-archive-keyring, which IS present, and every package against the hashes
-# in that signed file.
-RUN set -eux; \
-    rm -f /etc/apt/sources.list.d/debian.sources; \
-    { \
-      echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm main"; \
-      echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/ bookworm-security main"; \
-      echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm-updates main"; \
-    } > /etc/apt/sources.list; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends xz-utils
-
-ARG NODE_VERSION=22.23.2
-ARG YARN_VERSION=1.22.22
-
-# BuildKit verifies these before the layer is created. A mismatch fails the
-# build rather than producing an image somebody has to notice is wrong.
+# Verified by BuildKit before the layer exists. `http` for the snapshot paths is
+# deliberate: the base ships no CA bundle, integrity comes from these sha256
+# values, and each of them also appears in the Packages index that Debian's
+# OpenPGP-signed Release covers.
 ADD --checksum=sha256:d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307 \
-    https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz /tmp/node.tar.xz
-ADD --checksum=sha256:88268464199d1611fcf73ce9c0a6c4d44c7d5363682720d8506f6508addf36a0 \
-    https://yarnpkg.com/downloads/1.22.22/yarn-v1.22.22.tar.gz /tmp/yarn.tar.gz
+    https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz /in/node.tar.xz
 ADD --checksum=sha256:a15ac9589c04baf9da95b08e0e79b5cf1d75ab8dc64e06a5e68e4ceb0ad7c8ea \
     https://raw.githubusercontent.com/nodejs/docker-node/bc0a422bce0f729dd85790639d9f1918143f1235/22/bookworm-slim/docker-entrypoint.sh \
-    /tmp/docker-entrypoint.sh
+    /in/docker-entrypoint.sh
+ADD --checksum=sha256:ba4f88f73dbc3ae9055f3c20f4523bfdbaf1ad13ff95e258924f77d20b4fbedf \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/g/glibc/libc6_2.36-9+deb12u14_amd64.deb /in/libc6.deb
+ADD --checksum=sha256:3016e62cb4b7cd8038822870601f5ed131befe942774d0f745622cc77d8a88f7 \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/g/gcc-12/libgcc-s1_12.2.0-14+deb12u1_amd64.deb /in/libgcc-s1.deb
+ADD --checksum=sha256:5cd3171216d4ab0fc911cfe9c35509bf2dd8f47761c43b7f6a4296701551a24d \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/g/gcc-12/libstdc++6_12.2.0-14+deb12u1_amd64.deb /in/libstdc++6.deb
+ADD --checksum=sha256:33ea40061da2f1a861ec46212b2b6a34f0776a049b1a3f0abce2fb8cb994258f \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/d/dash/dash_0.5.12-2_amd64.deb /in/dash.deb
+ADD --checksum=sha256:62b08a77d985d4253894b1f69aebda5925034ca4e294add364167fad8cb64a44 \
+    http://snapshot.debian.org/archive/debian-security/20260901T000000Z/pool/updates/main/c/ca-certificates/ca-certificates_20250419~deb12u1_all.deb /in/ca-certificates.deb
+ADD --checksum=sha256:29b23c48c0fe6f878e56c5ddc9f65d1c05d729360f3690a593a8c795031cd867 \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/n/netbase/netbase_6.4_all.deb /in/netbase.deb
+ADD --checksum=sha256:0edb49f4dffe0d5608069f7e4ba4d69544d3b9e86fc314dd8b75e9958d8e5e98 \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/t/tzdata/tzdata_2026b-0+deb12u1_all.deb /in/tzdata.deb
+# A BUILD TOOL, not a shipped file. debian:bookworm-slim has no `xz`, and the
+# Node release tarball is .tar.xz. Pinned like everything else rather than
+# apt-installed, so the unpack stage runs no package manager at all and its
+# only network inputs are these checksummed URLs.
+ADD --checksum=sha256:cc6dc501e0c06be3f89e9a7f8dfd7a97f92aadfd9daa60fad19b90d6a5558b80 \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/x/xz-utils/xz-utils_5.4.1-1+deb12u1_amd64.deb /in/xz-utils.deb
+# ONE binary out of coreutils, and only one. npm's entry point is a script whose
+# shebang is `#!/usr/bin/env node`, so without /usr/bin/env the image has node
+# and cannot run npm -- which is exactly what the chroot check at the end of
+# assemble.sh caught on the first build.
+ADD --checksum=sha256:61038f857e346e8500adf53a2a0a20859f4d3a3b51570cc876b153a2d51a3091 \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/c/coreutils/coreutils_9.1-1_amd64.deb /in/coreutils.deb
 
-RUN set -eux; \
-    mkdir -p /out/usr/local /out/opt; \
-    tar -xJf /tmp/node.tar.xz -C /out/usr/local --strip-components=1 --no-same-owner; \
-    tar -xzf /tmp/yarn.tar.gz -C /out/opt --no-same-owner; \
-    # Upstream drops the OpenSSL headers for other architectures, saving ~34 MB.
-    # Kept here so the shipped tree matches what the replaced image contains.
-    find /out/usr/local/include/node/openssl/archs -mindepth 1 -maxdepth 1 \
-      ! -name 'linux-x86_64' -exec rm -rf {} +; \
-    install -m 0755 /tmp/docker-entrypoint.sh /out/usr/local/bin/docker-entrypoint.sh; \
-    test -x /out/usr/local/bin/node
+# /etc/gai.conf and /etc/host.conf live here, not in libc6. Without gai.conf
+# getaddrinfo falls back to glibc's built-in precedence table, and the
+# difference is observable: `dns.lookup("localhost")` returned ::1 on the image
+# the content plane runs today and 127.0.0.1 on the first version of this one.
+# A base that resolves to a different address family is not a drop-in base.
+ADD --checksum=sha256:e667401af91fad95f15b3ebd25d1abd8373fd18b00dc32219678413170544e84 \
+    http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/g/glibc/libc-bin_2.36-9+deb12u14_amd64.deb /in/libc-bin.deb
+
+COPY assemble.sh /in/assemble.sh
+RUN ["/bin/sh", "/in/assemble.sh"]
 
 # -----------------------------------------------------------------------------
-# the shipped image: the pinned base, plus directories
+# the shipped image
 # -----------------------------------------------------------------------------
-FROM ${DEBIAN_BASE}
+FROM scratch
 
-COPY --from=fetch /out/usr/local /usr/local
-COPY --from=fetch /out/opt /opt
+COPY --from=unpack /out/ /
 
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV NODE_VERSION=22.23.2
-ENV YARN_VERSION=1.22.22
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-RUN set -eux; \
-    groupadd --gid 1000 node; \
-    useradd --uid 1000 --gid node --shell /bin/bash --create-home node; \
-    # THE BUILD DAY LEAKS HERE, and it is the second of the two obstructions
-    # this image exists to remove. /etc/shadow's third field is the number of
-    # days since 1970-01-01 on which the password last changed, so an account
-    # created on any other day produces a different file. 20000 is 2024-10-04,
-    # chosen only because it is fixed and in the past.
-    sed -ri 's/^(node:[^:]*:)[0-9]*:/\120000:/' /etc/shadow; \
-    ln -s /usr/local/bin/node /usr/local/bin/nodejs; \
-    ln -s /opt/yarn-v${YARN_VERSION}/bin/yarn /usr/local/bin/yarn; \
-    ln -s /opt/yarn-v${YARN_VERSION}/bin/yarnpkg /usr/local/bin/yarnpkg; \
-    # useradd writes these, and both record the moment it ran.
-    rm -f /var/log/faillog /var/log/lastlog /var/log/tallylog; \
-    # smoke tests, so a broken tree fails here rather than in a deployment
-    node --version; \
-    npm --version; \
-    yarn --version; \
-    # THE SMOKE TESTS THEMSELVES ARE NOT DETERMINISTIC, which two local builds
-    # of this file demonstrated before it said so: npm enables Node 22's V8
-    # compile cache, so running it writes ~70 files under
-    # /tmp/node-compile-cache/ whose contents differ run to run. Upstream ends
-    # both of its RUN steps with the same `rm -rf /tmp/*` and this is why.
-    rm -rf /tmp/*
+WORKDIR /app
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node"]

@@ -151,10 +151,22 @@ const deployedSourceSchema = z.object({
  *
  * `binding` records whether a source-to-digest binding exists. It has three
  * values and none of them can say WHY a gap is still a gap, so for a long time
- * the reason lived in prose that nobody could check and that would age badly
- * in the one direction that matters: "we have not rebuilt it yet" and "no
- * rebuild by anyone can ever match it" are different facts with different
- * consequences, and only the first one improves by trying harder.
+ * the reason lived in prose that nobody could check.
+ *
+ * There are THREE states worth telling apart, not two, and the first version of
+ * this field only had room for two:
+ *
+ *   1. nobody has run the rebuild;
+ *   2. the rebuild ran and the recipe upstream publishes cannot be replayed to
+ *      the deployed digest by anyone, because it is not deterministic;
+ *   3. no route to a binding could ever exist.
+ *
+ * Only (1) and (2) are things a measurement can report. (3) is not measurable
+ * from here at all, and a field shaped as `optionAAvailable: false` was read as
+ * (3) when it meant (2). Hence the enums and the mandatory `claimScope`: a
+ * scoped negative that reads as a universal one launders an unmeasured
+ * assumption into an apparent proof, which is the same failure this ledger
+ * exists to prevent, pointed the other way.
  *
  * This field is the measurement. It is written from a public CI run's verdict
  * file, it is allowed to record a failure, and the schema below makes it
@@ -171,13 +183,47 @@ const reproducibilitySchema = z.object({
     "NOT-REPRODUCED"
   ]),
   /**
-   * Can option A ever succeed for this artifact? False means the recipe is
-   * non-deterministic or the artifact embeds its own build clock, so the answer
-   * does not change by rebuilding again on a better day.
+   * What happened to option A, scoped to what was actually run.
+   *
+   * The field used to be `optionAAvailable: boolean`, and a boolean called
+   * "available" cannot express the difference between "we did not manage it"
+   * and "the recipe as published cannot get there", let alone the difference
+   * between either of those and "no evidence of any kind could ever exist". It
+   * was read as the last of the three, which is broader than anything measured.
+   *
+   * An enum forces the distinction into the ledger instead of into prose:
+   *   NOT-ATTEMPTED                       nobody has run it
+   *   REPRODUCED                          the rebuild produced the deployed digest
+   *   NOT-REPRODUCED-FROM-PUBLISHED-RECIPE  it ran and did not, and two identical
+   *                                       replays of the published recipe also
+   *                                       disagreed with each other
    */
-  optionAAvailable: z.boolean(),
-  /** Can option B ever succeed? Measured by check-upstream-signatures.ts. */
-  optionBAvailable: z.boolean(),
+  optionAOutcome: z.enum(["NOT-ATTEMPTED", "REPRODUCED", "NOT-REPRODUCED-FROM-PUBLISHED-RECIPE"]),
+  /**
+   * What happened to option B, on the date recorded below.
+   *
+   * `NO-QUALIFYING-SIGNATURE-FOUND` is a statement about a search, not about the
+   * future. Upstream can start signing at any time, and if it does, this
+   * component becomes bindable without a single rebuild.
+   */
+  optionBOutcome: z.enum(["NOT-CHECKED", "VERIFIED", "NO-QUALIFYING-SIGNATURE-FOUND"]),
+  /**
+   * What the measurement establishes and, explicitly, what it does not.
+   *
+   * Required rather than optional. The failure this exists to prevent is a
+   * reader taking a scoped negative for a universal one, and the earlier
+   * wording invited exactly that.
+   */
+  claimScope: z
+    .array(z.string())
+    .min(1)
+    // Empty strings are allowed because they are paragraph breaks, but the text
+    // as a whole has to actually state a limit. A `claimScope` that only
+    // restates the finding would satisfy the field and defeat its purpose, so
+    // the refusal is on the content rather than on the shape.
+    .refine((lines) => /does not establish|DOES NOT ESTABLISH/i.test(lines.join(" ")), {
+      message: "claimScope must say what the measurement does NOT establish, not only what it does"
+    }),
   run: z.string().url(),
   builderWorkflowRef: z.string().min(1),
   builderWorkflowSha: z.string().regex(/^[0-9a-f]{40}$/),
@@ -325,10 +371,13 @@ const componentSchema = z
           `${component.reproducibility.verdict}. A rebuild that did not reproduce the deployed digest is not a binding.`
       });
     }
-    if (component.reproducibility && status === "REBUILT" && component.reproducibility.optionAAvailable === false) {
+    if (component.reproducibility && status === "REBUILT"
+      && component.reproducibility.optionAOutcome !== "REPRODUCED") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `${component.id}: status REBUILT, but the measurement records option A as unavailable for this artifact.`
+        message:
+          `${component.id}: status REBUILT, but the measurement records option A as ` +
+          `${component.reproducibility.optionAOutcome}.`
       });
     }
     if (component.reproducibility && component.reproducibility.rebuiltDigest === component.pinned.digest
@@ -513,15 +562,12 @@ function report(ledger: Ledger): number {
     // somebody's week.
     if (component.reproducibility) {
       const r = component.reproducibility;
-      say(`         measured ${r.verdict}`);
-      say(`                  option A ${r.optionAAvailable ? "available" : "UNAVAILABLE"}, option B ${r.optionBAvailable ? "available" : "UNAVAILABLE"}`);
+      say(`         measured ${r.verdict}  (${r.measuredAt.slice(0, 10)})`);
+      say(`                  option A ${r.optionAOutcome}`);
+      say(`                  option B ${r.optionBOutcome}`);
       say(`                  ${r.run}`);
       for (const obstruction of r.obstructions) say(`                  - ${obstruction.id}`);
-      if (!r.optionAAvailable && !r.optionBAvailable) {
-        say("                  NOT 'not done yet'. Both routes to a binding were tried and");
-        say("                  neither can succeed for this artifact, so trying harder does");
-        say("                  not help. Closing it means replacing the artifact.");
-      }
+      for (const line of r.claimScope) say(`                  ${line}`);
     }
     if (component.controlledEquivalent) {
       const e = component.controlledEquivalent;

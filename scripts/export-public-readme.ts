@@ -127,16 +127,17 @@ function gapProse(component: Component): string[] {
   // cannot succeed.
   if (component.reproducibility) {
     const r = component.reproducibility;
+    const measuredOn = r.measuredAt.slice(0, 10);
     lines.push(
-      `**This gap has been measured, and it is not "not done yet".** AnonRouter's public CI replayed`,
+      `**This gap has been measured, and it is not "not attempted yet".** AnonRouter's public CI replayed`,
       "upstream's own recorded build invocation for this exact digest, natively on `linux/amd64`, with every",
       "argument read out of the deployed image's own SLSA statement rather than from any file in this",
-      `repository. Result: \`${r.verdict}\`.`,
+      `repository. Result on ${measuredOn}: \`${r.verdict}\`.`,
       "",
       `Two **identical** invocations, minutes apart on the same runner with a cold cache, produced`,
-      `\`${r.rebuiltDigest}\` and \`${r.rebuiltAgainDigest ?? "(second run not available)"}\`. Those are different images, so no`,
-      "rebuild by any party can match a fixed digest. Option A is **unavailable for this artifact**, not",
-      "merely unattempted, and trying harder does not change that. Why, precisely:",
+      `\`${r.rebuiltDigest}\` and \`${r.rebuiltAgainDigest ?? "(second run not available)"}\`. Those are different images, so the`,
+      "**published recipe is not deterministic**, and no replay of it can match a fixed digest whoever runs",
+      "the replay. Why, precisely:",
       ""
     );
     for (const obstruction of r.obstructions) {
@@ -148,16 +149,25 @@ function gapProse(component: Component): string[] {
       `The run is public: ${r.run}`,
       ""
     );
-    if (!r.optionBAvailable) {
+    if (r.optionBOutcome === "NO-QUALIFYING-SIGNATURE-FOUND") {
       lines.push(
-        "Option B was measured on the same run and is also unavailable: no OCI referrer, no cosign signature",
-        "tag, no attestation under the builder's GitHub org. Where the Sigstore transparency log carries an",
-        "entry over the digest at all, it is a bare public key with no certificate, so it names nobody and",
-        "cannot be pinned to an upstream identity. A check that asked only whether the digest appears in the",
-        "log would have accepted it.",
+        `Option B was measured on the same run and found nothing qualifying **as of ${measuredOn}**: no OCI`,
+        "referrer, no cosign signature tag, no attestation under the builder's GitHub org. Where the Sigstore",
+        "transparency log carries an entry over the digest at all, it is a bare public key with no certificate,",
+        "so it names nobody and cannot be pinned to an upstream identity. A check that asked only whether the",
+        "digest appears in the log would have accepted it.",
         ""
       );
     }
+    // The scope paragraph is NOT optional and NOT paraphrased here. An earlier
+    // revision of this generator said the gap was "unavailable for this
+    // artifact" and that "trying harder does not change that", which is a
+    // universal claim over evidence that was scoped to one recipe on one day.
+    // Overstating a negative launders an unmeasured assumption into an apparent
+    // proof exactly as overstating a positive does.
+    lines.push("**What this does and does not establish:**", "");
+    for (const line of r.claimScope) lines.push(line === "" ? "" : line);
+    lines.push("");
   }
 
   if (component.controlledEquivalent) {

@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 173,
+  "copiedSourceFiles": 181,
   "generatedFiles": 7,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 180,
+  "fileCount": 188,
   "files": [
     {
       "path": ".dockerignore",
@@ -41,13 +41,13 @@
     },
     {
       "path": ".github/workflows/anonrouter-base-build.yml",
-      "sha256": "bbed57b329c590d06fa7bdb73b5fcde7f14772cbb33a8474143a60675f99688c",
-      "bytes": 23157
+      "sha256": "991bfc9e0611d1e94337195a99618c255d234a0fe1ad8f4eb4a4c27525b8aa40",
+      "bytes": 23334
     },
     {
       "path": ".github/workflows/doi-base-rebuild.yml",
-      "sha256": "d3713806b55dcb5696e4086a3ffcd9f5e49b1e25ecc87fd28f6d28e38415c1fb",
-      "bytes": 21358
+      "sha256": "4e1b09b8b90c185a378f66ebbd5d9ddbd213e2f9e2b059099171aa0e75ddb55c",
+      "bytes": 21817
     },
     {
       "path": ".github/workflows/dstack-ingress-rebuild.yml",
@@ -86,8 +86,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "181a2684651d81466137257e58abd9d91409e9470729a776379c55c1eb11272c",
-      "bytes": 15922
+      "sha256": "e35a8f5172b5b56fde245ba8422a5e1511205d73b09368d5e901cee8ce151377",
+      "bytes": 17892
     },
     {
       "path": "deploy/phala/docker-compose.production.yml",
@@ -116,13 +116,13 @@
     },
     {
       "path": "deploy/provenance/base-images/README.md",
-      "sha256": "2bfb58e7c15dcd7717d8da1df04229036573c7ef83012e60a90856af429d403b",
-      "bytes": 6643
+      "sha256": "5520c57e8fff2cfede70cdd0ea3a4837cc6c7ef140bcfc0a51397f83caa65b5e",
+      "bytes": 6834
     },
     {
       "path": "deploy/provenance/base-images/caddy/Dockerfile",
-      "sha256": "6e5212cf94e06c1dd3bb83af85bda2de49f438472c444f543f2626d1556d00d7",
-      "bytes": 8939
+      "sha256": "e159927a9f5ab07564ce8b236b97565cad66c3281d27aec8cc983b026c98b7be",
+      "bytes": 8527
     },
     {
       "path": "deploy/provenance/base-images/caddy/LICENSE.upstream",
@@ -130,9 +130,14 @@
       "bytes": 11357
     },
     {
+      "path": "deploy/provenance/base-images/caddy/assemble.sh",
+      "sha256": "ec2112b5cc79c1e0fe924a8fb6454fc906986448cec34081486287ae556227ee",
+      "bytes": 5164
+    },
+    {
       "path": "deploy/provenance/base-images/node/Dockerfile",
-      "sha256": "8756e0482d908a755e43e6a6fa0740f0de07d4da8fc99f1bad74c419a800eaf4",
-      "bytes": 8642
+      "sha256": "a88d09565c333498ad6537b517775c72d1dea3eaf377adfc3064886b408b1d38",
+      "bytes": 8772
     },
     {
       "path": "deploy/provenance/base-images/node/LICENSE.upstream",
@@ -140,9 +145,14 @@
       "bytes": 1119
     },
     {
+      "path": "deploy/provenance/base-images/node/assemble.sh",
+      "sha256": "af5d0a51031e05c6aea173f376de4bbb52bdb0dd4ac5da8dfaf4448f8fbb97df",
+      "bytes": 11340
+    },
+    {
       "path": "deploy/provenance/plaintext-capable-components.json",
-      "sha256": "5e1cf6c6f12275b684867ec411a1364172823335c2a1c0b015b13e0fc52556f7",
-      "bytes": 40629
+      "sha256": "27a3e259b498ae702e0a2ac59b15ec391d4fcfa36c0bb97f0a91793568ee5650",
+      "bytes": 43526
     },
     {
       "path": "docs/publication/INDEPENDENT_VERIFICATION.md",
@@ -161,8 +171,8 @@
     },
     {
       "path": "scripts/export-public-readme.ts",
-      "sha256": "f2ba3a45919a3bff9974dcf1cec34e3a00d26af96028a4273caef82b367aaa63",
-      "bytes": 20433
+      "sha256": "52e2175a9e249e512efec3805c5d738de5225bafa41e7190fdcd836290c25731",
+      "bytes": 21124
     },
     {
       "path": "scripts/finalize-phala-release.mjs",
@@ -186,13 +196,23 @@
     },
     {
       "path": "scripts/provenance/compare-oci-images.ts",
-      "sha256": "28527faa2c0a2e9571faedd20d9d45de1cb4169aedd10575164d12078e7b3121",
-      "bytes": 20763
+      "sha256": "ed0d6b44af05a5c26aa98de37f9d37f8ff8de57cf3cb061b13b40aa90d1bb8ac",
+      "bytes": 23586
+    },
+    {
+      "path": "scripts/provenance/content-plane-compat-harness.sh",
+      "sha256": "fea87dd99c819e0193d6237142c7ce33614a42890ac1239250c9413d456fe2e9",
+      "bytes": 18621
     },
     {
       "path": "scripts/provenance/doi-source-recipe.ts",
       "sha256": "45d23076b32a3626bde9d79f73f2f6acaa0530a7cc78a02b06d60bee00314b72",
       "bytes": 18905
+    },
+    {
+      "path": "scripts/provenance/edge-compat-harness.sh",
+      "sha256": "f07a26656fdb725f26ed39611bfdd8f93caff39aeb72e2627d2cdc0ae4618612",
+      "bytes": 16927
     },
     {
       "path": "scripts/provenance/escrowRuntime.ts",
@@ -201,8 +221,18 @@
     },
     {
       "path": "scripts/provenance/judge-doi-rebuild.ts",
-      "sha256": "cc02e53e691846aae4fac0f939b0922be126da60dc9402d85102e804f11b78fa",
-      "bytes": 12243
+      "sha256": "50988b32b51c625ad98b8dcbe1beca49e298ce46a8594271a8d3640fba932103",
+      "bytes": 13766
+    },
+    {
+      "path": "scripts/provenance/layer-carries-capability.sh",
+      "sha256": "b295044f8f3cff03f076a046e513753acbbd0f72f86c9336835062165390a84e",
+      "bytes": 2857
+    },
+    {
+      "path": "scripts/provenance/pin-debian-packages.ts",
+      "sha256": "32bedfd8a366b0eebc8a3592778eff973546cdc9cb8826dd449a3a7b4a89a7af",
+      "bytes": 11352
     },
     {
       "path": "scripts/provenance/replay-doi-build.sh",
@@ -211,13 +241,13 @@
     },
     {
       "path": "scripts/provenance/scan-build-clock.ts",
-      "sha256": "6132d16512f5f5921f16dd84bf760acdeea12e1a7516ca7cc063743d66352f6c",
-      "bytes": 10866
+      "sha256": "03f016878999683f82009717a34c5f0b3dd1c9db12ef49c847d6e2b48504dd09",
+      "bytes": 11634
     },
     {
       "path": "scripts/verify-third-party-provenance.ts",
-      "sha256": "8e507b0985764652b9d7687d9f217ef5015e8fdfaa9aa45d06abff05edbf93cd",
-      "bytes": 26030
+      "sha256": "1a28d1ea0c9d2f3683ba89e418ae604410e76bf83705ff57631f9ed86aa984eb",
+      "bytes": 28224
     },
     {
       "path": "src/compat/broker.ts",
@@ -855,6 +885,11 @@
       "bytes": 1944
     },
     {
+      "path": "tests/helpers/ociLayout.ts",
+      "sha256": "0017a776bd6d42940edd6f772df4b5664fc3929a33ffa9cd76179c5ca60c80a6",
+      "bytes": 11322
+    },
+    {
       "path": "tests/helpers/syntheticTdxQuote.ts",
       "sha256": "c99df8848cae9e0baf2dd7974323dea619a26a1b646287226e9c44095b87a7f8",
       "bytes": 7977
@@ -905,6 +940,11 @@
       "bytes": 10093
     },
     {
+      "path": "tests/unit/oci-comparison-adversarial.test.ts",
+      "sha256": "a687f3b96ac1c408da65d9ec9be6dff8e278ed98a529300e11e6bd7cba78678d",
+      "bytes": 12197
+    },
+    {
       "path": "tests/unit/privacy-tiers.test.ts",
       "sha256": "4b997637ae8c85f17f053e5bd2045c4408dec0e79f0ce81794923a8e3ca7b230",
       "bytes": 1579
@@ -921,8 +961,8 @@
     },
     {
       "path": "tests/unit/third-party-provenance.test.ts",
-      "sha256": "d82a9b9696991a76a2470cca970fa482c48274154b92dd3b978bd34fc5bc8bff",
-      "bytes": 26909
+      "sha256": "1b63c6c82bed56ed0881dedad9e7886120df722e8c4c43184fd4193e7cff7185",
+      "bytes": 30675
     },
     {
       "path": "tsconfig.json",
