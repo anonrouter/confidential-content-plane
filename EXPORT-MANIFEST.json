@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 189,
+  "copiedSourceFiles": 190,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 197,
+  "fileCount": 198,
   "files": [
     {
       "path": ".dockerignore",
@@ -76,8 +76,8 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "7d818f224d1ab92fb0cde0b676a59acce1728751f75afaac87a773300264bcb3",
-      "bytes": 5527
+      "sha256": "de53b49f3514065666b2e86b3919c174c3d9599d38dec3ad1f7309daaa72bd05",
+      "bytes": 5628
     },
     {
       "path": "LICENSE",
@@ -93,6 +93,11 @@
       "path": "README.md",
       "sha256": "d161687a7adf3afa3080232fd9c61200c919aaf7f9581f92c96ecc9d923e4a99",
       "bytes": 5517
+    },
+    {
+      "path": "config/confidential-route-policy.json",
+      "sha256": "7daffba1f10db1f1fd6c1192832a097dece6fc425af23a98373082438aa6d700",
+      "bytes": 9522
     },
     {
       "path": "deploy/phala/docker-compose.production.yml",
@@ -976,8 +981,8 @@
     },
     {
       "path": "tests/unit/node-base-runtime-contract.test.ts",
-      "sha256": "4b191cdcef69ddf66713f0f04cd145359937d1457d02ca1a67fd9d6ca9ff0fc3",
-      "bytes": 660
+      "sha256": "7104ee865c97f9411dbcfd9b254fdf900cf19c13d6a16957841d584da5492b24",
+      "bytes": 1231
     },
     {
       "path": "tests/unit/oci-comparison-adversarial.test.ts",
