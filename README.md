@@ -41,17 +41,17 @@ ledger like any other third-party component.
 This is the stable build status of the artifacts maintained by this repository.
 It is intentionally not a production status page.
 
-- **Caddy edge base (`caddy-edge-base`): reproducible AnonRouter build, NOT DEPLOYED.**
-  The tracked artifact is `caddyserver/caddy-docker` (Apache-2.0), source-to-digest binding NOT established.
-  The replacement FROM-scratch image is reproduced by two independent CI jobs, signed,
-  and passes 24/24 compatibility checks with a working negative control.
+- **Caddy edge base (`caddy-edge-base`): tracked upstream binding NOT established.**
+  The tracked artifact is `caddyserver/caddy-docker` (Apache-2.0).
+  A reproducible AnonRouter build is available as a FROM-scratch image; two independent CI jobs
+  reproduce it; it is signed and passes 24/24 compatibility checks with a working negative control.
 - **Dstack ingress (`dstack-ingress`): reproducibly bound.** Public CI rebuilt
   `Dstack-TEE/dstack-examples@b322d14e74920c6523dc7ac7e2974e0414df82d0` and reproduced the recorded image
   digest byte for byte. The result is signed against a pinned workflow identity.
-- **Node runtime base (`node-base-image`): reproducible AnonRouter build, NOT DEPLOYED.**
-  The tracked artifact is `nodejs/docker-node` (MIT), source-to-digest binding NOT established.
-  The replacement FROM-scratch image is reproduced by two independent CI jobs, signed,
-  and passes 13/13 compatibility checks with a working negative control.
+- **Node runtime base (`node-base-image`): tracked upstream binding NOT established.**
+  The tracked artifact is `nodejs/docker-node` (MIT).
+  A reproducible AnonRouter build is available as a FROM-scratch image; two independent CI jobs
+  reproduce it; it is signed and passes 13/13 compatibility checks with a working negative control.
 
 A digest pin or an unsigned registry statement alone is not treated as a source
 binding. Exact digests, build identities, attestations, compatibility evidence

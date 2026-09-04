@@ -91,8 +91,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "eee3825e36bef2fcae869c559eeab39bfbb51f3c4172c7562f25b34070b3f7d1",
-      "bytes": 5535
+      "sha256": "d161687a7adf3afa3080232fd9c61200c919aaf7f9581f92c96ecc9d923e4a99",
+      "bytes": 5517
     },
     {
       "path": "deploy/phala/docker-compose.production.yml",
@@ -176,8 +176,8 @@
     },
     {
       "path": "scripts/export-public-readme.ts",
-      "sha256": "4266530f716e6a986742027a3a0757ecb2383547fabaeb453117479e1a80f9fd",
-      "bytes": 27631
+      "sha256": "0c19c82e5570e19db3d0d36b61f0238ab660ae9710d696d174385e4e8ac1952f",
+      "bytes": 27644
     },
     {
       "path": "scripts/finalize-phala-release.mjs",
