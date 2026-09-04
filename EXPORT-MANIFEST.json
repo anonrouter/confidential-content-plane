@@ -76,7 +76,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "671e40596aae2951ca067545245258f720620a220cc5b6e5e6fe008a22b05eb9",
+      "sha256": "7d818f224d1ab92fb0cde0b676a59acce1728751f75afaac87a773300264bcb3",
       "bytes": 5527
     },
     {
@@ -156,7 +156,7 @@
     },
     {
       "path": "deploy/provenance/plaintext-capable-components.json",
-      "sha256": "4b9c1d03bef84deec6c7e3432323f367a4c5770d9ba442b0d375e56118f86d73",
+      "sha256": "6df995afb983a82ef886a88fa61f489e5eee3596ddf082aeb149a7a6ea958733",
       "bytes": 47345
     },
     {
@@ -931,7 +931,7 @@
     },
     {
       "path": "tests/unit/base-image-pin-platform.test.ts",
-      "sha256": "54ef653bef4ac7c1abdf5a9a3d1b9cb0bf4cb8525c32a785b976316feb9afebd",
+      "sha256": "95e02a00cf329867d14268b992554e7ba1ba55ba35d189c0d65d87ac7d25c6c5",
       "bytes": 10754
     },
     {
