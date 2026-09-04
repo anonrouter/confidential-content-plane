@@ -70,6 +70,23 @@ export function buildAttestationExpectations(input: {
   } as AttestationExpectations;
 }
 
+/**
+ * The honest caveat, in ONE place, because the two routes must not tell a
+ * customer different stories about the same enclave.
+ *
+ * The distinction is the product's central claim and the easiest thing to
+ * overstate. A `tee` route means the model executed inside a verified enclave;
+ * AnonRouter's gateway still handled the plaintext on its way there. Only an
+ * `e2ee` route keeps the request opaque to AnonRouter. Tinfoil is a genuine TEE
+ * and is NOT client-opaque; saying otherwise would promise a property the
+ * transport does not have.
+ */
+export function attestationNoteFor(privacyModality: PrivacyModality): string {
+  return privacyModality === "e2ee"
+    ? "E2EE: the request stays opaque to AnonRouter and terminates in a verified enclave."
+    : "TEE: execution ran in a verified enclave, but plaintext may pass through AnonRouter's gateway. This is not E2EE.";
+}
+
 /** The public projection of a verification result: safe, structured, no secrets
  *  or raw upstream bodies beyond the evidence the client re-verifies. */
 export function attestationView(result: NormalizedAttestationResult) {

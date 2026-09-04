@@ -28,7 +28,11 @@ const attestationSchema = z
     providerName: z.string().min(1).max(64),
     externalModelId: z.string().min(1).max(256),
     dispatchToken: z.string().min(1).max(256),
-    nonce: z.string().min(1).max(256)
+    nonce: z.string().min(1).max(256),
+    // Which report to fetch. Optional so a relay from the previous release still
+    // works against a new worker; absent means E2EE, the only modality the old
+    // relay could ask for. See WorkerAttestationRequest.
+    privacyModality: z.enum(["tee", "e2ee"]).optional()
   })
   .strict();
 
@@ -129,7 +133,9 @@ export async function registerWorkerRpcRoutes(server: FastifyInstance) {
             ? "tinfoil"
             : server.config.internal.role === "near-worker"
               ? "near-ai"
-              : "venice";
+              : server.config.internal.role === "phala-ai-worker"
+                ? "phala-ai"
+                : "venice";
   const workerBase = `/internal/${workerProvider}`;
 
   server.post(`${workerBase}/attestation`, { preHandler: guard }, async (request, reply) => {

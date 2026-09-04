@@ -153,7 +153,7 @@ export interface CatalogSynchronizerDeps {
   jitterFraction?: number;
   log?: FastifyBaseLogger;
   random?: () => number;
-  provider?: "venice" | "fireworks" | "aws-bedrock" | "deepinfra" | "chutes" | "tinfoil" | "near-ai";
+  provider?: "venice" | "fireworks" | "aws-bedrock" | "deepinfra" | "chutes" | "tinfoil" | "near-ai" | "phala-ai";
 }
 
 /**

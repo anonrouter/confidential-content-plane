@@ -109,7 +109,8 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
         : server.config.internal.role === "chutes-worker" ? "chutes"
           : server.config.internal.role === "tinfoil-worker" ? "tinfoil"
             : server.config.internal.role === "near-worker" ? "near-ai"
-              : "venice";
+              : server.config.internal.role === "phala-ai-worker" ? "phala-ai"
+                : "venice";
 
   // Fail at BOOT, not at first use. A workload configured for capability mode
   // without a pinned signer cannot verify anything, and discovering that during
