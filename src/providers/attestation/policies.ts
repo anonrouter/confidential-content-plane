@@ -257,7 +257,7 @@ export function pinnedMeasurementPolicyFor(provider: string, upstreamModel: stri
   if (provider === "tinfoil") {
     return {
       source: "tinfoil-sdk+sigstore-transparency-log",
-      version: "confidential-model-router/v0.0.140+v0.0.141/2026-08-14",
+      version: "confidential-model-router/v0.0.140+v0.0.141+v0.0.144/2026-09-04",
       // Immutable, additive: never edit an entry in place. The Tinfoil measurement
       // is model-agnostic (per serverURL + configRepo), so one accepted release
       // covers every Tinfoil route. Multiple entries are accepted so a release
@@ -278,6 +278,22 @@ export function pinnedMeasurementPolicyFor(provider: string, upstreamModel: stri
         releaseDigest: "7dcf6bade47993752689e9574ae6fba39ebed0fa98427329fc184558488ad8f6",
         codeFingerprint: "6d657b353726893ee7202d33efc7c849a62693049c646f9394a8c6e2a165ed9936c024c4200878927767317ba3cbca7a",
         enclaveFingerprint: "6d657b353726893ee7202d33efc7c849a62693049c646f9394a8c6e2a165ed9936c024c4200878927767317ba3cbca7a"
+      }, {
+        // v0.0.144 (captured 2026-09-04). Reviewed by running Tinfoil's official
+        // Verifier (tinfoil@1.2.1, which pins @tinfoilsh/verifier@1.2.1) against
+        // https://inference.tinfoil.sh with configRepo
+        // tinfoilsh/confidential-model-router: securityVerified=true and every
+        // step succeeded, including compareMeasurements against Tinfoil's sigstore
+        // transparency log. Three handshakes, the outer two ~6 minutes apart,
+        // returned an identical release and fingerprint.
+        //
+        // v0.0.142 and v0.0.143 are deliberately NOT added. Both were out of
+        // service before they could be approved, and pinning a release nobody can
+        // attest is the mistake this comment exists to prevent repeating.
+        releaseTag: "v0.0.144",
+        releaseDigest: "32a9731d47629d4af429f5a3a540d411f764a936d54829f9dfef9f7dd4411145",
+        codeFingerprint: "cc1cc66656c4c673c31df51c77c0c7527f6b8065aa82b485e61fcdec26a9003c7783176d2020bae8e5d00ae8ef7a469e",
+        enclaveFingerprint: "cc1cc66656c4c673c31df51c77c0c7527f6b8065aa82b485e61fcdec26a9003c7783176d2020bae8e5d00ae8ef7a469e"
       }]
     };
   }

@@ -39,6 +39,20 @@ function usageStatusForError(error: unknown): "failed" | "rate_limited" | "insuf
   return "failed";
 }
 
+/**
+ * Rewrite the provider's model id back to the id the CALLER named.
+ *
+ * `publicModelId` is the route id (`tinfoil/nomic-embed-text`); `canonicalModelId`
+ * is the catalog id a request names (`nomic-ai/nomic-embed-text`). They differ
+ * whenever a model is served by more than one provider, which is the normal case.
+ *
+ * Chat has always echoed the canonical id and this echoed the route id, so an
+ * embedding response named a model the caller had not asked for. That is not
+ * cosmetic: a client verifying a confidential route cross-binds the echoed model
+ * against the one it requested, and a disagreement there is exactly the shape of
+ * a provider substitution. Reporting one on a correctly-served route trains
+ * people to ignore the check that catches a real one.
+ */
 function publicEmbeddingResponse(response: EmbeddingResponse, publicModelId: string): EmbeddingResponse {
   return { ...response, model: publicModelId };
 }
@@ -127,7 +141,7 @@ export async function registerEmbeddingRoutes(server: FastifyInstance) {
       });
       const usage: TokenUsage = { inputTokens: normalized.inputTokens, outputTokens: 0, cachedTokens: 0 };
       await server.controlClient.settle({ requestId, usage, latencyMs: Date.now() - startedAt });
-      return publicEmbeddingResponse(result.response, model.publicModelId);
+      return publicEmbeddingResponse(result.response, model.canonicalModelId ?? model.publicModelId);
     } catch (error) {
       const clientGone = signal.aborted || isAbortError(error);
       // Content-free rejection-ledger record for a provider-origin failure

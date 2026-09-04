@@ -496,8 +496,8 @@
     },
     {
       "path": "src/providers/attestation/policies.ts",
-      "sha256": "35e1828a6edc4f30aef2a13e2496ca85b23472be20645c882c4ce961845924c9",
-      "bytes": 19931
+      "sha256": "76ff780f11d80574f9c1b8ce258e5ae351355be93c4f498e3b3041f6134d7f3b",
+      "bytes": 21094
     },
     {
       "path": "src/providers/attestation/presentation.ts",
@@ -666,8 +666,8 @@
     },
     {
       "path": "src/providers/confidentialRoutePolicy.ts",
-      "sha256": "97742fc07a81b6696f466f46f0dafc4ab1bdc00af93f18a846ba465200b06ad0",
-      "bytes": 8908
+      "sha256": "87fb655813728d6e625e244eaf66c388c541129fc20faf749a7dc345dce6d5a8",
+      "bytes": 8948
     },
     {
       "path": "src/providers/credentials/adminBoundary.ts",
@@ -806,8 +806,8 @@
     },
     {
       "path": "src/routes/embeddings.ts",
-      "sha256": "dc9e19d9d21201aafb3b391ac2483d14773859151d9abdbb63f971033475f853",
-      "bytes": 7137
+      "sha256": "390978fe9a5f6986b8dc6b1c4603412745d6eef8d883e7cbbe0eba25900841e6",
+      "bytes": 7945
     },
     {
       "path": "src/routes/gatewayAttestation.ts",
