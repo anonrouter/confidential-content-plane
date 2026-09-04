@@ -1,0 +1,186 @@
+{
+  "$comment": [
+    "THE ONE STATEMENT of which confidential provider routes AnonRouter offers.",
+    "",
+    "A route is identified by provider + canonical model + privacy class, and all",
+    "three are load-bearing. Provider alone is too coarse: Venice serves nine e2ee",
+    "routes and only some verify. Model alone is worse than useless: `z-ai/glm-5.1`",
+    "is served by Venice as BOTH an `e2ee` route and a `private` route, so a",
+    "model-only rule would take down a working private route while trying to",
+    "withhold a broken encrypted one, and `openai/gpt-oss-120b` would lose its",
+    "Tinfoil TEE route to a decision about Venice.",
+    "",
+    "THIS FILE IS DATA, NOT A SWITCH. Moving a route from `withheld` to `verified`",
+    "is a claim that it verified, and the gate that claim has to clear is written",
+    "into `reEnableGate` below rather than left to judgement."
+  ],
+
+  "version": "2026-09-04-confidential-e2ee-per-route",
+
+  "governedProviders": {
+    "venice": {
+      "privacyClass": "e2ee",
+      "rule": "allowlist",
+      "$comment": [
+        "An ALLOWLIST, not a denylist, and the direction is the point. A Venice",
+        "e2ee route that appears in the catalog tomorrow is withheld until",
+        "somebody measures it, rather than offered until somebody notices it is",
+        "broken. Adding a tenth route therefore fails a test instead of shipping",
+        "itself."
+      ]
+    },
+    "chutes": {
+      "privacyClass": "e2ee",
+      "rule": "allowlist",
+      "$comment": [
+        "Chutes evidence verifies on all four measured routes, but the deployed",
+        "content plane cannot admit opaque encrypted inputs for routes whose maximum",
+        "context exceeds its 200,000-token ceiling. Only the two routes that fit that",
+        "ceiling are offered. This is an admission property, not an attestation failure."
+      ]
+    }
+  },
+
+  "ungovernedProviders": {
+    "near-ai": "No callable tee or e2ee route in the live catalog. Nothing to govern.",
+    "tinfoil": "Seven callable `tee` routes, none governed here. Their availability is decided by the attestation-ticket mint and the measurement pin, and this policy deliberately does not touch either."
+  },
+
+  "verified": [
+    {
+      "provider": "venice",
+      "model": "google/gemma-4-26b-a4b-uncensored",
+      "privacyClass": "e2ee",
+      "evidence": "Verified in every healthy sampling round, 13/13 required checks, across five independent measurement runs on 2026-09-02 and 2026-09-03."
+    },
+    {
+      "provider": "venice",
+      "model": "openai/gpt-oss-20b",
+      "privacyClass": "e2ee",
+      "evidence": "Verified in every healthy sampling round, 13/13 required checks, across five independent measurement runs on 2026-09-02 and 2026-09-03. Also the route the 27/27 live paid acceptance ran on."
+    },
+    {
+      "provider": "venice",
+      "model": "qwen/qwen-2.5-7b",
+      "privacyClass": "e2ee",
+      "evidence": "Verified in every healthy sampling round, 13/13 required checks, across five independent measurement runs on 2026-09-02 and 2026-09-03."
+    },
+    {
+      "provider": "venice",
+      "model": "z-ai/glm-5.2",
+      "privacyClass": "e2ee",
+      "evidence": "Verified in every healthy sampling round, 13/13 required checks. Recorded as failing in one earlier run; that reading was a sampling artifact of retrying a route three times inside one provider outage window, and round-robin re-measurement has it verifying in every healthy round."
+    },
+    {
+      "provider": "chutes",
+      "model": "deepseek/deepseek-v3.2",
+      "privacyClass": "e2ee",
+      "evidence": "Verified on both hops and its 131,072-token context fits the deployment's 200,000-token opaque-input admission ceiling."
+    },
+    {
+      "provider": "chutes",
+      "model": "qwen/qwen3-32b",
+      "privacyClass": "e2ee",
+      "evidence": "Verified on both hops and its 40,960-token context fits the deployment's 200,000-token opaque-input admission ceiling."
+    }
+  ],
+
+  "withheld": [
+    {
+      "provider": "venice",
+      "model": "deepseek/deepseek-v4-flash",
+      "privacyClass": "e2ee",
+      "classification": "provider_evidence_insufficient",
+      "failedChecks": ["reported_quote_binding", "workload_keyset_binding"],
+      "evidence": "Returns a well-formed Intel TDX quote, a real signing key and the caller's nonce, with an EMPTY nested `attestation` object: no report_data, no nested evidence, no workload_keyset. Stable across six interleaved rounds and five measurement runs. The checks are refusing a silence, not a contradiction."
+    },
+    {
+      "provider": "venice",
+      "model": "qwen/qwen-3.6-35b-a3b-fp8",
+      "privacyClass": "e2ee",
+      "classification": "provider_evidence_insufficient",
+      "failedChecks": ["reported_quote_binding", "workload_keyset_binding"],
+      "evidence": "Empty nested `attestation` object, exactly as deepseek/deepseek-v4-flash. Stable across six interleaved rounds."
+    },
+    {
+      "provider": "venice",
+      "model": "z-ai/glm-5.1",
+      "privacyClass": "e2ee",
+      "classification": "provider_evidence_insufficient",
+      "failedChecks": ["reported_quote_binding", "workload_keyset_binding"],
+      "evidence": "Empty nested `attestation` object. Stable across six interleaved rounds. NOTE: Venice also serves this model on a `private` route, which this policy leaves untouched.",
+      "otherRoutesPreserved": ["venice/private", "deepinfra/private"]
+    },
+    {
+      "provider": "venice",
+      "model": "google/gemma-3-27b",
+      "privacyClass": "e2ee",
+      "classification": "provider_availability",
+      "failedChecks": ["attestation_failed"],
+      "evidence": "503 worker_attestation_failed on 6 of 6 interleaved rounds. Never returned evidence in any measurement run."
+    },
+    {
+      "provider": "venice",
+      "model": "openai/gpt-oss-120b",
+      "privacyClass": "e2ee",
+      "classification": "provider_availability",
+      "failedChecks": ["attestation_failed"],
+      "evidence": "503 worker_attestation_failed on 6 of 6 interleaved rounds. Never returned evidence in any measurement run. NOTE: Tinfoil serves this model on a `tee` route, which this policy leaves untouched.",
+      "otherRoutesPreserved": ["tinfoil/tee"]
+    },
+    {
+      "provider": "chutes",
+      "model": "z-ai/glm-5.2",
+      "privacyClass": "e2ee",
+      "classification": "deployment_admission_limit",
+      "failedChecks": ["opaque_input_token_ceiling"],
+      "evidence": "Both attestation hops verify, but the route advertises a 1,048,576-token context while this deployment caps requests at 200,000 tokens. Because the encrypted request body is opaque to the router, it cannot safely prove a smaller input before admission, so the route is not callable under the current protocol.",
+      "otherRoutesPreserved": ["venice/e2ee", "venice/private"]
+    },
+    {
+      "provider": "chutes",
+      "model": "moonshotai/kimi-k2.6",
+      "privacyClass": "e2ee",
+      "classification": "deployment_admission_limit",
+      "failedChecks": ["opaque_input_token_ceiling"],
+      "evidence": "Both attestation hops verify, but the route advertises a 262,144-token context while this deployment caps requests at 200,000 tokens. Because the encrypted request body is opaque to the router, it cannot safely prove a smaller input before admission, so the route is not callable under the current protocol."
+    }
+  ],
+
+  "reEnableGate": {
+    "$comment": [
+      "What it takes to move a route from `withheld` to `verified`. Written down",
+      "because the failure mode is a single lucky sample: Venice's outages are",
+      "time-correlated, so three quick retries can all land in one good window",
+      "just as easily as one bad one."
+    ],
+    "successfulSamples": 6,
+    "interleaved": true,
+    "interleavedMeaning": "Samples must be separated by a full pass over the other routes, not taken back to back. `npm run example:route-matrix` in the SDK does this; a loop that retries one route until it passes does not, and that defect is what produced a wrong count once already.",
+    "minimumSpanMinutes": 30,
+    "requiredChecks": "every required check passing on every sample; a single 503 anywhere in the window disqualifies the run",
+    "evidenceRequired": [
+      "a content-free route-matrix run showing the route trusted on both hops",
+      "the per-round outcome table, so a reviewer can see the samples were spread rather than clustered",
+      "the nested attestation document present and binding, for the three routes withheld for insufficient evidence"
+    ],
+    "approval": "owner. Moving an entry is a change to what customers are offered and is not a maintenance edit."
+  },
+
+  "probing": {
+    "$comment": [
+      "Withholding is about what a customer can CALL, not about what anyone can",
+      "MEASURE. A withheld route stays measurable, because re-qualifying it is the",
+      "only way it ever comes back and Venice evidence is only reachable through",
+      "the ticketed path.",
+      "",
+      "The affordance is narrow on purpose: an attestation ticket is not a route to",
+      "inference. It reserves no funds, carries no content, and redeems to evidence",
+      "and nothing else. So a probe ticket for a withheld route grants exactly the",
+      "ability to see why it is withheld."
+    ],
+    "attestationTicketRequiresExplicitProbe": true,
+    "probeGrants": "attestation evidence only",
+    "probeDoesNotGrant": ["inference", "a paid ticket", "catalog listing", "Auto candidacy"]
+  }
+}

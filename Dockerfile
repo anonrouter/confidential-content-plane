@@ -73,6 +73,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY --from=prod-deps /prod/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/config/confidential-route-policy.json ./config/confidential-route-policy.json
 COPY --from=build /app/src/routing/artifacts ./src/routing/artifacts
 COPY --from=build /opt/anonrouter-router-model /opt/anonrouter-router-model
 
