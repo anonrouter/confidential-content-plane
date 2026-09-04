@@ -344,14 +344,13 @@ function artifactProse(component: Component): string[] {
     // mean letting an undeployed replacement stand in for it. The wording below
     // keeps the concise replacement guarantees this section is for and adds the
     // two facts whose absence made it misleading: what the tracked artifact is,
-    // and that the replacement is not deployed.
-    const status =
-      component.binding.status === "NONE" ? "source-to-digest binding NOT established" : component.binding.status;
+    // without turning the repository landing page into a deployment ledger.
+    const status = component.binding.status === "NONE" ? "NOT established" : component.binding.status;
     return [
-      `- **${friendlyName} (\`${component.id}\`): reproducible AnonRouter build, NOT DEPLOYED.**`,
-      `  The tracked artifact is \`${component.upstream.project}\` (${component.upstream.license}), ${status}.`,
-      "  The replacement FROM-scratch image is reproduced by two independent CI jobs, signed,",
-      `  and passes ${replacement.compatibility.checks}/${replacement.compatibility.checks} compatibility checks with a working negative control.`
+      `- **${friendlyName} (\`${component.id}\`): tracked upstream binding ${status}.**`,
+      `  The tracked artifact is \`${component.upstream.project}\` (${component.upstream.license}).`,
+      "  A reproducible AnonRouter build is available as a FROM-scratch image; two independent CI jobs",
+      `  reproduce it; it is signed and passes ${replacement.compatibility.checks}/${replacement.compatibility.checks} compatibility checks with a working negative control.`
     ];
   }
 
