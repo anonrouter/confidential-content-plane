@@ -21,7 +21,8 @@ export const catalogProviderSchema = z.enum([
   "deepinfra",
   "chutes",
   "tinfoil",
-  "near-ai"
+  "near-ai",
+  "phala-ai"
 ]);
 export type CatalogProvider = z.infer<typeof catalogProviderSchema>;
 

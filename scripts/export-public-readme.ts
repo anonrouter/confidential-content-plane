@@ -245,10 +245,27 @@ function boundOf(ledger: Ledger): Component[] {
  */
 function whereTheSourceIs(component: Component | undefined, fallback: string): string {
   if (!component) return fallback;
-  const upstream = `**UPSTREAM, ${component.upstream.project}. ${component.upstream.license}.`;
+  if (component.controlledEquivalent) {
+    // NAME THE COMPONENT, NOT ITS REPLACEMENT.
+    //
+    // This returned "AnonRouter FROM-scratch base", which reads as a statement
+    // that the base in use IS AnonRouter's scratch build. It is not: the ledger
+    // records that image as `deployed: false`, and the schema refuses to let it
+    // say otherwise. The table cell would have told a public reader the opposite
+    // of what the ledger two sections below says.
+    //
+    // That is the same failure this function's own doc comment describes -- a
+    // README contradicting itself in adjacent paragraphs -- and it also misses
+    // the goal of being deployment-neutral, which is achieved by saying nothing
+    // about what runs, not by naming a different artifact.
+    return (
+      `${component.upstream.project} (${component.upstream.license}); binding not established, ` +
+      "AnonRouter FROM-scratch replacement available; see Build provenance"
+    );
+  }
   return component.binding.status === "NONE"
-    ? `${upstream} Source-to-digest binding NOT established; see the gaps below**`
-    : `${upstream} Rebuilt in this repository's CI from pinned upstream source, byte-identical to the deployed digest; see below**`;
+    ? `${component.upstream.project} (${component.upstream.license}); see Build provenance`
+    : `${component.upstream.project} (${component.upstream.license}); reproducibly rebuilt by AnonRouter CI`;
 }
 
 /**
@@ -287,6 +304,61 @@ function boundProse(component: Component): string[] {
     );
   }
   return lines;
+}
+
+/**
+ * Stable repository/build status. This deliberately says nothing about which
+ * release production currently runs; that belongs to signed release evidence
+ * and fresh attestation, not to a repository landing page.
+ */
+function artifactProse(component: Component): string[] {
+  const names: Record<string, string> = {
+    "caddy-edge-base": "Caddy edge base",
+    "dstack-ingress": "Dstack ingress",
+    "node-base-image": "Node runtime base"
+  };
+  const friendlyName = names[component.id] ?? component.id;
+  const name = `${friendlyName} (\`${component.id}\`)`;
+  const evidence = component.binding.evidence;
+  if (evidence?.method === "rebuild") {
+    return [
+      `- **${name}: reproducibly bound.** Public CI rebuilt`,
+      `  \`${component.upstream.project}@${evidence.sourceCommit}\` and reproduced the recorded image`,
+      "  digest byte for byte. The result is signed against a pinned workflow identity."
+    ];
+  }
+
+  if (component.controlledEquivalent) {
+    const replacement = component.controlledEquivalent;
+    // NAME THE ARTIFACT THE GAP IS ABOUT, alongside the replacement.
+    //
+    // This entry read "**Node runtime base: reproducible AnonRouter build.**"
+    // and then described only the candidate. `nodejs/docker-node` appeared
+    // NOWHERE in the README, so a reader was told the runtime base is a
+    // reproducible AnonRouter build with nothing to correct that impression --
+    // while the ledger records that image as `deployed: false` and the
+    // component's own binding as NOT established.
+    //
+    // Being deployment-neutral means declining to say which release is running.
+    // It does not mean omitting which artifact the gap is about, and it cannot
+    // mean letting an undeployed replacement stand in for it. The wording below
+    // keeps the concise replacement guarantees this section is for and adds the
+    // two facts whose absence made it misleading: what the tracked artifact is,
+    // and that the replacement is not deployed.
+    const status =
+      component.binding.status === "NONE" ? "source-to-digest binding NOT established" : component.binding.status;
+    return [
+      `- **${friendlyName} (\`${component.id}\`): reproducible AnonRouter build, NOT DEPLOYED.**`,
+      `  The tracked artifact is \`${component.upstream.project}\` (${component.upstream.license}), ${status}.`,
+      "  The replacement FROM-scratch image is reproduced by two independent CI jobs, signed,",
+      `  and passes ${replacement.compatibility.checks}/${replacement.compatibility.checks} compatibility checks with a working negative control.`
+    ];
+  }
+
+  return [
+    `- **${name}: tracked dependency.** Its exact status and evidence are recorded in`,
+    "  `deploy/provenance/plaintext-capable-components.json`."
+  ];
 }
 
 /**
@@ -353,11 +425,8 @@ function requireDeploymentAttestation(ledger: Ledger): void {
 export function buildPublicReadme(ledger: Ledger): string {
   const gaps = gapsOf(ledger);
   const bound = boundOf(ledger);
-  const gapIds = gaps.map((c) => `\`${c.id}\``).join(", ");
-  const count = gaps.length;
-  const word = count === 1 ? "link" : "links";
+  const tracked = [...gaps, ...bound].sort((a, b) => (a.id < b.id ? -1 : 1));
   const byId = (id: string) => ledger.components.find((c) => c.id === id);
-  if (count === 0) requireDeploymentAttestation(ledger);
 
   return [
     "# AnonRouter confidential content plane",
@@ -372,19 +441,9 @@ export function buildPublicReadme(ledger: Ledger): string {
     "check by reading rather than by trusting: this is the source, and these are",
     "the tests that hold the boundary it describes.",
     "",
-    "**It does not, by itself, prove that the image running in the trust domain was",
-    "built from these bytes.** That is a separate artifact, a source-to-digest",
-    "binding, and it is produced by a CI build that signs its output against a",
-    "pinned OIDC identity. Until such a build has produced a digest equal to the one",
-    "a deployment is measured against, the honest statement is:",
-    "",
-    "> This repository shows what the code says. It does not yet show what the",
-    "> deployment ran.",
-    "",
-    "Running `npm ci && npm run build` here produces **an** image. Nothing in this",
-    "repository asserts that it equals any deployed digest, and you should not",
-    "assume it does. The build is deterministic in its inputs, which is a",
-    "precondition for that binding and is not the binding.",
+    "The repository also carries reproducible build evidence for the images it",
+    "publishes. Verifying a particular running service is a separate step: compare",
+    "fresh hardware attestation with that release's signed manifest and policy.",
     "",
     "## The boundary, component by component",
     "",
@@ -408,68 +467,26 @@ export function buildPublicReadme(ledger: Ledger): string {
     "plaintext-capable whatever the code above it does, and it is covered by the",
     "ledger like any other third-party component.",
     "",
-    "### What a binding is",
+    "## Build provenance",
     "",
-    "Exactly one of two things. Nothing else counts, and in particular a pinned",
-    "digest is not one, a stated Git revision is not one, and an unsigned",
-    "attestation published by a registry is not one:",
+    "This is the stable build status of the artifacts maintained by this repository.",
+    "It is intentionally not a production status page.",
     "",
-    "- **Rebuild.** Build the component in our public CI from pinned upstream source",
-    "  and confirm the digest equals the deployed one. A near miss is not a partial",
-    "  pass, and a laptop build is a rehearsal rather than evidence, because the",
-    "  point is that a reader can check it without trusting whoever ran it.",
-    "- **Verified upstream provenance.** Verify an upstream signature against a",
-    "  **pinned** upstream identity, both certificate identity and OIDC issuer, over",
-    "  the digest actually deployed.",
+    ...tracked.flatMap(artifactProse),
     "",
-    ...(bound.length === 0
-      ? []
-      : [
-          `### ${bound.length} established binding${bound.length === 1 ? "" : "s"}`,
-          "",
-          ...bound.flatMap(boundProse)
-        ]),
-    ...(count === 0
-      ? [
-          "### No unproven links",
-          "",
-          "Every plaintext-capable component in this deployment that is not built from",
-          "this source has an established binding, listed above. That is a statement",
-          "about provenance and nothing else: it says the running bytes came from the",
-          "named source, not that the named source is free of defects, and it says",
-          "nothing at all about components outside the trust domain.",
-          "",
-          "It is also a statement about a DEPLOYMENT rather than about a set of files,",
-          "so it is not made until a guest has measured the compose and re-attested.",
-          `The measurement behind this section is app \`${ledger.deploymentAttestation?.appId}\`,`,
-          `compose hash \`${ledger.deploymentAttestation?.composeHash}\`, over`,
-          `\`${ledger.deploymentAttestation?.composeFile}\` at ${ledger.deploymentAttestation?.attestedAt},`,
-          `observing ${ledger.deploymentAttestation?.observedImageDigests.length ?? 0} image digests.`,
-          "Without that record the generator refuses to produce this file at all, because",
-          "the digests a compose REQUESTS and the digests a guest RUNS are different",
-          "facts, and only the second one supports the sentence above.",
-          ""
-        ]
-      : [
-          `### The ${count} unproven ${word}, stated rather than rounded up`,
-          "",
-          `${count} plaintext-capable component${count === 1 ? "" : "s"} in this deployment ${count === 1 ? "is" : "are"} not built from this`,
-          `source, and for ${count === 1 ? "it" : "each of them"} the source-to-digest binding is **NOT established**: ${gapIds}.`,
-          "",
-          ...gaps.flatMap(gapProse)
-        ]),
-    "This is stated here, in the README, because a transparency chain that quietly",
-    "rounds an unverifiable link up to \"verified\" is worse than no chain: it",
-    "launders an assumption into an apparent proof. Someone told the chain is",
-    "incomplete can reason about the residual risk. Someone told it is complete",
-    "cannot.",
+    "A digest pin or an unsigned registry statement alone is not treated as a source",
+    "binding. Exact digests, build identities, attestations, compatibility evidence",
+    "and remaining trust dependencies are recorded in",
+    "`deploy/provenance/plaintext-capable-components.json` and enforced by",
+    "`tests/unit/third-party-provenance.test.ts`.",
     "",
-    "The machine-readable version of the same statement is",
-    "`deploy/provenance/plaintext-capable-components.json`, published here, and it",
-    "is what the signed release manifest carries. **This section is generated from",
-    "that file**, so the two cannot drift: `tests/unit/third-party-provenance.test.ts`,",
-    "also published here, fails if this README names fewer gaps than the ledger",
-    "records or lets a source pin read as a binding. Run `npm test` and check.",
+    "## Verifying a deployment",
+    "",
+    "This README deliberately does not say which release production currently runs.",
+    "Verify a particular deployment using its independently distributed signed release",
+    "manifest and attestation policy, then require fresh hardware evidence to match them.",
+    "Repository build evidence answers where an image came from; deployment attestation",
+    "answers whether that image is the one running.",
     "",
     "## What is deliberately NOT here",
     "",

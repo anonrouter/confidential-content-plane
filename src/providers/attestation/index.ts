@@ -4,7 +4,13 @@
 // on-demand verification, and catalog privacy classification all consume this.
 
 export * from "./types.js";
-export { VerifierRegistry, type VerifierRegistryOptions } from "./registry.js";
+export {
+  ATTESTABLE_PROVIDERS,
+  providerExposesAttestation,
+  VerifierRegistry,
+  type VerifierRegistryOptions
+} from "./registry.js";
+export { attestableRoutes, resolveExactAttestableRoute } from "./routeSelection.js";
 export { ChutesTeeVerifier, type ChutesVerifierOptions } from "./chutes.js";
 export { TinfoilTeeVerifier, type TinfoilVerificationDocument, type TinfoilVerifierOptions } from "./tinfoil.js";
 export { NearTeeVerifier, type NearVerifierOptions } from "./near.js";
@@ -14,6 +20,7 @@ export { sha256Hex, fromHex, verifyEd25519, verifyEcdsa, ethersEthMessageRecover
 export { pinnedMeasurementPolicyFor, pinnedEndpointIdentityFor } from "./policies.js";
 export { readEnvelope } from "./checks.js";
 export {
+  attestationNoteFor,
   attestationView,
   buildAttestationExpectations,
   e2eeProtocolFor,

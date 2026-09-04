@@ -43,7 +43,8 @@ const CONTENT_ROLES = new Set([
   "deepinfra-worker",
   "chutes-worker",
   "tinfoil-worker",
-  "near-worker"
+  "near-worker",
+  "phala-ai-worker"
 ]);
 
 async function buildForRole() {

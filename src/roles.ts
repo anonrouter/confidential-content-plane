@@ -31,6 +31,7 @@ import { buildDeepInfraCatalogPayload } from "./providers/catalog/deepinfraSync.
 import { buildChutesCatalogPayload } from "./providers/catalog/chutesSync.js";
 import { buildTinfoilCatalogPayload } from "./providers/catalog/tinfoilSync.js";
 import { buildNearCatalogPayload } from "./providers/catalog/nearSync.js";
+import { buildPhalaAiCatalogPayload } from "./providers/catalog/phalaAiSync.js";
 import type { NormalizedCatalogPayload } from "./providers/catalog/normalized.js";
 import { GatewayAttestationService } from "./gateway/service.js";
 import {
@@ -82,7 +83,8 @@ export async function buildRelayServer(
     new HttpWorkerClient(config.internal.deepinfraWorkerRpcUrl, config.internal.workerRpcToken, "deepinfra", workerTimeoutMs),
     new HttpWorkerClient(config.internal.chutesWorkerRpcUrl, config.internal.workerRpcToken, "chutes", workerTimeoutMs),
     new HttpWorkerClient(config.internal.tinfoilWorkerRpcUrl, config.internal.workerRpcToken, "tinfoil", workerTimeoutMs),
-    new HttpWorkerClient(config.internal.nearWorkerRpcUrl, config.internal.workerRpcToken, "near-ai", workerTimeoutMs)
+    new HttpWorkerClient(config.internal.nearWorkerRpcUrl, config.internal.workerRpcToken, "near-ai", workerTimeoutMs),
+    new HttpWorkerClient(config.internal.phalaAiWorkerRpcUrl, config.internal.workerRpcToken, "phala-ai", workerTimeoutMs)
   ));
 
   // Dependency-free protection for the content tier. This hook runs before
@@ -249,7 +251,8 @@ export async function buildWorkerServer(config: AppConfig): Promise<FastifyInsta
         : config.internal.role === "chutes-worker" ? "chutes"
           : config.internal.role === "tinfoil-worker" ? "tinfoil"
             : config.internal.role === "near-worker" ? "near-ai"
-              : "venice";
+              : config.internal.role === "phala-ai-worker" ? "phala-ai"
+                : "venice";
   const isVeniceWorker = providerLabel === "venice";
   // Fetch + normalize this worker's own catalog (each build fn fails closed
   // without the provider credential and never clobbers last-known-good on error).
@@ -261,6 +264,7 @@ export async function buildWorkerServer(config: AppConfig): Promise<FastifyInsta
       case "chutes": return buildChutesCatalogPayload(config, { log: server.log });
       case "tinfoil": return buildTinfoilCatalogPayload(config, { log: server.log });
       case "near-ai": return buildNearCatalogPayload(config, { log: server.log });
+      case "phala-ai": return buildPhalaAiCatalogPayload(config, { log: server.log });
       default: return buildVeniceCatalogPayload(config, { log: server.log });
     }
   };

@@ -294,13 +294,24 @@ export class InProcessWorkerClient implements WorkerClient {
     signal?.throwIfAborted();
     const adapter = this.registry.adapterFor(request.providerName);
     if (!adapter.fetchAttestation) {
-      throw new ProviderError("attestation_unsupported", "Provider does not expose E2EE attestation", 501);
+      throw new ProviderError("attestation_unsupported", "Provider does not expose attestation", 501);
     }
-    return request.providerName === "venice"
-      ? this.venice.fetchAttestation(request.externalModelId, request.nonce, signal, authorization?.providerKeyId)
-      : adapter.fetchE2eeAttestation
-        ? adapter.fetchE2eeAttestation(request.externalModelId, request.nonce, signal, authorization?.providerKeyId)
-        : adapter.fetchAttestation(request.externalModelId, request.nonce, signal, authorization?.providerKeyId);
+    // THE MODALITY SELECTS THE EVIDENCE, and the ticket is what carries it.
+    //
+    // `fetchE2eeAttestation` exists because some providers report a different
+    // key for a client-opaque request than for general enclave verification
+    // (NEAR: Ed25519 for E2EE, ECDSA otherwise). Taking it unconditionally, as
+    // this did, is correct only while every ticket is an E2EE ticket. Now that a
+    // TEE route can hold one, asking for the E2EE report would return evidence
+    // the TEE verifier cannot bind, and the customer would see an unexplained
+    // failure on a perfectly healthy enclave.
+    const wantsE2ee = (request.privacyModality ?? "e2ee") === "e2ee";
+    if (request.providerName === "venice") {
+      return this.venice.fetchAttestation(request.externalModelId, request.nonce, signal, authorization?.providerKeyId);
+    }
+    return wantsE2ee && adapter.fetchE2eeAttestation
+      ? adapter.fetchE2eeAttestation(request.externalModelId, request.nonce, signal, authorization?.providerKeyId)
+      : adapter.fetchAttestation(request.externalModelId, request.nonce, signal, authorization?.providerKeyId);
   }
 
   // Provider-neutral read-only attestation for the public TEE API. Dispatches to
@@ -594,7 +605,7 @@ export class HttpWorkerClient implements WorkerClient {
   constructor(
     private readonly baseUrl: string,
     private readonly token: string,
-    private readonly provider: "venice" | "fireworks" | "aws-bedrock" | "deepinfra" | "chutes" | "tinfoil" | "near-ai" = "venice",
+    private readonly provider: "venice" | "fireworks" | "aws-bedrock" | "deepinfra" | "chutes" | "tinfoil" | "near-ai" | "phala-ai" = "venice",
     /**
      * Deadline for the worker to return RESPONSE HEADERS, not for the whole
      * exchange. There was previously no deadline at all here, which was
@@ -750,7 +761,8 @@ export class RoutedWorkerClient implements WorkerClient {
     private readonly deepinfra: HttpWorkerClient,
     private readonly chutes: HttpWorkerClient,
     private readonly tinfoil: HttpWorkerClient,
-    private readonly near: HttpWorkerClient
+    private readonly near: HttpWorkerClient,
+    private readonly phalaAi: HttpWorkerClient
   ) {}
 
   private forProvider(providerName: string): HttpWorkerClient {
@@ -761,6 +773,7 @@ export class RoutedWorkerClient implements WorkerClient {
     if (providerName === "chutes") return this.chutes;
     if (providerName === "tinfoil") return this.tinfoil;
     if (providerName === "near-ai") return this.near;
+    if (providerName === "phala-ai") return this.phalaAi;
     // Test/dev split harnesses intentionally send the mock provider through the
     // existing Venice worker RPC. Production fixture providers are disabled in
     // the database, so control can never authorize this fallback there.

@@ -9,10 +9,12 @@ import { DeepInfraProviderAdapter } from "./deepinfra.js";
 import { ChutesProviderAdapter } from "./chutes.js";
 import { TinfoilProviderAdapter } from "./tinfoil.js";
 import { NearProviderAdapter } from "./near.js";
+import { PhalaAiProviderAdapter } from "./phalaAi.js";
 import { VeniceProviderAdapter } from "./venice.js";
 import type { VeniceKeysetStore } from "./veniceKeyStore.js";
 import { evaluateStoredModelEligibility } from "./catalog/enablement.js";
 import type { ModelRecord, ProviderAdapter } from "./types.js";
+import { isConfidentialRouteWithheld } from "./confidentialRoutePolicy.js";
 
 type RuntimeModelRecord = ModelRecord & {
   providerAvailability: string;
@@ -25,7 +27,42 @@ type RuntimeModelRecord = ModelRecord & {
   catalogStatePresent: boolean;
 };
 
-function runtimeEligible(model: RuntimeModelRecord) {
+/**
+ * Is this stored row a route a customer may be served right now?
+ *
+ * TWO INDEPENDENT QUESTIONS, deliberately answered in one place. The first is
+ * the long-standing catalog-health one: enabled, reviewed, in sync, priced,
+ * available. The second is the confidential-route policy: a provider route
+ * whose enclave evidence did not verify consistently is not offered, even
+ * though the catalog row is in perfect health.
+ *
+ * THIS FUNCTION IS THE CHOKEPOINT, and that is why the policy check lives here
+ * rather than at each call site. Every surface that can put a route in front of
+ * a customer -- the public and authenticated catalogs, Auto's candidate set,
+ * explicit provider routing, the dispatch path, the attestation-ticket mint and
+ * the TEE route -- reaches the database through `getEnabledModel`,
+ * `listProviderRoutesForModel` or `listEnabledModels`, and all three filter on
+ * this. A surface added tomorrow inherits the policy by construction instead of
+ * needing to remember it, which is the only version of this that stays true.
+ */
+function runtimeEligible(model: RuntimeModelRecord, includeWithheld: boolean) {
+  // NOT OPTIONAL, deliberately. `Array.prototype.filter` passes the index as
+  // its second argument, so a defaulted parameter here would receive `1`, `2`,
+  // `3`... from any bare `.filter(runtimeEligible)` and quietly re-offer every
+  // withheld route from the second row onward. Requiring it forces each call
+  // site to say which it means, and the compiler catches the one that does not.
+  //
+  // `includeWithheld` exists for ONE caller: the attestation-ticket mint, when
+  // the request carries an explicit probe intent. Re-qualifying a withheld route
+  // is the only way it ever comes back, and Venice's evidence is reachable only
+  // through the ticketed path, so the alternative to this flag is a route that
+  // can never be measured again. It grants attestation evidence and nothing
+  // else: an attestation ticket reserves no funds, carries no content, and
+  // redeems to a document. Every customer-facing caller leaves it false.
+  if (!includeWithheld
+    && isConfidentialRouteWithheld(model.providerName, model.canonicalModelId, model.privacyClass)) {
+    return false;
+  }
   return evaluateStoredModelEligibility({
     modelType: model.modelType,
     providerAvailability: model.providerAvailability,
@@ -61,7 +98,8 @@ export class ProviderRegistry {
       ["deepinfra", new DeepInfraProviderAdapter(config)],
       ["chutes", new ChutesProviderAdapter(config)],
       ["tinfoil", new TinfoilProviderAdapter(config)],
-      ["near-ai", new NearProviderAdapter(config)]
+      ["near-ai", new NearProviderAdapter(config)],
+      ["phala-ai", new PhalaAiProviderAdapter(config)]
     ]);
   }
 
@@ -152,7 +190,7 @@ export async function getEnabledModel(
     [publicModelId, includeTestFixtures, providerName ?? null]
   );
 
-  const eligible = result.rows.filter(runtimeEligible);
+  const eligible = result.rows.filter((model) => runtimeEligible(model, false));
   const canonicalRequest = eligible.some((model) => model.canonicalModelId === publicModelId);
   const candidates = canonicalRequest
     ? eligible.filter((model) => model.canonicalModelId === publicModelId)
@@ -189,7 +227,8 @@ export async function getEnabledModel(
 export async function listProviderRoutesForModel(
   db: DbPool,
   requestedModelId: string,
-  includeTestFixtures = false
+  includeTestFixtures = false,
+  options: { includeWithheld?: boolean } = {}
 ): Promise<ModelRecord[]> {
   const result = await db.query<RuntimeModelRecord>(
     `
@@ -261,7 +300,7 @@ export async function listProviderRoutesForModel(
     [requestedModelId, includeTestFixtures]
   );
   return result.rows
-    .filter(runtimeEligible)
+    .filter((model) => runtimeEligible(model, options.includeWithheld === true))
     .map((model) => ({ ...model, reasoningCapabilities: decodeReasoningCapabilities(model.reasoningCapabilities) }));
 }
 
@@ -321,6 +360,6 @@ export async function listEnabledModels(db: DbPool, includeTestFixtures = false)
     [includeTestFixtures]
   );
   return result.rows
-    .filter(runtimeEligible)
+    .filter((model) => runtimeEligible(model, false))
     .map((model) => ({ ...model, reasoningCapabilities: decodeReasoningCapabilities(model.reasoningCapabilities) }));
 }

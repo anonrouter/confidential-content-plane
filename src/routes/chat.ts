@@ -22,6 +22,7 @@ import { isAutomaticModel, selectRoutingModel } from "../routing/selector.js";
 import { normalizeProviderPolicy, providerPolicyDigest } from "../providers/routing/policy.js";
 import { publicPrivacyTier } from "../providers/routing/presentation.js";
 import {
+  attestationNoteFor,
   attestationView,
   buildAttestationExpectations,
   e2eeProtocolFor,
@@ -460,13 +461,21 @@ const attestationSchema = z
 export async function registerChatRoutes(server: FastifyInstance) {
   const allowInline = server.config.internal.allowInlineTicket;
 
-  // Attestation relay for E2EE. The client first obtains a model-bound, single-use
-  // attestation ticket from control, then presents it here with a fresh 32-byte
-  // nonce. The relay redeems the ticket (single-use, replay-safe), the
-  // credential-isolated worker fetches the TEE evidence, and the relay returns it
-  // for the client to verify INDEPENDENTLY before encrypting. The relay never
-  // holds the Venice credential, never inspects the evidence, and forwards
-  // attestation only for the enabled E2EE model the ticket is bound to.
+  // Attestation relay for every attestable route, TEE and E2EE alike.
+  //
+  // The client first obtains a route-bound, single-use attestation ticket from
+  // control, then presents it here with a fresh 32-byte nonce. The relay redeems
+  // the ticket (single-use, replay-safe), the credential-isolated worker fetches
+  // the enclave evidence, and the relay returns it for the client to verify
+  // INDEPENDENTLY. The relay holds no provider credential, never inspects the
+  // evidence, and attests only the exact route the ticket is bound to.
+  //
+  // NO STABLE CREDENTIAL REACHES THIS ROUTE. It authenticates the opaque ticket
+  // and nothing else: the browser sends it with `credentials: "omit"`, and the
+  // CVM edge strips Authorization and Cookie before the relay sees the request.
+  // That is the whole reason attestation moved here from the credentialed GET on
+  // control — control cannot serve it, because control deliberately has no
+  // provider credential and no route to a provider worker.
   server.post("/v1/tee/attestation", async (request, reply) => {
     const ingress = relayIngressContext(request);
     const signal = ingress?.signal ?? abortOnClientDisconnect(request, reply);
@@ -481,22 +490,35 @@ export async function registerChatRoutes(server: FastifyInstance) {
         : null);
     if (!redeemed) throw new AppError(401, "invalid_attestation_ticket", "Attestation ticket is invalid, expired, or already used");
     signal.throwIfAborted();
+    // Bound at mint time by control, which is the only party with a catalog.
+    // Never inferred here, and never defaulted to the stronger claim.
+    const privacyModality: "tee" | "e2ee" = redeemed.privacyClass === "tee" ? "tee" : "e2ee";
     const evidence = await server.workerClient.attestation({
       providerName: redeemed.providerName,
       externalModelId: redeemed.externalModelId,
       dispatchToken: redeemed.dispatchToken,
-      nonce: body.nonce
+      nonce: body.nonce,
+      privacyModality
     }, signal);
 
     // Enrich the response BACKWARD-COMPATIBLY: keep `evidence` (existing callers
-    // read only that) and add sanitized route-bound metadata so a browser client
-    // can bind the route and independently re-verify. The relay has no database,
+    // read only that) and add sanitized route-bound metadata.
+    //
+    // WHAT THE CLIENT DOES WITH IT DEPENDS ON THE CLIENT, and this route must not
+    // assume the stronger case. The browser-encrypted chat path re-checks the raw
+    // evidence itself before encrypting and never trusts this verdict alone. The
+    // read-only attestation panel renders this verdict and offers the evidence
+    // for OFFLINE checking; it verifies nothing in the browser. Both get the same
+    // response, and neither is privileged by it. The relay has no database,
     // so it runs only the PURE verifier with the in-code pinned measurement/
     // endpoint policy (never a DB read); the raw evidence is still returned
     // verbatim for the browser's own binding checks.
     const provider = redeemed.providerName;
     const upstreamModel = redeemed.externalModelId;
-    const protocol = e2eeProtocolFor(provider);
+    // The E2EE wire protocol is only meaningful for a client-opaque request. A
+    // TEE ticket must not advertise one: a client reading `protocol` as
+    // "encrypt to this" would build a request this route never authorized.
+    const protocol = privacyModality === "e2ee" ? e2eeProtocolFor(provider) : null;
     const verifier = server.verifierRegistry?.forProvider(provider);
     let attestation: ReturnType<typeof attestationView> | undefined;
     if (verifier) {
@@ -505,9 +527,11 @@ export async function registerChatRoutes(server: FastifyInstance) {
       const expectations = buildAttestationExpectations({
         provider,
         upstreamModel,
+        canonicalModel: redeemed.canonicalModelId,
+        routeId: redeemed.routeId,
         endpointIdentity,
         nonce: body.nonce,
-        privacyModality: "e2ee",
+        privacyModality,
         now
       });
       attestation = attestationView(
@@ -518,6 +542,16 @@ export async function registerChatRoutes(server: FastifyInstance) {
       evidence,
       provider,
       upstream_model: upstreamModel,
+      // Route identity and the honest caveat, so a read-only verification panel
+      // renders the same thing here as it did on the control GET. All of it is
+      // catalog fact bound into the ticket at mint time; none of it is derived
+      // from a database this process does not have, and none of it names an
+      // account. `model` and `route_id` are omitted rather than invented when an
+      // older ticket did not carry them.
+      ...(redeemed.canonicalModelId ? { model: redeemed.canonicalModelId } : {}),
+      ...(redeemed.routeId ? { route_id: redeemed.routeId } : {}),
+      privacy_class: privacyModality,
+      note: attestationNoteFor(privacyModality),
       ...(protocol ? { protocol } : {}),
       ...(attestation ? { attestation } : {})
     };

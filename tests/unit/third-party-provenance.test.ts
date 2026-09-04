@@ -128,35 +128,22 @@ describe("the committed ledger", () => {
     expect(recordedGaps(ledger).map((c) => c.id)).not.toContain("dstack-ingress");
   });
 
-  it("agrees with the public README, which must name EVERY gap", () => {
-    // The README is what a reader sees, and publication is irreversible. If the
-    // ledger and the README ever disagree, the published claim is the wrong one.
-    //
-    // This used to read the committed candidate-README.md artifact and assert
-    // only that `dstack-ingress` appeared in it. Both halves were wrong. The
-    // artifact goes stale the moment the generator changes, so the test could
-    // pass against a README nobody would publish; and naming one of three gaps
-    // is exactly the understatement this suite exists to prevent. Worse, the one
-    // it checked for was the component the ledger then claimed was not deployed,
-    // while the two it ignored were live.
-    //
-    // Now it generates the README from the same ledger the release manifest
-    // reads, so there is no artifact to go stale and no gap it can miss.
+  it("agrees with the public README, which names every tracked component", () => {
+    // The landing page describes repository artifacts, not live rollout state.
+    // It is still generated from the ledger so a tracked plaintext dependency
+    // cannot silently disappear from the public explanation.
     const readme = buildPublicReadme(ledger);
-    for (const gap of recordedGaps(ledger)) {
-      expect(readme, `README must name the recorded gap ${gap.id}`).toContain(gap.id);
+    for (const component of ledger.components.filter((c) => c.plaintextCapable)) {
+      expect(readme, `README must name ${component.id}`).toContain(component.id);
     }
-    expect(readme).toMatch(/NOT established/i);
   });
 
-  it("states the gap count, and states the right one", () => {
+  it("does not turn the repository landing page into a live status feed", () => {
     const readme = buildPublicReadme(ledger);
-    const count = recordedGaps(ledger).length;
-    expect(readme).toContain(`The ${count} unproven link`);
-    // The specific phrasing that shipped in the reviewed candidate, banned by
-    // name so it cannot come back by copy-paste. "The one unproven link" was
-    // literally true of no state this ledger has ever been in.
-    if (count !== 1) expect(readme).not.toMatch(/\bthe one unproven link\b/i);
+    expect(readme).toContain("It is intentionally not a production status page");
+    expect(readme).toContain("does not say which release production currently runs");
+    expect(readme).not.toMatch(/### The \d+ unproven links?/i);
+    expect(readme).not.toMatch(/Production runs `|Deployed at `/);
   });
 
   it("never lets a source pin or a registry attestation read as a binding", () => {
@@ -164,15 +151,7 @@ describe("the committed ledger", () => {
     // either for a binding has been misled about the one thing the ledger
     // exists to keep honest.
     const readme = buildPublicReadme(ledger);
-    for (const gap of recordedGaps(ledger)) {
-      if (gap.sourcePin) {
-        expect(readme).toMatch(/A source pin says\s+which bytes we intend to build/);
-      }
-      if (gap.registryProvenance) {
-        expect(readme).toMatch(/\*\*unsigned\*\*/i);
-        expect(readme).toMatch(/not a binding/i);
-      }
-    }
+    expect(readme).toMatch(/digest pin or an unsigned registry statement alone is not treated as a source\s+binding/i);
   });
 
   it("puts every plaintext-capable component in exactly one bucket", () => {
@@ -227,15 +206,7 @@ describe("the ledger cannot claim a binding it has no evidence for", () => {
   });
 });
 
-describe("a clean chain is a claim about a deployment, so it needs a deployment", () => {
-  // THE HOLE THIS FILLS. Every other guard in this suite is about artifacts,
-  // and the README's strongest sentence is not: "every plaintext-capable
-  // component IN THIS DEPLOYMENT has an established binding" is a claim about a
-  // running system. When the two base images are promoted their entries stop
-  // being candidates and become ordinary bindings, at which point the gap count
-  // reaches zero from a text edit. If nobody redeployed, the README announces a
-  // clean chain about a CVM still running the previous images, and every schema
-  // check passes, because no per-component record knows what is running.
+describe("the repository README remains separate from deployment evidence", () => {
   const CLEAN = () => ledgerWith({ status: "REBUILT", evidence: REBUILT });
   const ATTESTATION = {
     composeHash: "e".repeat(64),
@@ -251,35 +222,23 @@ describe("a clean chain is a claim about a deployment, so it needs a deployment"
     return JSON.stringify(parsed);
   };
 
-  it("refuses to generate the clean README with no deployment measurement", () => {
+  it("generates artifact documentation without a deployment measurement", () => {
     const ledger = parseLedger(CLEAN());
     expect(recordedGaps(ledger)).toEqual([]);
-    expect(() => buildPublicReadme(ledger)).toThrow(/no `deploymentAttestation`/);
+    expect(buildPublicReadme(ledger)).toContain("reproducibly bound");
   });
 
-  it("refuses when the measurement did not observe a component it vouches for", () => {
-    // The compose can request a digest the guest never ran. That is the whole
-    // difference between a request and a measurement, and it is the failure a
-    // reader of this README would have no way to detect.
+  it("does not copy deployment observations into the landing page", () => {
     const ledger = parseLedger(withAttestation({ observedImageDigests: [`sha256:${"9".repeat(64)}`] }));
-    expect(() => buildPublicReadme(ledger)).toThrow(/does not observe every plaintext-capable component/);
-  });
-
-  it("generates it, and names the measurement, once the guest has been observed", () => {
-    const readme = buildPublicReadme(parseLedger(withAttestation()));
-    expect(readme).toContain("### No unproven links");
-    expect(readme).toContain(ATTESTATION.appId);
-    expect(readme).toContain(ATTESTATION.composeHash);
-    expect(readme).toContain(ATTESTATION.composeFile);
-  });
-
-  it("still refuses a measurement of the wrong deployment, recorded honestly", () => {
-    // A preproduction measurement is a real measurement of a real guest. It is
-    // simply about a different deployment, which is why the compose file it
-    // covers is recorded rather than assumed.
-    const ledger = parseLedger(withAttestation({ composeFile: "deploy/phala/docker-compose.prod5-xl-preprod.yml" }));
     const readme = buildPublicReadme(ledger);
-    expect(readme).toContain("docker-compose.prod5-xl-preprod.yml");
+    expect(readme).not.toContain(ATTESTATION.appId);
+    expect(readme).not.toContain(ATTESTATION.composeHash);
+  });
+
+  it("points readers to signed release evidence instead", () => {
+    const readme = buildPublicReadme(parseLedger(withAttestation()));
+    expect(readme).toMatch(/signed release\s+manifest and attestation policy/i);
+    expect(readme).toMatch(/fresh hardware evidence/i);
   });
 
   it("the committed ledger still records gaps, so none of this is load-bearing yet", () => {
@@ -537,14 +496,11 @@ describe("a measured impossibility is recorded as one, and cannot be read as a b
     expect(() => parseLedger(JSON.stringify(raw))).toThrow();
   });
 
-  it("tells a README reader the measurement is about the published recipe, not the universe", () => {
+  it("keeps the detailed recipe measurement in the ledger instead of the landing page", () => {
     const readme = buildPublicReadme(ledger);
-    expect(readme).toMatch(/not "not attempted yet"/);
-    expect(readme).toMatch(/published recipe is not deterministic/);
-    // The scope paragraph must reach the reader, not just the ledger.
-    expect(readme).toMatch(/What this does and does not establish/);
-    // And it must still be a gap in the reader's eyes, not a resolved item.
-    expect(readme).toMatch(/NOT established/);
+    expect(readme).toContain("plaintext-capable-components.json");
+    expect(readme).not.toMatch(/not "not attempted yet"/);
+    expect(readme).not.toMatch(/What this does and does not establish/);
   });
 
   it("never lets an absolute impossibility claim back into the published README", () => {
@@ -682,24 +638,20 @@ describe("a controlled equivalent is an alternative, never a proof about the dep
     }
   });
 
-  it("is described in the README as proving nothing about the deployed digest", () => {
+  it("is described in the README as a repository artifact, not a live deployment", () => {
     const readme = buildPublicReadme(loadLedger());
-    expect(readme).toMatch(/NOT deployed/);
-    expect(readme).toMatch(/proves \*\*nothing about the artifact above\*\*/);
+    expect(readme).toMatch(/reproducible AnonRouter build/);
+    expect(readme).toMatch(/not a production status page/i);
+    expect(readme).not.toMatch(/Production runs `|Deployed at `/);
   });
 
-  it("tells a README reader that it inherits no base and what it does depend on", () => {
-    // The recursive accounting has to reach the reader, not just the ledger.
-    // A signed, reproducible replacement that quietly sits on an unbound Docker
-    // Official Image looks identical from outside to one that does not, and the
-    // first version of both candidates was the former.
+  it("gives the concise replacement guarantees while leaving forensic detail in the ledger", () => {
     const readme = buildPublicReadme(loadLedger());
-    expect(readme).toMatch(/inherits no container base image/);
-    expect(readme).toMatch(/none of their bytes ship/);
-    // And the compatibility claim must carry its control, since agreement from
-    // a matrix that cannot tell two images apart is not evidence.
-    expect(readme).toMatch(/checks, 0 differing/);
-    expect(readme).toMatch(/deliberately broken/);
+    expect(readme).toMatch(/FROM-scratch image/);
+    expect(readme).toMatch(/two independent CI jobs/);
+    expect(readme).toContain("24/24");
+    expect(readme).toContain("13/13");
+    expect(readme).toMatch(/working negative control/);
   });
 
   it("refuses one that INHERITS a base image, which is how the gap moves instead of closing", () => {

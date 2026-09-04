@@ -107,7 +107,7 @@ const envSchema = z.object({
   // socket can derive every key the app uses and mint a quote over arbitrary
   // report data. Isolating it into a single-route process means the relay,
   // which is the component most exposed to hostile input, cannot do either.
-  RUNTIME_ROLE: z.enum(["api", "migrate", "control", "control-rpc", "metadata-api", "email-worker", "relay", "venice-worker", "fireworks-worker", "bedrock-worker", "deepinfra-worker", "chutes-worker", "tinfoil-worker", "near-worker", "compat", "gateway-attestation"]).default("api"),
+  RUNTIME_ROLE: z.enum(["api", "migrate", "control", "control-rpc", "metadata-api", "email-worker", "relay", "venice-worker", "fireworks-worker", "bedrock-worker", "deepinfra-worker", "chutes-worker", "tinfoil-worker", "near-worker", "phala-ai-worker", "compat", "gateway-attestation"]).default("api"),
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default("0.0.0.0"),
   // A closed enum, not a free string. `trace`/`debug` were settable in
@@ -128,6 +128,11 @@ const envSchema = z.object({
   CHUTES_WORKER_RPC_URL: z.string().url().default("http://chutes-worker:3000"),
   TINFOIL_WORKER_RPC_URL: z.string().url().default("http://tinfoil-worker:3000"),
   NEAR_WORKER_RPC_URL: z.string().url().default("http://near-worker:3000"),
+  // `phala-ai` is the Phala INFERENCE PROVIDER, and the hyphen is load-bearing.
+  // `phala` throughout this repository means the confidential HOSTING platform
+  // (deploy/phala/, the prod5 CVM, docs/PHALA_*.md). One name for both would make
+  // "the Phala worker" and "the Phala CVM" the same phrase for different things.
+  PHALA_AI_WORKER_RPC_URL: z.string().url().default("http://phala-ai-worker:3000"),
   // The compat broker forwards content to the relay's inference ingress over a
   // dedicated internal network (never the public edge). Distinct from the
   // relay→control/worker RPC URLs above.
@@ -166,6 +171,8 @@ const envSchema = z.object({
   METADATA_RPC_TOKEN_TINFOIL_FILE: z.string().optional(),
   METADATA_RPC_TOKEN_NEAR: z.string().optional(),
   METADATA_RPC_TOKEN_NEAR_FILE: z.string().optional(),
+  METADATA_RPC_TOKEN_PHALA_AI: z.string().optional(),
+  METADATA_RPC_TOKEN_PHALA_AI_FILE: z.string().optional(),
   // A regional/confidential deployment gets its own metadata capability. The
   // worker presents the token; control loads the complete provider+deployment
   // scope map. This keeps a key id local to the deployment that actually owns
@@ -523,6 +530,14 @@ const envSchema = z.object({
   NEAR_API_KEY_FILE: z.string().optional(),
   NEAR_BASE_URL: z.string().url().default("https://cloud-api.near.ai/v1"),
   NEAR_ENDPOINTS_URL: z.string().url().default("https://completions.near.ai/endpoints"),
+  // Phala AI: an OpenAI-compatible AGGREGATOR gateway, classified `private`.
+  // It decrypts downstream traffic at its frontend before forwarding upstream and
+  // its published TDX evidence attests that gateway (zero GPUs, no model bound),
+  // so no `tee`/`e2ee` claim is made and no verifier is registered for it. Not to
+  // be confused with the Phala platform that HOSTS this deployment.
+  PHALA_AI_API_KEY: z.string().optional(),
+  PHALA_AI_API_KEY_FILE: z.string().optional(),
+  PHALA_AI_BASE_URL: z.string().url().default("https://inference.phala.com/v1"),
   // Bedrock Mantle is SigV4-authenticated through the AWS default credential
   // chain. Local development may select an SSO profile; production must use the
   // bedrock-worker's workload role and never a long-lived static key.
@@ -773,7 +788,7 @@ export interface MetadataDeploymentScope {
 
 const DEPLOYMENT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const METADATA_SCOPE_PROVIDERS = new Set([
-  "venice", "fireworks", "aws-bedrock", "deepinfra", "chutes", "tinfoil", "near-ai"
+  "venice", "fireworks", "aws-bedrock", "deepinfra", "chutes", "tinfoil", "near-ai", "phala-ai"
 ]);
 
 /** Parse the control-only map of regional worker capabilities. */
@@ -1420,6 +1435,11 @@ export function loadConfig() {
     direct: env.TINFOIL_API_KEY,
     file: env.TINFOIL_API_KEY_FILE
   });
+  const phalaAiApiKey = sensitiveValue({
+    key: "PHALA_AI_API_KEY",
+    direct: env.PHALA_AI_API_KEY,
+    file: env.PHALA_AI_API_KEY_FILE
+  });
   const nearApiKey = sensitiveValue({
     key: "NEAR_API_KEY",
     direct: env.NEAR_API_KEY,
@@ -1469,6 +1489,9 @@ export function loadConfig() {
   const metadataTokenNear = sensitiveValue({
     key: "METADATA_RPC_TOKEN_NEAR", direct: env.METADATA_RPC_TOKEN_NEAR, file: env.METADATA_RPC_TOKEN_NEAR_FILE
   });
+  const metadataTokenPhalaAi = sensitiveValue({
+    key: "METADATA_RPC_TOKEN_PHALA_AI", direct: env.METADATA_RPC_TOKEN_PHALA_AI, file: env.METADATA_RPC_TOKEN_PHALA_AI_FILE
+  });
   const providerMetadataTokens: Record<string, string> = {};
   if (metadataTokenVenice) providerMetadataTokens.venice = metadataTokenVenice;
   if (metadataTokenFireworks) providerMetadataTokens.fireworks = metadataTokenFireworks;
@@ -1477,6 +1500,7 @@ export function loadConfig() {
   if (metadataTokenChutes) providerMetadataTokens.chutes = metadataTokenChutes;
   if (metadataTokenTinfoil) providerMetadataTokens.tinfoil = metadataTokenTinfoil;
   if (metadataTokenNear) providerMetadataTokens["near-ai"] = metadataTokenNear;
+  if (metadataTokenPhalaAi) providerMetadataTokens["phala-ai"] = metadataTokenPhalaAi;
   const deploymentMetadataToken = sensitiveValue({
     key: "METADATA_RPC_DEPLOYMENT_TOKEN",
     direct: env.METADATA_RPC_DEPLOYMENT_TOKEN,
@@ -1500,7 +1524,8 @@ export function loadConfig() {
           : env.RUNTIME_ROLE === "chutes-worker" ? "chutes"
             : env.RUNTIME_ROLE === "tinfoil-worker" ? "tinfoil"
               : env.RUNTIME_ROLE === "near-worker" ? "near-ai"
-                : null;
+                : env.RUNTIME_ROLE === "phala-ai-worker" ? "phala-ai"
+                  : null;
   const workerMetadataToken = deploymentMetadataToken
     || (workerProviderName ? providerMetadataTokens[workerProviderName] : undefined)
     || metadataRpcToken;
@@ -1514,7 +1539,7 @@ export function loadConfig() {
     || env.RUNTIME_ROLE === "venice-worker" || env.RUNTIME_ROLE === "fireworks-worker"
     || env.RUNTIME_ROLE === "bedrock-worker" || env.RUNTIME_ROLE === "deepinfra-worker"
     || env.RUNTIME_ROLE === "chutes-worker" || env.RUNTIME_ROLE === "tinfoil-worker"
-    || env.RUNTIME_ROLE === "near-worker"
+    || env.RUNTIME_ROLE === "near-worker" || env.RUNTIME_ROLE === "phala-ai-worker"
     || env.RUNTIME_ROLE === "compat"
     || env.RUNTIME_ROLE === "gateway-attestation";
   // The migrate role holds the schema-owner credential and is deliberately NOT
@@ -1722,6 +1747,7 @@ export function loadConfig() {
       if (!env.CHUTES_WORKER_RPC_URL) problems.push("CHUTES_WORKER_RPC_URL is required");
       if (!env.TINFOIL_WORKER_RPC_URL) problems.push("TINFOIL_WORKER_RPC_URL is required");
       if (!env.NEAR_WORKER_RPC_URL) problems.push("NEAR_WORKER_RPC_URL is required");
+      if (!env.PHALA_AI_WORKER_RPC_URL) problems.push("PHALA_AI_WORKER_RPC_URL is required");
       if (veniceKeys.length > 0 || fireworksApiKey || deepinfraApiKey) problems.push("the relay must not hold provider credentials");
       if (env.BEDROCK_AWS_PROFILE) problems.push("the relay must not select an AWS Bedrock credential profile");
     }
@@ -1808,6 +1834,16 @@ export function loadConfig() {
       if (env.NEAR_API_KEY_FILE === undefined) problems.push("NEAR_API_KEY_FILE (file-backed) is required");
       if (!nearApiKey) problems.push("A NEAR AI API credential is required");
     }
+    if (env.RUNTIME_ROLE === "phala-ai-worker") {
+      if (!strong(workerRpcToken)) problems.push("WORKER_RPC_TOKEN must be a >= 32-byte non-placeholder value");
+      if (!strong(workerMetadataToken)) problems.push("METADATA_RPC_TOKEN (or its per-provider override) must be a >= 32-byte non-placeholder value");
+      if (!process.env.CONTROL_METADATA_URL?.trim()) problems.push("CONTROL_METADATA_URL is required");
+      // File-backed only. The measured compose carries the ordered allowlist of
+      // env NAMES; the value reaches this worker as an encrypted value decoded to
+      // tmpfs by the entrypoint, which then unsets the base64 form before exec.
+      if (env.PHALA_AI_API_KEY_FILE === undefined) problems.push("PHALA_AI_API_KEY_FILE (file-backed) is required");
+      if (!phalaAiApiKey) problems.push("A Phala AI API credential is required");
+    }
     // Consolidated credential isolation for the confidential-compute providers:
     // each credential belongs to exactly one worker role; every OTHER split role
     // (control, relay, compat, and each peer worker) must hold none. This mirrors
@@ -1816,6 +1852,7 @@ export function loadConfig() {
     if (env.RUNTIME_ROLE !== "chutes-worker" && chutesApiKey) problems.push("only the Chutes worker may hold a Chutes credential");
     if (env.RUNTIME_ROLE !== "tinfoil-worker" && tinfoilApiKey) problems.push("only the Tinfoil worker may hold a Tinfoil credential");
     if (env.RUNTIME_ROLE !== "near-worker" && nearApiKey) problems.push("only the NEAR AI worker may hold a NEAR AI credential");
+    if (env.RUNTIME_ROLE !== "phala-ai-worker" && phalaAiApiKey) problems.push("only the Phala AI worker may hold a Phala AI credential");
     // The Bedrock credential also has a static-access-key form (the AWS default
     // chain signs SigV4 with AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY). The bedrock
     // worker rejects it above (it uses IAM Roles Anywhere); every other split role
@@ -2130,6 +2167,8 @@ export function loadConfig() {
       nearBaseUrl: env.NEAR_BASE_URL.replace(/\/$/, ""),
       nearEndpointsUrl: env.NEAR_ENDPOINTS_URL.replace(/\/$/, ""),
       nearApiKey,
+      phalaAiBaseUrl: env.PHALA_AI_BASE_URL.replace(/\/$/, ""),
+      phalaAiApiKey,
       bedrockEnabled: env.BEDROCK_ENABLED ?? false,
       bedrockRegion: env.BEDROCK_REGION,
       bedrockBaseUrl: (env.BEDROCK_BASE_URL ?? `https://bedrock-mantle.${env.BEDROCK_REGION}.api.aws/v1`).replace(/\/$/, ""),
@@ -2146,6 +2185,7 @@ export function loadConfig() {
       chutesWorkerRpcUrl: env.CHUTES_WORKER_RPC_URL.replace(/\/$/, ""),
       tinfoilWorkerRpcUrl: env.TINFOIL_WORKER_RPC_URL.replace(/\/$/, ""),
       nearWorkerRpcUrl: env.NEAR_WORKER_RPC_URL.replace(/\/$/, ""),
+      phalaAiWorkerRpcUrl: env.PHALA_AI_WORKER_RPC_URL.replace(/\/$/, ""),
       // Empty by default: operator key lifecycle stays disabled until control
       // is explicitly pointed at the credential worker.
       veniceWorkerUrl: env.VENICE_WORKER_URL?.trim().replace(/\/$/, "") ?? "",

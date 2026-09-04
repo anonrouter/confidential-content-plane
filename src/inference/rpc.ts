@@ -303,10 +303,35 @@ export interface AttestationRedemption {
   providerName: string;
   externalModelId: string;
   dispatchToken: string;
+  /**
+   * The modality this ticket was minted for. CATALOG FACT, not account state:
+   * the same value is on the public GET /v1/models. The content plane has no
+   * database and cannot look it up, and it must not GUESS — labelling a TEE
+   * route `e2ee` would tell a customer their prompt stayed opaque to AnonRouter
+   * when it did not. Optional so a ticket minted just before a deploy still
+   * redeems; absent is read as `e2ee`, which is the only thing the previous
+   * mint could issue.
+   */
+  privacyClass?: "tee" | "e2ee";
+  /** Public catalog id of the bound route, for labelling the verdict. */
+  canonicalModelId?: string;
+  /** Provider-qualified route id of the bound route. */
+  routeId?: string;
 }
 
-export interface WorkerAttestationRequest extends AttestationRedemption {
+export interface WorkerAttestationRequest {
+  providerName: string;
+  externalModelId: string;
+  dispatchToken: string;
   nonce: string;
+  /**
+   * Which evidence the worker must fetch. Some providers publish a DIFFERENT
+   * report for a client-opaque request than for general enclave verification
+   * (NEAR reports an Ed25519 encryption key for E2EE and an ECDSA one
+   * otherwise), so this cannot be inferred from the provider name. Absent is
+   * read as `e2ee` to match the pre-generalization relay.
+   */
+  privacyModality?: "tee" | "e2ee";
 }
 
 export interface CaptureRpcRequest {
