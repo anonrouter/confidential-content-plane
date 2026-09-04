@@ -98,7 +98,7 @@ const REVIEWED: Record<string, string> = {
   // listed here to keep the reviewed set complete rather than because this
   // suite's discovery finds it.
   "ghcr.io/anonrouter/mirror/anonrouter-node-base":
-    "sha256:e8f6e5faabd917808380efd228046d3a6593ccfe982b2af454e02080546e338d"
+    "sha256:f2733ab9f12c25be029bb307b19dc02671dc6d797ece67bd906f238a308f0bf9"
 };
 
 /** Digests that are known INDEXES. Naming them is what makes the failure legible. */
