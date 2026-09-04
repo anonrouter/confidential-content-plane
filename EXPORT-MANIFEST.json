@@ -171,13 +171,13 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "b32758bc9e3a1ea3adf5ed9836ec94c60169f07c5aead9e89c2c94dc81ff27d4",
-      "bytes": 149960
+      "sha256": "9074da2e39415f9046ef522202166f416c478d884fa91fc49b4e8edf9b99c602",
+      "bytes": 162894
     },
     {
       "path": "package.json",
-      "sha256": "d05fd3ecd636ab4e068bcd97bb07ebaeb7b479a31b28fed844a4b61288b578d4",
-      "bytes": 1443
+      "sha256": "64042aefbe8593f32b3cee5d755dfbfb6b2a5ba7d7054acf3f795c0e4b060809",
+      "bytes": 1468
     },
     {
       "path": "scripts/export-public-readme.ts",
@@ -751,8 +751,8 @@
     },
     {
       "path": "src/providers/tinfoil.ts",
-      "sha256": "b3c6222d186b0196ae9b90a27ab1d6b19470ea59b6e0f3f98f58fe2a32940d89",
-      "bytes": 8327
+      "sha256": "832f76c064b7b598639b11de3d86f4064ea5e0ff2316490c5d226b5aa8b7e407",
+      "bytes": 8629
     },
     {
       "path": "src/providers/tools.ts",
