@@ -48,8 +48,10 @@ function tinfoilBody(request: ProviderRequest, stream: boolean): Record<string, 
   };
 }
 
-/** The subset of the Tinfoil SDK's `Verifier` we depend on. Loaded via a guarded
- *  dynamic import so the offline build never requires the `tinfoil` npm package. */
+/** The subset of the Tinfoil SDK's `Verifier` we depend on. The literal dynamic
+ *  import below is load-bearing: the public content-plane exporter derives its
+ *  production dependencies from runtime imports, so hiding this package behind
+ *  a variable silently omitted the verifier from the immutable image. */
 interface TinfoilSdkVerifier {
   verify(): Promise<unknown>;
   getVerificationDocument(): TinfoilVerificationDocument | undefined;
@@ -180,11 +182,12 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
   }
 
   private async loadSdkVerifier(serverURL: string): Promise<TinfoilSdkVerifier | null> {
-    // Non-literal specifier so tsc treats this as `any` and does not require the
-    // optional package to be present at build time.
-    const spec: string = "tinfoil";
     try {
-      const mod = (await import(spec)) as { Verifier?: new (opts: { serverURL: string; configRepo: string }) => TinfoilSdkVerifier };
+      // Keep this specifier literal. scripts/export-content-plane.ts recognizes
+      // literal runtime imports and carries their locked dependency closure into
+      // the public build; a computed specifier produced a healthy worker whose
+      // every attestation attempt failed closed because the SDK was absent.
+      const mod = (await import("tinfoil")) as { Verifier?: new (opts: { serverURL: string; configRepo: string }) => TinfoilSdkVerifier };
       if (!mod.Verifier) return null;
       return new mod.Verifier({ serverURL, configRepo: this.configRepo });
     } catch {
