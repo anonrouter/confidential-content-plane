@@ -106,10 +106,12 @@ ADD --checksum=sha256:0edb49f4dffe0d5608069f7e4ba4d69544d3b9e86fc314dd8b75e9958d
 # only network inputs are these checksummed URLs.
 ADD --checksum=sha256:cc6dc501e0c06be3f89e9a7f8dfd7a97f92aadfd9daa60fad19b90d6a5558b80 \
     http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/x/xz-utils/xz-utils_5.4.1-1+deb12u1_amd64.deb /in/xz-utils.deb
-# ONE binary out of coreutils, and only one. npm's entry point is a script whose
-# shebang is `#!/usr/bin/env node`, so without /usr/bin/env the image has node
-# and cannot run npm -- which is exactly what the chroot check at the end of
-# assemble.sh caught on the first build.
+# TWO binaries out of coreutils, and only two. npm's entry point is a script
+# whose shebang is `#!/usr/bin/env node`, so without /usr/bin/env the image has
+# node and cannot run npm. Every provider worker also decodes its sealed
+# credential into tmpfs with `base64 -d`; omitting that production startup
+# dependency caused the first scratch-base promotion to exit 127 on TDX. Both
+# are exercised by the chroot checks at the end of assemble.sh.
 ADD --checksum=sha256:61038f857e346e8500adf53a2a0a20859f4d3a3b51570cc876b153a2d51a3091 \
     http://snapshot.debian.org/archive/debian/20260901T000000Z/pool/main/c/coreutils/coreutils_9.1-1_amd64.deb /in/coreutils.deb
 
