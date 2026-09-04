@@ -86,20 +86,29 @@ unpack "$IN/dash.deb" /tmp/dash
 cp -a /tmp/dash/bin/dash "$OUT/bin/dash"
 ln -sf dash "$OUT/bin/sh"
 
-# /usr/bin/env, and nothing else from coreutils.
+# /usr/bin/env and /usr/bin/base64, and nothing else from coreutils.
 #
 # npm's entry point is a script with `#!/usr/bin/env node`, so an image with
 # node but no env has npm present and unrunnable. The chroot smoke test at the
 # end of this file is what caught it, which is the reason that test is here
 # rather than in a later harness.
 #
-# Copying one binary out of a package rather than installing the package is
+# Every production provider worker receives its credential as an encrypted
+# base64 environment value and decodes it into tmpfs before Node starts. The
+# first scratch-base promotion omitted this binary, so those workers exited
+# 127 on a real TDX guest even though the application-level compatibility
+# harnesses passed. Keep the exact production decode primitive in the base and
+# exercise it below; it is part of the startup ABI, not optional convenience
+# tooling.
+#
+# Copying two binaries out of a package rather than installing the package is
 # deliberate: coreutils is ~7 MB of setuid-adjacent tooling in an image whose
-# entire purpose is handling plaintext, and nothing at runtime invokes any of
-# the rest. The cost is that this is now a curated list, so a future dependency
-# on `cp` or `mkdir` fails loudly at build time instead of silently shipping.
+# entire purpose is handling plaintext, and nothing at runtime invokes the
+# rest. The cost is that this is now a curated list, so a future dependency on
+# `cp` or `mkdir` fails loudly at build time instead of silently shipping.
 unpack "$IN/coreutils.deb" /tmp/coreutils
 install -m 0755 /tmp/coreutils/usr/bin/env "$OUT/usr/bin/env"
+install -m 0755 /tmp/coreutils/usr/bin/base64 "$OUT/usr/bin/base64"
 
 # ---------------------------------------------------------------------------
 # CA roots.
@@ -214,6 +223,16 @@ chroot "$OUT" /usr/local/bin/node -e 'console.log("node " + process.version)'
 chroot "$OUT" /usr/local/bin/npm --version >/dev/null
 chroot "$OUT" /bin/sh -c 'exit 0'
 chroot "$OUT" /usr/bin/env node -e 'process.exit(0)'
+encoded=$(printf 'anonrouter-provider-credential' | chroot "$OUT" /usr/bin/base64)
+[ "$encoded" = "YW5vbnJvdXRlci1wcm92aWRlci1jcmVkZW50aWFs" ] || {
+  echo "REFUSING: base64 encoder produced unexpected output." >&2
+  exit 1
+}
+decoded=$(printf '%s' "$encoded" | chroot "$OUT" /usr/bin/base64 -d)
+[ "$decoded" = "anonrouter-provider-credential" ] || {
+  echo "REFUSING: base64 decoder failed the production startup contract." >&2
+  exit 1
+}
 
 # THE SMOKE TEST IS NOT FREE, and this is the second time the comparison tool
 # has caught it. Running npm enables Node 22's V8 compile cache, which writes

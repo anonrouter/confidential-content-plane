@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 188,
+  "copiedSourceFiles": 189,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 196,
+  "fileCount": 197,
   "files": [
     {
       "path": ".dockerignore",
@@ -141,8 +141,8 @@
     },
     {
       "path": "deploy/provenance/base-images/node/Dockerfile",
-      "sha256": "a88d09565c333498ad6537b517775c72d1dea3eaf377adfc3064886b408b1d38",
-      "bytes": 8772
+      "sha256": "0a8bab26318d07410c6635f75dd77a6effcd23d4c92935222ad5eac3cf969a34",
+      "bytes": 8941
     },
     {
       "path": "deploy/provenance/base-images/node/LICENSE.upstream",
@@ -151,8 +151,8 @@
     },
     {
       "path": "deploy/provenance/base-images/node/assemble.sh",
-      "sha256": "af5d0a51031e05c6aea173f376de4bbb52bdb0dd4ac5da8dfaf4448f8fbb97df",
-      "bytes": 11340
+      "sha256": "01d2802e162e4f68ada4142b4dc7362533493d2386fdc21f80ff075b571947ad",
+      "bytes": 12332
     },
     {
       "path": "deploy/provenance/plaintext-capable-components.json",
@@ -973,6 +973,11 @@
       "path": "tests/unit/logger-allowlist.test.ts",
       "sha256": "26267c59812f436acf02325aa6afefd53fcb721e699d237c6c0027da15979bc9",
       "bytes": 10093
+    },
+    {
+      "path": "tests/unit/node-base-runtime-contract.test.ts",
+      "sha256": "4b191cdcef69ddf66713f0f04cd145359937d1457d02ca1a67fd9d6ca9ff0fc3",
+      "bytes": 660
     },
     {
       "path": "tests/unit/oci-comparison-adversarial.test.ts",
