@@ -1,6 +1,7 @@
 import { calculateCostUsd } from "../metering/billing.js";
 import type { TokenUsage } from "../metering/tokens.js";
 import type { ChatCompletionRequestBody, ModelRecord } from "../providers/types.js";
+import { PROVIDERS_HELD_FROM_AUTO } from "../providers/catalog/enablement.js";
 import { AppError } from "../security/errors.js";
 import type { RoutingClassification, RoutingTask } from "./classifier.js";
 
@@ -87,7 +88,15 @@ export function filterRoutingPolicyModels(
   const excludePatterns = routing.exclude ?? [];
 
   return models
-    .filter((model) => model.routingEnabled)
+    // Two checks of different kinds. `routingEnabled` is a database column;
+    // `PROVIDERS_HELD_FROM_AUTO` is a code constant. This function is reached
+    // from `GET /v1/routing/effective` and `POST /v1/routing/eligible-models`
+    // (src/routes/routing.ts) via a DIRECT `listEnabledModels` read, so it is
+    // not downstream of the control plane's guards -- it is its own path from
+    // the column to an /auto answer, and it publishes that answer to a customer.
+    // A held provider must be absent from the candidate set and from the list
+    // that says what /auto would consider.
+    .filter((model) => model.routingEnabled && !PROVIDERS_HELD_FROM_AUTO.has(model.providerName))
     .filter((model) => !explicitModelPattern || modelMatches(explicitModelPattern, model))
     .filter((model) => allowPatterns.some((pattern) => modelMatches(pattern, model)))
     .filter((model) => !excludePatterns.some((pattern) => modelMatches(pattern, model)))

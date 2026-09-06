@@ -4,8 +4,8 @@
     "src/contentPlane.ts"
   ],
   "note": "Candidate export for owner review. NOT published. The source set is the compile-time module closure of the content-plane entry point, so it cannot disagree with what the image actually runs. `files` is every file in the export except this manifest, which cannot contain its own hash; it therefore includes the generated build inputs.",
-  "runtimeClosureFiles": 115,
-  "compileClosureFiles": 123,
+  "runtimeClosureFiles": 116,
+  "compileClosureFiles": 124,
   "controlPlaneLeakage": [],
   "excludedTestSuites": [],
   "monorepoOnlySuites": [
@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 190,
+  "copiedSourceFiles": 191,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 198,
+  "fileCount": 199,
   "files": [
     {
       "path": ".dockerignore",
@@ -96,8 +96,8 @@
     },
     {
       "path": "config/confidential-route-policy.json",
-      "sha256": "7daffba1f10db1f1fd6c1192832a097dece6fc425af23a98373082438aa6d700",
-      "bytes": 9522
+      "sha256": "0e354049034e968ea79ad73f1f5b99b0bad88f8684dca1fdced02a3e09bf5047",
+      "bytes": 10086
     },
     {
       "path": "deploy/phala/docker-compose.production.yml",
@@ -111,8 +111,8 @@
     },
     {
       "path": "deploy/phala/images/edge/Caddyfile",
-      "sha256": "f727c70d28dbc987692a8f3139980efce8c7acc0011699372f10a23843c778f4",
-      "bytes": 8049
+      "sha256": "2912b6bdae1485d7be045ef180a703af99c2b60d779f6c58e350bbcd1da2640a",
+      "bytes": 11854
     },
     {
       "path": "deploy/phala/images/egress/haproxy.cfg",
@@ -276,8 +276,8 @@
     },
     {
       "path": "src/config.ts",
-      "sha256": "46a1cffea49b1fe80bd0f7f70dbf37bf537f3c6083c7607aa93b79590f04538f",
-      "bytes": 122642
+      "sha256": "f8524fbc9e883b92e970fa8669b2ae0474ca6c1592956f4c162272aab0029979",
+      "bytes": 125067
     },
     {
       "path": "src/contentDecorators.ts",
@@ -361,8 +361,8 @@
     },
     {
       "path": "src/httpBase.ts",
-      "sha256": "ecb80cfb152f6529684497d6390186783f0967baf8f1e0f1fa6fb8770809ced0",
-      "bytes": 12298
+      "sha256": "33ee8a34c1edbe0011bad1a6f93c178c347b39398a3ede596972ad1366aa049e",
+      "bytes": 20211
     },
     {
       "path": "src/ids.ts",
@@ -491,13 +491,18 @@
     },
     {
       "path": "src/providers/attestation/index.ts",
-      "sha256": "5e6685d3bd7bd7dcb91caedc059d4a40718e33aa167e96ee2698de4d5abd9a64",
-      "bytes": 1441
+      "sha256": "4da0f8635a4c24f799d6243569acd38857166814ceab6b6e070504d6f093e473",
+      "bytes": 1894
     },
     {
       "path": "src/providers/attestation/near.ts",
       "sha256": "02c4174adf932d913c6a4b5a141dee61e5553b3368c97dca449534fdbd62829a",
       "bytes": 14664
+    },
+    {
+      "path": "src/providers/attestation/phalaAciServing.ts",
+      "sha256": "ad689a6de4fd2f238d62301a32936158b6683943dd6a681a0d03cfaae4aaa895",
+      "bytes": 19648
     },
     {
       "path": "src/providers/attestation/policies.ts",
@@ -521,8 +526,8 @@
     },
     {
       "path": "src/providers/attestation/tdxQuote.ts",
-      "sha256": "bfa50264f3f6d9ab83433eea0af10a2c25a86c25674a5ce19a2a86747baf89f8",
-      "bytes": 5217
+      "sha256": "193a78703000a74f27de30b0b8b38ffbffcbad2efeee25a689187f61716eb63a",
+      "bytes": 6882
     },
     {
       "path": "src/providers/attestation/tinfoil.ts",
@@ -531,13 +536,13 @@
     },
     {
       "path": "src/providers/attestation/types.ts",
-      "sha256": "aab71a1e6cd245eb3433a8b6dea5bdbac520c40145b9d4a825e4b810ca311d7b",
-      "bytes": 9921
+      "sha256": "0ad85bddd73f4fa9d8b5f9250301e64a2e71a12605a951371fff543011a567a1",
+      "bytes": 11010
     },
     {
       "path": "src/providers/attestation/venice.ts",
-      "sha256": "0b1fb80e4b445dc5e4cf0c160b63b8b6796fb8fdce5d51cc2657e5c445cf100a",
-      "bytes": 12611
+      "sha256": "f600c988a7783ed07d4eaf94f9f93ef9faf251114c68cc4dd11c9b6fa863404b",
+      "bytes": 15719
     },
     {
       "path": "src/providers/bedrock.ts",
@@ -591,8 +596,8 @@
     },
     {
       "path": "src/providers/catalog/enablement.ts",
-      "sha256": "a223b49a7a0efb470256b2874a0c5749154ae65f142e819edeb1e5074fc1ad20",
-      "bytes": 21434
+      "sha256": "0a84cf5b9772269b19f87944240d4b6500fe50c135f79e716a45d1e0651c8f23",
+      "bytes": 25219
     },
     {
       "path": "src/providers/catalog/fireworksNormalize.ts",
@@ -626,8 +631,8 @@
     },
     {
       "path": "src/providers/catalog/normalize.ts",
-      "sha256": "f71e7f9d71f8aad9faf60bfd7e527435db4588fa4175ff76086f20bf606c744a",
-      "bytes": 30978
+      "sha256": "2154414031210ae32ef2dd0d335039f9f1b5c047dde72b19d44711f38ccc2f28",
+      "bytes": 31475
     },
     {
       "path": "src/providers/catalog/normalized.ts",
@@ -636,8 +641,8 @@
     },
     {
       "path": "src/providers/catalog/phalaAiNormalize.ts",
-      "sha256": "974956ae284ba46721481b3bb038df2cb5d334edafa00c37d84628b8698d2191",
-      "bytes": 21375
+      "sha256": "c2c01562c0e1ec36c1b52d1a9eb3ef8b91768b9c17dcffeee8dd165027fa769b",
+      "bytes": 22079
     },
     {
       "path": "src/providers/catalog/phalaAiSync.ts",
@@ -731,8 +736,8 @@
     },
     {
       "path": "src/providers/registry.ts",
-      "sha256": "e74eec5ac4d6a43a39e30262551a588e7cffc58bd6eb78f2dd2a845231b7e242",
-      "bytes": 17112
+      "sha256": "c728fb61e2ca507f8a42a04a07ba1a7600f637381be48f241c716eb3740cd59b",
+      "bytes": 18873
     },
     {
       "path": "src/providers/routing/policy.ts",
@@ -906,8 +911,8 @@
     },
     {
       "path": "src/routing/selector.ts",
-      "sha256": "31651296471bd279492d35614ae1358690fedc4f88809087621d099c49308989",
-      "bytes": 11752
+      "sha256": "b72419e51b7fb5953f10ef1fa37e39e871675818f5b17c0d03f027ab63b22bf1",
+      "bytes": 12482
     },
     {
       "path": "src/security/crypto.ts",

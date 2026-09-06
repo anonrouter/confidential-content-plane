@@ -270,7 +270,12 @@ function privacyPresentation(privacyClass: Exclude<PrivacyClass, "unknown">): {
         privacyLevel: "e2ee",
         privacySummary: "End-to-end encrypted inference",
         privacyNotes: [
-          "The client encrypts prompts before relay and only the verified TEE can decrypt them.",
+          // "only the verified TEE can decrypt them" is true and was silent about
+          // the hop that follows. On the Venice routes the enclave the client
+          // encrypts to is a verified gateway reporting zero GPUs, which decrypts
+          // and forwards the prompt to the machine running the model.
+          "The client encrypts prompts before relay and only the verified enclave it encrypted to can decrypt them.",
+          "On some routes that enclave is a verified gateway rather than the machine running the model, and it forwards the prompt onward after decrypting it.",
           "E2EE requires attestation verification, encrypted messages, E2EE headers, and response decryption."
         ]
       };

@@ -32,6 +32,58 @@
 		respond 404
 	}
 
+	# THE COMPAT PREFLIGHT, which cannot be dispatched the way the real request
+	# is. This block is what makes a browser-based OpenAI client work at all,
+	# and it must stay ABOVE @preflight.
+	#
+	# @compat_static, far below, dispatches the REAL request on
+	# `Authorization: Bearer ar_*`. A CORS preflight carries no Authorization
+	# header at all -- the browser strips every credential from it -- so that
+	# matcher can never fire for an OPTIONS. Every compat preflight therefore
+	# fell through to @preflight and reached the ticket-only relay, which
+	# correctly refused an origin that is not on its allowlist: a 204 carrying
+	# Access-Control-Allow-Headers, -Methods, -Expose-Headers and Max-Age, and
+	# NO Access-Control-Allow-Origin. The browser then blocked the request
+	# before it was ever sent. Every browser-based client reports that as a
+	# network error with no status, no body and nothing in any server log,
+	# because nothing ever arrived. curl cannot see it: curl does not enforce
+	# CORS, so every curl probe of this path passed throughout.
+	#
+	# SO THE PREFLIGHT IS DISPATCHED ON THE ONE CREDENTIAL-SHAPED THING IT DOES
+	# CARRY. `Authorization` is not a CORS-safelisted request header, so a
+	# request bearing it MUST be preflighted and the browser MUST name it in
+	# Access-Control-Request-Headers. "Names authorization" is a consequence of
+	# the Fetch specification, not a guess about client behaviour: there is no
+	# conforming browser client that sends a bearer token whose preflight omits
+	# it. The names are byte-lowercased and sorted by the same specification,
+	# which is why the substring match below is safe.
+	#
+	# IT FAILS CLOSED TOWARD THE TICKET. A preflight naming x-anonrouter-ticket
+	# is excluded here -- INCLUDING one that names both credentials, which is
+	# the ambiguous case -- and reaches the relay, so the ticketed browser
+	# flow's preflight answer is byte-identical to what it was before this
+	# block existed, for every origin. The first-party UI names only
+	# content-type and x-anonrouter-ticket (site/lib/ticketed-chat.ts), so it is
+	# never routed here.
+	#
+	# ANSWERING A PREFLIGHT GRANTS NOTHING. No credential, no body and no
+	# content crosses on an OPTIONS; the response is a 204 with headers. The
+	# REAL request is still dispatched by @compat_static on the bearer token and
+	# is still authenticated by the bearer-only broker, which holds no database,
+	# no provider credential and no cookie parser, and refuses any request that
+	# arrives carrying a ticket.
+	@compat_static_preflight {
+		method OPTIONS
+		path /v1/models /v1/chat/completions /v1/embeddings
+		header Access-Control-Request-Headers *authorization*
+		not header Access-Control-Request-Headers *x-anonrouter-ticket*
+	}
+	handle @compat_static_preflight {
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+
 	# CORS preflight must be ROUTED, not 404ed, or the browser reports a
 	# CORS failure for a request the relay never saw. @fastify/cors owns the
 	# allowlist, not this file.
@@ -58,7 +110,9 @@
 		path /compat/v1/*
 	}
 	handle @compat_preflight {
-		reverse_proxy compat:3000
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
 	}
 	@attest_preflight {
 		method OPTIONS
@@ -86,10 +140,13 @@
 	}
 
 	# The OpenAI-compatible broker, for stock clients holding an ar_ key.
+	# Cookie is stripped for the same reason as on @compat_static below.
 	@compat path /compat/v1/*
 	handle @compat {
 		uri strip_prefix /compat
-		reverse_proxy compat:3000
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
 	}
 
 	# Per-request receipt verification, served by the content tier because the
@@ -173,7 +230,23 @@
 		header Authorization "Bearer ar_*"
 	}
 	handle @compat_static {
-		reverse_proxy compat:3000
+		reverse_proxy compat:3000 {
+			# AUTHORIZATION IS PRESERVED HERE, and only here. Holding the
+			# caller's ar_ key is what this process is for.
+			#
+			# COOKIE IS NOT. The broker registers no cookie plugin and never
+			# reads one, and the browser will not attach one to a wildcard
+			# origin that never returns Access-Control-Allow-Credentials -- but
+			# a SIMPLE cross-origin request needs no preflight and no permission
+			# to carry ambient cookies, so "the browser will not send it" is not
+			# true of every request shape. A session cookie arriving here would
+			# be a second, stable identity landing in the one content-plane
+			# process that also holds the plaintext, which is the join this
+			# architecture bounds. The sibling edge already strips it on the
+			# equivalent handle (deploy/caddy/Caddyfile @compat); this one did
+			# not.
+			header_up -Cookie
+		}
 	}
 
 	# Both media surfaces are ticket-authenticated relay routes. The edge strips

@@ -414,12 +414,33 @@ const envSchema = z.object({
       context.addIssue({ code: z.ZodIssueCode.custom, message: "must be an absolute, normalized cookie path" });
     }
   }),
-  // Upper bound raised to 7 days (10080) so a WireGuard-only operator can keep a
-  // single login valid for a full week. Defaults stay short (12h / 1h) so any
-  // environment that does not explicitly opt in keeps the stricter posture; the
-  // extended window is applied only via the deployment's ADMIN_* env values.
-  ADMIN_SESSION_TTL_MINUTES: z.coerce.number().int().min(5).max(10_080).default(720),
-  ADMIN_RECENT_AUTH_MINUTES: z.coerce.number().int().min(1).max(10_080).default(60),
+  // THE ABSOLUTE LIFETIME OF ONE ADMIN LOGIN, measured from the successful
+  // password + TOTP that created it.
+  //
+  // THE DEFAULT IS THE FIX, and the previous attempt is why. Commit 3e444ad
+  // raised only this line's CEILING from 720 to 10080 and left the default at
+  // 720, so no deployment's behaviour changed: the guest launcher never emits
+  // this variable at all, the compose files defaulted it to 720, and production
+  // therefore kept expiring every twelve hours while the repository read as
+  // though a seven-day session existed. A ceiling nobody is under is not a
+  // setting. See docs/operations/handoffs/2026-09-05-admin-seven-day-session.md.
+  //
+  // THE WINDOW IS ABSOLUTE, NEVER SLIDING. Activity moves `last_seen_at` and
+  // never `expires_at`, so a session cannot be held open indefinitely by using
+  // it; at the end of the week the operator authenticates again with password
+  // and TOTP. Only a full re-authentication opens a new window.
+  ADMIN_SESSION_TTL_MINUTES: z.coerce.number().int().min(5).max(10_080).default(10_080),
+  // A DIFFERENT CONTROL, WHICH MUST NOT FOLLOW THE ONE ABOVE. This is how
+  // recently the operator proved password + TOTP before a GUARDED MUTATION, not
+  // how long they stay signed in. 3e444ad raised this ceiling to 10080 as well,
+  // which would let a week-old authentication authorize a model disable or a
+  // balance adjustment and would erase the re-authentication gate that
+  // docs/operations/ADMIN_AGENT_CONTROL.md relies on to bound an agent.
+  //
+  // Restored to a one-hour ceiling. That is the value every deployment already
+  // runs, so nothing in tree is narrowed by it; what it removes is the ability
+  // to answer "stop asking me for a code" by disabling the mutation gate.
+  ADMIN_RECENT_AUTH_MINUTES: z.coerce.number().int().min(1).max(60).default(60),
   ADMIN_ADJUSTMENT_APPROVAL_THRESHOLD_CENTS: z.coerce.number().int().positive().default(50_000),
   // Rolling 24h cap on the total CREDIT a single operator may auto-apply via
   // below-threshold balance adjustments before a second approver is forced. The
@@ -1629,6 +1650,22 @@ export function loadConfig() {
       }
     }
 
+    // BOTH ROLES, AND THE WILDCARD STAYS REFUSED ON BOTH. This looks like the
+    // check to relax now that the OpenAI-compatible surface answers
+    // `Access-Control-Allow-Origin: *`, and relaxing it would be the wrong fix.
+    //
+    // That policy is derived from RUNTIME_ROLE in src/httpBase.ts
+    // (`corsOptionsForRole`), not from this variable, precisely so that no
+    // environment value anywhere can widen the ticket-only relay. A setting that
+    // must be right on exactly one of two roles is the ALLOW_COMPAT_MODE defect
+    // with a new name. So CORS_ORIGIN keeps meaning one thing on the content
+    // tier -- the TICKETED allowlist -- and a wildcard in it is a deployment
+    // error on either role rather than a policy on one of them.
+    //
+    // It is still validated for `compat` even though that role's browser policy
+    // no longer reads it: the same compose block sets the variable for all three
+    // content services from one value, so a malformed entry is a mistake worth
+    // catching at boot on every role that receives it.
     if (env.RUNTIME_ROLE === "relay" || env.RUNTIME_ROLE === "compat") {
       const origins = env.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
       const invalid = origins.length === 0 || origins.some((origin) => {

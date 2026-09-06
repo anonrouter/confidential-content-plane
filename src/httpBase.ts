@@ -115,6 +115,48 @@ export const CONTENT_TIER_ALLOWED_HEADERS = [
 ] as const;
 
 /**
+ * THE POLICY SPLIT. Two browser-visible surfaces share this origin, they
+ * authenticate in two different ways, and they therefore need two different CORS
+ * policies. The role decides which; nothing else can.
+ *
+ *   RUNTIME_ROLE=relay   the TICKETED surface. Authenticates an opaque,
+ *                        session-derived, single-use ticket. Keeps the strict
+ *                        CORS_ORIGIN allowlist.
+ *   RUNTIME_ROLE=compat  the OpenAI-COMPATIBLE surface. Authenticates only a
+ *                        `Authorization: Bearer ar_...` header the customer
+ *                        pasted into a third-party app themselves.
+ *                        `Access-Control-Allow-Origin: *`, never credentials.
+ *
+ * WHY `*` IS SAFE ON THE SECOND AND NOT THE FIRST. CORS exists to stop a hostile
+ * page spending a victim's AMBIENT credentials -- cookies, HTTP auth, TLS client
+ * certs -- which the browser attaches on the page's behalf and without its
+ * knowledge. The compat surface has none: it has no cookie parser, no session
+ * reader and no account module in its module closure, the edge strips Cookie
+ * before the content tier sees it, and the only credential it accepts is one the
+ * caller had to hold and type. A hostile page does not have a stranger's `ar_`
+ * key, and a page that DID hold one would not need a victim's browser to spend
+ * it -- it could call the API from its own server, as every non-browser client
+ * already does. So the wildcard grants a hostile origin exactly one capability:
+ * calling an API with a key it already has.
+ *
+ * The ticketed surface is the opposite case and keeps the allowlist, because a
+ * ticket IS obtained through the victim's session at the control plane.
+ *
+ * WHY THE ROLE AND NOT A CONFIG VALUE. A setting that must be right on exactly
+ * one of two roles is the ALLOW_COMPAT_MODE defect with a new name: that flag
+ * was on for one role and off for another, and the deployment looked healthy
+ * while `/v1/models` worked and every chat call was refused. Deriving the policy
+ * from RUNTIME_ROLE removes the possibility instead of documenting it. There is
+ * no environment value anywhere that can make a relay permissive.
+ */
+const PUBLIC_CORS_ROLE = "compat";
+
+/** True for the one role whose browser policy is public. */
+export function servesPublicCors(config: Pick<ContentPlaneConfig, "runtimeRole">): boolean {
+  return config.runtimeRole === PUBLIC_CORS_ROLE;
+}
+
+/**
  * The CORS response headers for a RAW (hijacked) streaming write.
  *
  * WHY THIS HAS TO EXIST SEPARATELY.
@@ -142,6 +184,25 @@ export function rawStreamCorsHeaders(
   requestOrigin: string | undefined,
   config: ContentPlaneConfig
 ): Record<string, string> {
+  // THE COMPAT ROLE'S RAW WRITE MIRRORS ITS PREFLIGHT, from the same role
+  // decision, for exactly the reason this function exists at all: a policy that
+  // is answered on the preflight and forgotten on the streamed response
+  // produces a complete, correct, settled 200 SSE stream the browser refuses to
+  // hand to the page. Both halves derive from `servesPublicCors`, so they cannot
+  // disagree.
+  //
+  // Unconditional, with no dependence on the request's Origin, because
+  // @fastify/cors emits `Access-Control-Allow-Origin: *` on every response under
+  // this policy whether an Origin was sent or not. A non-browser client ignores
+  // the header; a browser needs it. No `Vary: Origin`, because the value does
+  // not vary. No Access-Control-Allow-Credentials, here or anywhere on this
+  // policy.
+  if (servesPublicCors(config)) {
+    return {
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": [...CONTENT_TIER_EXPOSED_HEADERS].join(", ")
+    };
+  }
   if (!requestOrigin) return {};
   const allowed = config.env === "production" ? corsAllowlist(config.server.corsOrigin) : null;
   // null means "not production": reflect, matching `origin: true` below.
@@ -157,7 +218,7 @@ export function rawStreamCorsHeaders(
 }
 
 /**
- * CORS for the content tier.
+ * CORS for the TICKETED content tier: relay, workers, gateway attestation.
  *
  * Two deliberate differences from the control plane:
  *
@@ -181,6 +242,85 @@ export function contentTierCorsOptions(config: ContentPlaneConfig) {
     allowedHeaders: [...CONTENT_TIER_ALLOWED_HEADERS],
     maxAge: 600
   };
+}
+
+/**
+ * CORS for the OpenAI-compatible broker: any origin, never credentials.
+ *
+ * ASSERTED, NOT BRANCHED ON. Calling this for any other role throws rather than
+ * returning something narrower, so a future caller cannot quietly hand the
+ * permissive policy to the ticket-only relay by passing it the wrong config.
+ * `corsOptionsForRole` below is the only intended caller.
+ */
+export function compatTierCorsOptions(config: ContentPlaneConfig) {
+  if (!servesPublicCors(config)) {
+    throw new Error(
+      `compatTierCorsOptions is for RUNTIME_ROLE=${PUBLIC_CORS_ROLE} only; `
+      + `refusing to build a public CORS policy for role '${String(config.runtimeRole)}'`
+    );
+  }
+  return {
+    // The LITERAL wildcard, not a reflection of the caller's Origin. Two
+    // reasons. It is cacheable without Vary, so one preflight answer is reusable
+    // across origins. And it is structurally incompatible with credentials:
+    // every browser rejects `*` paired with Access-Control-Allow-Credentials:
+    // true, so the permissive policy cannot quietly become a credentialed one.
+    origin: "*",
+    // NEVER true on this policy, ever. The wildcard is defensible only because
+    // no ambient credential exists on this surface.
+    credentials: false,
+    exposedHeaders: [...CONTENT_TIER_EXPOSED_HEADERS],
+    // `allowedHeaders` IS DELIBERATELY ABSENT, which makes @fastify/cors reflect
+    // Access-Control-Request-Headers and add `Vary: Access-Control-Request-Headers`.
+    // Omitted rather than set to undefined: the plugin's default is `null` and
+    // it tests `=== null`, so an explicit undefined would emit the literal
+    // string "undefined" as the header value.
+    //
+    // TWO REASONS, and the first one is a bug this policy had when it was a
+    // copy of the ticketed list.
+    //
+    // 1. A FIXED LIST IS PER-CLIENT MAINTENANCE, which is the thing this whole
+    //    change exists to abolish. The official OpenAI SDK sends
+    //    `X-Stainless-Retry-Count` on EVERY request (openai/client.js) plus
+    //    `X-Stainless-Timeout` whenever a timeout is set. Those are
+    //    CORS-unsafe, so a browser names them in the preflight, and a fixed
+    //    allowlist that omits them makes the browser refuse to send the
+    //    request -- the exact failure this change is fixing, reintroduced one
+    //    client later. Reflecting means a client we have never heard of, using
+    //    headers we have never heard of, works without a release.
+    //
+    // 2. IT CLOSES A CORS-PREFLIGHT-CACHE CROSSOVER ONTO THE TICKETED SURFACE.
+    //    The browser's preflight cache is keyed on (origin, url, credentials)
+    //    and stores one entry per ALLOWED HEADER NAME, for max-age seconds. It
+    //    does not consult Vary. So while this policy advertised the ticketed
+    //    list, one compat preflight cached an `x-anonrouter-ticket` entry for
+    //    that origin -- and for the next 600 seconds a hostile page could send
+    //    a ticket-bearing request with NO further preflight, skipping the edge
+    //    matcher that exists to route exactly that request to the relay.
+    //    Reflecting makes that unreachable BY CONSTRUCTION: this policy can
+    //    only ever cache header names the caller asked for, and a preflight
+    //    that asks for `x-anonrouter-ticket` is excluded by the edge matcher
+    //    and never reaches this policy at all.
+    //
+    // Reflection grants nothing: Allow-Headers permits a page to SEND a header
+    // name, the browser's own forbidden-header list still blocks Cookie, Host,
+    // Origin and the rest so they can never appear in the request list, and the
+    // broker ignores every header it does not read. The ticketed policy keeps
+    // its explicit list, because there the question is which ORIGINS may speak
+    // at all and the answer is a short, known list.
+    maxAge: 600
+  };
+}
+
+/**
+ * The one selector. `createBaseServer` calls this and nothing else registers a
+ * CORS policy on a content role, so "which surface got which policy" is decided
+ * in exactly one place, from RUNTIME_ROLE.
+ */
+export function corsOptionsForRole(
+  config: ContentPlaneConfig
+): ReturnType<typeof contentTierCorsOptions> | ReturnType<typeof compatTierCorsOptions> {
+  return servesPublicCors(config) ? compatTierCorsOptions(config) : contentTierCorsOptions(config);
 }
 
 /**
@@ -234,7 +374,8 @@ export async function createBaseServer(
   server.decorate("config", config);
 
   await server.register(helmet, { global: true });
-  await server.register(cors, contentTierCorsOptions(config));
+  // The policy comes from the ROLE, not from a setting. See corsOptionsForRole.
+  await server.register(cors, corsOptionsForRole(config));
 
   server.addHook("onResponse", async (request, reply) => {
     request.log.info(

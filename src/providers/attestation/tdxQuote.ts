@@ -14,6 +14,8 @@
 //     mr_owner_config 48 | rtmr0 48 | rtmr1 48 | rtmr2 48 | rtmr3 48 |
 //     report_data 64
 
+import type { HardwareType } from "./types.js";
+
 export interface ParsedTdxQuote {
   version: number;
   teeType: number;
@@ -78,6 +80,38 @@ export function parseTdxQuote(input: unknown): ParsedTdxQuote | null {
     // TUD.DEBUG is bit 0 of the first td_attributes byte.
     debugEnabled: (buf[OFF_TD_ATTRIBUTES] & 0x01) === 0x01
   };
+}
+
+/**
+ * The GPU count a dstack CVM's `vm_config` declares about ITSELF. `vm_config`
+ * travels as a JSON string on the wire; an already-decoded object is accepted
+ * too, and anything else returns null so callers fail closed rather than
+ * defaulting. This is the TD's own statement about its hardware, which is what
+ * makes it usable as a cross-check on GPU evidence presented alongside it: a
+ * GPU-less aggregator can relay perfectly genuine GPU evidence belonging to a
+ * different machine, and only the TD's own declaration contradicts that.
+ */
+export function dstackDeclaredGpuCount(vmConfig: unknown): number | null {
+  let parsed: unknown = vmConfig;
+  if (typeof vmConfig === "string") {
+    try { parsed = JSON.parse(vmConfig); } catch { return null; }
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const count = (parsed as { num_gpus?: unknown }).num_gpus;
+  return typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : null;
+}
+
+/**
+ * The honest hardware type for an Intel TDX route, DERIVED from what the TD
+ * itself attested rather than defaulted to the strongest string.
+ *
+ * Claiming `intel-tdx+nvidia-cc` for a TD whose own `vm_config` reports zero
+ * GPUs asserts hardware the attestation we rely on contradicts, so a zero count
+ * yields plain `intel-tdx` and an absent or unparseable count yields `unknown`.
+ */
+export function tdxHardwareTypeFor(declaredGpuCount: number | null): HardwareType {
+  if (declaredGpuCount === null) return "unknown";
+  return declaredGpuCount > 0 ? "intel-tdx+nvidia-cc" : "intel-tdx";
 }
 
 /**

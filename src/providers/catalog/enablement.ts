@@ -53,6 +53,19 @@ export type ModelEligibilityReason =
   | "not_listed";
 
 export interface StoredModelEligibilityInput {
+  /**
+   * The provider that serves this row, e.g. `venice`, `phala-ai`.
+   *
+   * REQUIRED, deliberately, rather than optional. `routingEligible` below is one
+   * of the TWO places `providers.models.routing_enabled` is computed -- the other
+   * is `baseEnablement` on the sync path -- and the admin enable action writes it
+   * straight into the column (src/routes/adminPlatform.ts). An optional field
+   * would let a call site omit the provider and silently lose the Auto hold,
+   * which is a fail-OPEN default for a control whose entire job is to withhold.
+   * Making it required means the compiler enumerates the call sites instead of a
+   * reviewer having to.
+   */
+  provider: string;
   modelType: string;
   providerAvailability: string;
   availabilityStatus: string;
@@ -198,7 +211,14 @@ export function evaluateStoredModelEligibility(
     eligible: true,
     reason: "eligible",
     detail: eligibilityDetails.eligible,
-    routingEligible: model.modelType === "text" && isAutoRoutablePrivacy(model.privacyClass as PrivacyClass)
+    // The Auto hold is consulted here as well as in `baseEnablement`, because
+    // this is the value the admin enable action writes into
+    // `providers.models.routing_enabled`. Two writers of one column, one shared
+    // constant: `PROVIDERS_HELD_FROM_AUTO`. A route on the hold list stays
+    // explicitly addressable and out of `/auto` whichever path enabled it.
+    routingEligible: model.modelType === "text"
+      && !PROVIDERS_HELD_FROM_AUTO.has(model.provider)
+      && isAutoRoutablePrivacy(model.privacyClass as PrivacyClass)
   };
 }
 
@@ -216,6 +236,52 @@ export function protocolSupportsPrivacy(privacyClass: PrivacyClass): boolean {
  *  unknown posture, so they are addressable directly but never auto-selected. */
 export function isAutoRoutablePrivacy(privacyClass: PrivacyClass): boolean {
   return privacyClass === "anonymous" || privacyClass === "private";
+}
+
+/**
+ * Providers whose routes are addressable EXPLICITLY but are never candidates for
+ * `/auto`, whatever their privacy class would otherwise allow.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NOT THE MIGRATION'S JOB. A route's
+ * `routing_enabled` column is not durable operator state: catalog apply
+ * recomputes it from `baseEnablement` on every accepted sync and writes
+ * `routing_enabled = EXCLUDED.routing_enabled` with no reference to the stored
+ * value (src/providers/catalog/apply.ts). So a migration that sets the column
+ * false holds only until the next sync. Once a route is `review_status =
+ * 'approved'` with `operator_enabled = true` -- which is exactly what enabling it
+ * requires -- the sync would compute `routingEnabled` true for any `private` text
+ * route and put the provider into Auto with no decision having been taken.
+ *
+ * The hold therefore lives at the one expression that decides auto-routability,
+ * for the same reason migration 107 unlists a held route instead of removing it
+ * from six surfaces: one chokepoint that cannot be forgotten beats several that
+ * each have to remember.
+ *
+ * `phala-ai`: Auto is withheld pending a PAID CANARY against a real Phala AI
+ * route, which is migration 107's own stated reason for seeding
+ * `routing_enabled = false` ("a brand-new provider cannot be silently preferred
+ * before a paid canary has run against the route"). Explicit provider selection
+ * is unaffected and is the intended first exposure.
+ *
+ * REMOVING `phala-ai` FROM THIS SET IS THE DECISION TO TURN AUTO ON. It is a
+ * separate, named owner decision and is deliberately a one-line change here, not
+ * a database edit, so that it lands in a release with a diff and a review. This
+ * is not dead code: it is load-bearing until that decision is taken.
+ */
+export const PROVIDERS_HELD_FROM_AUTO: ReadonlySet<string> = Object.freeze(
+  new Set<string>(["phala-ai"])
+) as ReadonlySet<string>;
+
+/**
+ * Whether this specific route may be selected by `/auto`.
+ *
+ * Privacy is necessary but not sufficient: a provider on the Auto hold list is
+ * excluded regardless. Scoped by provider so no other provider's Auto behaviour
+ * moves.
+ */
+export function isAutoRoutableRoute(model: NormalizedModel): boolean {
+  if (PROVIDERS_HELD_FROM_AUTO.has(model.publicMetadata.provider)) return false;
+  return isAutoRoutablePrivacy(model.privacyClass);
 }
 
 /** Types with an implemented inference route AND a deterministic billing unit. */
@@ -293,7 +359,11 @@ export function baseEnablement(model: NormalizedModel): EnablementDecision {
     return {
       listed,
       callable: true,
-      routingEnabled: model.providerType === "text" && isAutoRoutablePrivacy(model.privacyClass),
+      // `isAutoRoutableRoute`, not `isAutoRoutablePrivacy`: a provider held from
+      // Auto is excluded here even though its privacy class permits it. This is
+      // the single place auto-routability is decided, so the hold cannot be
+      // bypassed by a sync recomputing the column.
+      routingEnabled: model.providerType === "text" && isAutoRoutableRoute(model),
       status: "available",
       reason: "ok"
     };

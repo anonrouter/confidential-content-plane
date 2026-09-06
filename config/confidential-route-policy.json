@@ -57,7 +57,9 @@
       "provider": "venice",
       "model": "openai/gpt-oss-20b",
       "privacyClass": "e2ee",
-      "evidence": "Verified in every healthy sampling round, 13/13 required checks, across five independent measurement runs on 2026-09-02 and 2026-09-03. Also the route the 27/27 live paid acceptance ran on."
+      "evidence": "Verified in every healthy sampling round, 13/13 required checks, across five independent measurement runs on 2026-09-02 and 2026-09-03. Also the route the 27/27 live paid acceptance ran on.",
+      "providerSunset": "2026-09-17T00:00:00.000Z",
+      "sunsetNote": "Venice published deprecation.removesAt = 2026-09-17 for the upstream route e2ee-gpt-oss-20b-p, observed 2026-09-05. The route keeps working until then and the catalog says so; at the sunset the apply engine disables it, it leaves both catalogs, and this entry should be moved out of `verified` in the same change. This entry is NOT the thing that keeps the route callable -- the catalog decides that -- so leaving it here past the sunset withholds nothing, it just stops meaning anything."
     },
     {
       "provider": "venice",

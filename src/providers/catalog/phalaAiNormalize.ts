@@ -135,7 +135,7 @@ interface ApprovedPhalaAiRoute {
  * `tests/unit/phala-ai-normalize.test.ts` instead of shipping itself.
  */
 export const APPROVED_PHALA_AI_ROUTES: Readonly<Record<string, ApprovedPhalaAiRoute>> = {
-  // --- the four enablement candidates ---------------------------------------
+  // --- direct routes, cleared for service -----------------------------------
   // Phala's id already IS the AnonRouter canonical id and Phala is the only
   // upstream, so there is nothing to merge and nothing ambiguous to resolve.
   "z-ai/glm-5.3": {
@@ -159,8 +159,16 @@ export const APPROVED_PHALA_AI_ROUTES: Readonly<Record<string, ApprovedPhalaAiRo
   //
   // Each of these joins a public model AnonRouter already serves, as an
   // ADDITIONAL provider route. None becomes a second public model for the same
-  // weights, and none is an enablement candidate yet: the merge settles identity,
-  // not readiness.
+  // weights. The merge settles IDENTITY; readiness was a separate question and
+  // the owner has now answered it, so these are enablement candidates too.
+  //
+  // WHAT THAT DOES AND DOES NOT SETTLE. Marking a candidate says the owner has
+  // cleared the route for service. It does NOT upgrade the evidence below, and
+  // the `equivalence` text is deliberately unchanged: two of these four still
+  // rest on nothing the provider publishes. A customer picking Phala for one of
+  // them gets the route they asked for; the honest record of WHY we believe it
+  // is the same model stays exactly as weak as it was, because the decision to
+  // serve a route does not retroactively corroborate it.
   //
   // `equivalence` is deliberately uneven, because the evidence is. Two of the
   // four are corroborated by Phala's own `hugging_face_id`; two are not
@@ -168,20 +176,20 @@ export const APPROVED_PHALA_AI_ROUTES: Readonly<Record<string, ApprovedPhalaAiRo
   // Recording that difference is the whole reason the field exists.
   "meta/muse-glimmer-30b": {
     slug: "muse-glimmer-30b", canonicalId: "meta-models/muse-glimmer-30b",
-    displayName: "Muse Glimmer 30B", qualityTier: 4,
+    displayName: "Muse Glimmer 30B", qualityTier: 4, enablementCandidate: true,
     equivalence: "CORROBORATED: Phala publishes hugging_face_id `meta-models/Muse-Glimmer-30B`, "
       + "which is the AnonRouter canonical id case-for-case. Context matches at 131,072."
   },
   "qwen/qwen-2.5-7b-instruct": {
     slug: "qwen-2.5-7b-instruct", canonicalId: "qwen/qwen-2.5-7b",
-    displayName: "Qwen 2.5 7B Instruct", qualityTier: 2,
+    displayName: "Qwen 2.5 7B Instruct", qualityTier: 2, enablementCandidate: true,
     equivalence: "CORROBORATED: Phala publishes hugging_face_id `Qwen/Qwen2.5-7B-Instruct`, the "
       + "instruction-tuned 7B checkpoint the AnonRouter canonical names. Context 32,768 against "
       + "Venice's 32,000, which is a publisher rounding difference rather than a different model."
   },
   "phala/gemma-4-26b-a4b-uncensored": {
     slug: "gemma-4-26b-a4b-uncensored", canonicalId: "google/gemma-4-26b-a4b-uncensored",
-    displayName: "Gemma 4 26B A4B Uncensored", qualityTier: 3,
+    displayName: "Gemma 4 26B A4B Uncensored", qualityTier: 3, enablementCandidate: true,
     equivalence: "OWNER DECISION, not corroborated by the provider. Phala publishes NO "
       + "hugging_face_id for this row; its description says an uncensored `Heretic` ablation of "
       + "google/gemma-4-26B-A4B-it. Whether Venice's identically-named route is the same ablation "
@@ -189,7 +197,7 @@ export const APPROVED_PHALA_AI_ROUTES: Readonly<Record<string, ApprovedPhalaAiRo
   },
   "phala/qwen3.6-35b-a3b-uncensored": {
     slug: "qwen3.6-35b-a3b-uncensored", canonicalId: "qwen/qwen3.6-35b-a3b-uncensored",
-    displayName: "Qwen3.6 35B A3B Uncensored", qualityTier: 4,
+    displayName: "Qwen3.6 35B A3B Uncensored", qualityTier: 4, enablementCandidate: true,
     equivalence: "OWNER DECISION, not corroborated by the provider. Phala publishes NO "
       + "hugging_face_id; its description names an `Aggressive` fine-tune by HauhauCS. Venice's "
       + "identically-named route may be a different de-censoring of the same base."

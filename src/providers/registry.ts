@@ -64,6 +64,7 @@ function runtimeEligible(model: RuntimeModelRecord, includeWithheld: boolean) {
     return false;
   }
   return evaluateStoredModelEligibility({
+    provider: model.providerName,
     modelType: model.modelType,
     providerAvailability: model.providerAvailability,
     availabilityStatus: model.availabilityStatus,
@@ -244,6 +245,33 @@ export async function listProviderRoutesForModel(
           AND m.enabled = true
           AND p.status = 'active'
           AND (p.is_test_fixture = false OR $2 = true)
+        -- WHICH ROW DECIDES THE CANONICAL GROUP, AND WHY IT CANNOT BE ARBITRARY.
+        --
+        -- Three different columns can match one requested id, and they are not
+        -- equally authoritative. external_model_id is the PROVIDER'S OWN native
+        -- id: it is namespaced per provider, so two providers may legitimately
+        -- carry the same one, and Phala AI genuinely does -- it serves
+        -- openai/gpt-oss-20b under exactly the id DeepInfra and the canonical
+        -- catalog use. public_model_id is globally unique (migrations/001), and
+        -- public_metadata->>'id' is the row's explicit declaration of which
+        -- canonical model it serves.
+        --
+        -- So the rule is: a row whose CANONICAL id IS the requested id wins over
+        -- a row that merely carries the requested id as its provider-native
+        -- route id. The first is the model being asked for; the second is one
+        -- provider's coincidental name for something that may be a different
+        -- canonical model entirely.
+        --
+        -- Without this, LIMIT 1 took whichever row the plan happened to emit
+        -- first. A request for openai/gpt-oss-20b could resolve to the group
+        -- phala-ai/gpt-oss-20b, which contains ONLY the Phala route -- losing
+        -- the Venice e2ee route and the DeepInfra private route, and confining
+        -- a plaintext request to an aggregator gateway that decrypts before
+        -- forwarding. The second key makes the order total, so the result is a
+        -- property of the data and never of physical row order.
+        ORDER BY
+          (COALESCE(NULLIF(m.public_metadata->>'id', ''), m.public_model_id) = $1) DESC,
+          m.public_model_id
         LIMIT 1
       )
       SELECT

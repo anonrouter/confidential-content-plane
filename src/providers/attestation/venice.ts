@@ -10,7 +10,7 @@ import {
   unavailableEthRecoverer,
   type EthMessageRecoverer
 } from "./crypto.js";
-import { parseTdxQuote } from "./tdxQuote.js";
+import { dstackDeclaredGpuCount, parseTdxQuote, tdxHardwareTypeFor } from "./tdxQuote.js";
 import type {
   AttestationCheck,
   AttestationExpectations,
@@ -36,7 +36,7 @@ interface VeniceAttestationPayload {
     workload_keyset?: {
       e2ee_public_keys?: Array<{ algo?: unknown; public_key?: unknown }>;
     };
-    evidence?: { quote_report_data?: unknown };
+    evidence?: { quote_report_data?: unknown; vm_config?: unknown };
   };
 }
 
@@ -136,6 +136,37 @@ export class VeniceTeeVerifier implements TeeVerifier {
       keyInWorkload ? undefined : "signing key was not in the attested workload keyset"));
     const gpuPresent = typeof payload?.nvidia_payload === "string" && payload.nvidia_payload.length > 0;
     checks.push(check("gpu_evidence_present", gpuPresent, true, gpuPresent ? undefined : "no NVIDIA GPU evidence"));
+
+    // What `gpu_evidence_present` does and does not mean.
+    //
+    // It checks that a non-empty `nvidia_payload` exists. It does NOT bind that
+    // payload to the TD in the quote, and the difference is not academic: an
+    // attested-but-GPU-less aggregator RELAYS genuine GPU evidence belonging to
+    // the machine behind it, and passes. Measured on 2026-09-06, Phala's
+    // aggregator gateway scores every required check here while its own attested
+    // `vm_config` reports `num_gpus: 0` and it presents 8 relayed HOPPER entries.
+    // The same is true of the Venice routes this verifier serves, whose document
+    // declares `tee_provider: "phala"` and attests that same GPU-less TD.
+    //
+    // The binding below is therefore recorded and NOT enforced. Enforcing it
+    // would refuse every currently-verified Venice e2ee route, which is an owner
+    // decision with a rollback plan and not a flag flipped inside a verifier.
+    // Note also what is NOT in question: an `e2ee` route's guarantee is that the
+    // client's ciphertext terminates inside an attested enclave, and it does.
+    // GPU evidence was never load-bearing for that claim. What was overstated is
+    // the hardware, which is why `hardwareType` below is now derived rather than
+    // asserted.
+    const declaredGpus = dstackDeclaredGpuCount(payload?.attestation?.evidence?.vm_config);
+    const relayedGpuEntries = countGpuEvidenceEntries(payload?.nvidia_payload);
+    const gpuBindingHolds = declaredGpus !== null && declaredGpus > 0
+      && relayedGpuEntries !== null && relayedGpuEntries === declaredGpus;
+    checks.push(check("gpu_evidence_bound_to_attested_td", gpuBindingHolds, false,
+      `NOT ENFORCED (advisory): attested TD declares ${declaredGpus === null ? "no parseable" : declaredGpus} GPU count, `
+      + `${relayedGpuEntries === null ? "an unparseable number of" : relayedGpuEntries} GPU evidence entries presented; `
+      + (gpuBindingHolds
+        ? "they agree, but this verifier does not enforce the agreement"
+        : "they do NOT agree, so the GPU evidence is not shown to belong to the TD in this quote")));
+
     checks.push(freshnessCheck(envelope.fetchedAtMs, expectations));
 
     const measurements: Record<string, string> = parsed ? {
@@ -148,7 +179,10 @@ export class VeniceTeeVerifier implements TeeVerifier {
     } : {};
     return assembleResult({
       expectations,
-      hardwareType: "intel-tdx+nvidia-cc",
+      // Derived from what the TD attested about itself, never defaulted. A TD
+      // reporting zero GPUs is `intel-tdx`; an absent or unparseable vm_config
+      // is `unknown`, because we then know nothing about the hardware.
+      hardwareType: tdxHardwareTypeFor(declaredGpus),
       requestedLevel: "provider-attested",
       privacyModality: expectations.privacyModality,
       measurementIdentities: measurements,
@@ -234,6 +268,21 @@ export class VeniceTeeVerifier implements TeeVerifier {
       reason: requiredPassed && cryptoVerified ? null : (checks.find((item) => item.required && !item.passed)?.name ?? "signature_unverified"),
       checks
     };
+  }
+}
+
+/** How many per-GPU entries the relayed NVIDIA payload carries. `nvidia_payload`
+ *  is a JSON string on the wire; null means we could not tell, which is reported
+ *  as such rather than smoothed into a zero. */
+function countGpuEvidenceEntries(payload: unknown): number | null {
+  if (typeof payload !== "string" || payload.length === 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(payload);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const list = (parsed as { evidence_list?: unknown }).evidence_list;
+    return Array.isArray(list) ? list.length : null;
+  } catch {
+    return null;
   }
 }
 

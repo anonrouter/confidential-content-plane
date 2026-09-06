@@ -50,8 +50,17 @@ export type HardwareType =
   | "unknown";
 
 /** The two verified-execution privacy modalities. `tee`: enclave-verified but the
- *  gateway may see plaintext. `e2ee`: client ciphertext stays opaque to the
- *  gateway and terminates inside the verified enclave. */
+ *  gateway may see plaintext. `e2ee`: client ciphertext stays opaque to
+ *  AnonRouter's gateway and terminates inside the verified enclave it was
+ *  encrypted to.
+ *
+ *  `e2ee` does NOT imply that enclave is the one running the model, and on the
+ *  Venice routes it is not: measured 2026-09-06, the browser encrypts to a
+ *  shared `dstack-kms-e2ee-v1` key bound into an attested TD reporting
+ *  `num_gpus: 0` and `serving: "aggregator"`, which decrypts and forwards the
+ *  plaintext to a serving enclave we cannot bind to the request. So `e2ee` is
+ *  not a superset of `tee`; the two make different claims and neither implies
+ *  the other's. See `.evidence/phala-serving-enclave-verifier/report.md` §6.5. */
 export type PrivacyModality = "tee" | "e2ee";
 
 /** A single fail-closed verification step outcome. `detail` is always safe and
@@ -88,6 +97,13 @@ export interface AttestationExpectations {
   endpointIdentity: string;
   /** Fresh caller-provided nonce/challenge (hex). Bound into the quote. */
   nonce: string;
+  /** SHA-256 of the TLS leaf SubjectPublicKeyInfo AnonRouter itself observed on
+   *  an independent handshake to the serving endpoint, lowercase hex. Supplied by
+   *  the fetching adapter (verifiers are pure and never open a socket). A verifier
+   *  that binds an attested channel identity compares against THIS rather than
+   *  against a fingerprint the provider also authored; absent it, that comparison
+   *  has no independent side and must fail closed. */
+  observedTlsSpkiSha256?: string | null;
   privacyModality: PrivacyModality;
   measurementPolicy?: MeasurementPolicy;
   /** Injectable clock (ms) for deterministic freshness/expiry tests. */
