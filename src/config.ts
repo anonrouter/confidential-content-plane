@@ -324,7 +324,14 @@ const envSchema = z.object({
   // AnonRouter Connect is a separately gated OAuth 2.1/OIDC provider. Merely
   // mounting its secrets never enables the public endpoints.
   CONNECT_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
-  CONNECT_ISSUER: z.string().url().optional(),
+  // Empty means UNSET, so a Compose default of `${CONNECT_ISSUER:-}` derives the
+  // issuer instead of failing `.url()` on "" for every deployment, including the
+  // ones with Connect switched off. Compose always defines a variable it names,
+  // so "absent" is not a state it can express.
+  CONNECT_ISSUER: z.preprocess(
+    (value) => value === "" ? undefined : value,
+    z.string().url().optional()
+  ),
   CONNECT_SUBJECT_KEYS: z.string().optional(),
   CONNECT_SUBJECT_KEYS_FILE: z.string().optional(),
   CONNECT_ACTIVE_SUBJECT_KEY_VERSION: z.string().regex(/^v[1-9][0-9]*$/).default("v1"),
@@ -1230,7 +1237,23 @@ export function loadConfig() {
     file: env.BETTER_AUTH_SECRET_FILE,
     fallback: "dev-only-better-auth-secret-change-me"
   });
-  const connectIssuer = (env.CONNECT_ISSUER ?? `${env.APP_BASE_URL.replace(/\/$/, "")}/api/anonrouter/connect`).replace(/\/$/, "");
+  // THE DEFAULT ISSUER IS THE BETTER AUTH MOUNT'S SIBLING, derived rather than
+  // written. It used to be `${APP_BASE_URL}/api/anonrouter/connect`, which named
+  // the SITE and was wrong for every split-origin deployment (see the
+  // same-origin assertion below for why that is unserveable, not merely untidy).
+  // It was also wrong on a stock development machine, where APP_BASE_URL
+  // defaults to `localhost:3001` and AUTH_PUBLIC_URL to `127.0.0.1:3001`: two
+  // different origins, and a session set on one is not sent to the other.
+  //
+  // Replacing the auth mount's trailing `/api/auth` with `/connect` produces the
+  // right answer in both topologies without either of them naming a host twice:
+  // `…/api/anonrouter/api/auth` becomes `…/api/anonrouter/connect` behind the
+  // development site proxy, and `https://control…/api/auth` becomes
+  // `https://control…/connect` on the split control host.
+  const connectIssuer = (
+    env.CONNECT_ISSUER
+    ?? `${env.AUTH_PUBLIC_URL.replace(/\/$/, "").replace(/\/api\/auth$/, "")}/connect`
+  ).replace(/\/$/, "");
   let connectSubjectKeys: Record<string, string> = {};
   let connectCookieKeys: string[] = [];
   let connectJwks: { keys: Array<Record<string, unknown>> } = { keys: [] };
@@ -1276,6 +1299,38 @@ export function loadConfig() {
       }
     } else if (issuer.protocol !== "https:" && !(issuer.protocol === "http:" && localIssuer)) {
       throw new Error("Non-HTTPS CONNECT_ISSUER is allowed only on localhost in development or test");
+    }
+    // THE ISSUER MUST BE ON THE ORIGIN THAT SERVES BETTER AUTH, and this is a
+    // correctness requirement rather than tidiness.
+    //
+    // The consent interaction is authenticated by the ordinary browser session:
+    // `sessionForInteraction` calls `authenticateRequest` and demands a real
+    // `session` auth type. That cookie is set with no Domain attribute
+    // (src/auth/standardAuth.ts), so it is HOST-ONLY to whatever host answers
+    // Better Auth. An issuer on any other origin therefore serves an interaction
+    // page that can never see a session: a signed-in user is bounced to sign in,
+    // signs in on the auth host, returns, and is anonymous again.
+    //
+    // THIS IS THE DEFECT THAT WAS SHIPPED. Every deployment default named
+    // `https://anonrouter.ai/api/anonrouter/connect` -- the SITE origin -- while
+    // Better Auth answers on the control origin and the site stopped proxying to
+    // control when O08 removed the same-origin mirror. Nothing detected it,
+    // because Connect has never been enabled, and the moment it was enabled the
+    // failure would have presented as a broken login rather than a wrong issuer.
+    //
+    // Enforced in every environment, not only production: a development topology
+    // with a mismatched pair is broken in exactly the same way, and both existing
+    // Connect suites already set the two values on one origin.
+    //
+    // LAST OF THE ISSUER CHECKS, deliberately. A plaintext or localhost issuer is
+    // usually also a mismatched one, and "your issuer is not HTTPS" is the more
+    // useful sentence to read first.
+    const authOrigin = new URL(env.AUTH_PUBLIC_URL).origin;
+    if (issuer.origin !== authOrigin) {
+      throw new Error(
+        "CONNECT_ISSUER must be on the same origin as AUTH_PUBLIC_URL: the Connect consent "
+        + "interaction is authenticated by the host-only Better Auth session cookie, so an "
+        + `issuer on ${issuer.origin} can never see a session issued for ${authOrigin}`);
     }
     connectSubjectKeys = parseConnectSubjectKeys(sensitiveValue({
       key: "CONNECT_SUBJECT_KEYS",

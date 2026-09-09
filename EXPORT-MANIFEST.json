@@ -276,8 +276,8 @@
     },
     {
       "path": "src/config.ts",
-      "sha256": "f8524fbc9e883b92e970fa8669b2ae0474ca6c1592956f4c162272aab0029979",
-      "bytes": 125067
+      "sha256": "d2cf1dc4ef6076d2c48ceb15ed7af1bd06bf1987a513daa8d090ca101b266d84",
+      "bytes": 128401
     },
     {
       "path": "src/contentDecorators.ts",
