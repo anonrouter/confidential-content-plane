@@ -17,10 +17,10 @@ const MODEL_SOURCE = {
 // ceiling since the OpenAI-style model list omits a generation cap.
 const MAX_OUTPUT_CEILING = 32_768;
 
-const PRIVACY_SUMMARY = "Tinfoil verified enclave (AMD SEV-SNP + NVIDIA CC)";
-const PRIVACY_NOTES = [
-  "Tinfoil runs this model inside an attested confidential enclave (AMD SEV-SNP measured boot, NVIDIA Hopper/Blackwell confidential compute, a Sigstore-logged signed release, live code-measurement equality, and TLS key binding); AnonRouter's worker verifies those properties before routing. Tinfoil's current evidence does not independently bind model weights.",
-  "AnonRouter uses the TLS (certificate-pinned) transport, so the verified enclave sees plaintext prompts and generations: this is a TEE guarantee, not end-to-end encryption.",
+export const TINFOIL_PRIVACY_SUMMARY = "Tinfoil verified enclave (AMD SEV-SNP)";
+export const TINFOIL_PRIVACY_NOTES = [
+  "Tinfoil runs this model inside an AMD SEV-SNP confidential enclave. Tinfoil's official verifier authenticates the signed release and hardware report and confirms that the signed code measurement matches the live enclave. Tinfoil's current evidence does not independently bind model weights.",
+  "AnonRouter pins every inference TLS connection's observed certificate key to the public-key fingerprint carried in that verified hardware report. The enclave sees plaintext prompts and generations: this is a TEE guarantee, not end-to-end encryption.",
   "Tinfoil also offers an HPKE (EHBP) body-encryption transport, but its model selector is inside the ciphertext and the documented outer metadata cannot bind it to an AnonRouter ticket and reservation; AnonRouter therefore fails closed and exposes only the standard TEE route."
 ];
 
@@ -259,8 +259,8 @@ export function normalizeTinfoilCatalog(raw: RawTinfoilModel[]): NormalizedModel
         cacheWritePriceUsdPerMillion: null,
         pricingNote: "Tinfoil pricing in USD per 1M tokens.",
         privacyLevel: "tee",
-        privacySummary: PRIVACY_SUMMARY,
-        privacyNotes: [...PRIVACY_NOTES],
+        privacySummary: TINFOIL_PRIVACY_SUMMARY,
+        privacyNotes: [...TINFOIL_PRIVACY_NOTES],
         moderation: "unknown",
         ...(approved.reasoning ? { reasoning: reasoningCapabilities } : {}),
         features: featureList,

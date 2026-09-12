@@ -275,6 +275,9 @@ export function pinnedMeasurementPolicyFor(provider: string, upstreamModel: stri
 }
 
 export function pinnedEndpointIdentityFor(provider: string, upstreamModel: string): string | undefined {
+  if (provider === "tinfoil") {
+    return "inference.tinfoil.sh";
+  }
   if (provider === "near-ai" && upstreamModel === "openai/gpt-oss-120b") {
     return "gpt-oss-120b.completions.near.ai";
   }

@@ -1,11 +1,12 @@
 // Tinfoil verifier. Tinfoil's own SDK (`tinfoil` on npm) performs the hard
-// cryptographic work: AMD SEV-SNP + NVIDIA confidential-compute hardware
-// attestation, a Sigstore-transparency-log code measurement, and TLS key binding,
-// refusing to send data if any check fails. Re-implementing that in a weaker
-// homegrown check would be strictly worse, so the credential-isolated worker
-// adapter runs the SDK's Verifier and
-// hands us its verification DOCUMENT; this verifier binds that document to the
-// route and reports `sdk-verified` when the SDK confirmed security.
+// cryptographic work: AMD SEV-SNP hardware attestation and a
+// Sigstore-transparency-log code measurement. The adapter then uses a private
+// HTTPS agent for every inference request, applying ordinary PKI and hostname
+// verification before pinning the peer's observed SPKI to the public-key
+// fingerprint carried by the verified AMD report. The adapter hands us that
+// verification document plus the independently observed transport binding;
+// this verifier binds both to the route and reports `sdk-verified` only when
+// all required checks pass.
 //
 // This gateway currently wires only the SDK-verified TLS transport. Tinfoil's
 // separate EHBP/HPKE transport is deliberately not advertised until the relay
@@ -41,6 +42,12 @@ export interface TinfoilVerificationDocument {
   enclaveFingerprint?: string;
   selectedRouterEndpoint?: string;
   tlsPublicKey?: string;
+  transportBinding?: {
+    mode?: string;
+    endpointIdentity?: string;
+    observedTlsSpki?: string;
+    verified?: boolean;
+  };
   /** Attested HPKE public key (ehbp transport / e2ee). */
   hpkePublicKey?: string;
   verifier?: { name?: string; version?: string };
@@ -99,11 +106,13 @@ export class TinfoilTeeVerifier implements TeeVerifier {
       verifierIdentityOk ? undefined : "verification document is not from the official Tinfoil verifier"
     ));
 
-    // The SDK selects an enclave behind the stable router URL. Bind the route to
-    // that router URL exactly; its verified certificate separately binds the
-    // selected enclaveHost and TLS/HPKE keys.
+    // Bind both ATC-provided endpoint fields to AnonRouter's fixed Tinfoil
+    // identity. Comparing either field to the configured request URL would be a
+    // tautology and would not reject an endpoint substitution.
     const selectedRouterHost = hostFromUrl(doc?.selectedRouterEndpoint);
-    const hostOk = selectedRouterHost === expectations.endpointIdentity;
+    const enclaveHost = hostFromUrl(doc?.enclaveHost);
+    const hostOk = selectedRouterHost === expectations.endpointIdentity
+      && enclaveHost === expectations.endpointIdentity;
     checks.push(check("enclave_host_binding", hostOk, true, hostOk ? undefined : "attested enclave host does not match route endpoint"));
 
     const requiredSteps = ["fetchDigest", "verifyCode", "verifyEnclave", "compareMeasurements", "verifyCertificate"];
@@ -168,14 +177,23 @@ export class TinfoilTeeVerifier implements TeeVerifier {
       servingModalitySupported ? undefined : "AnonRouter does not implement Tinfoil EHBP forwarding"
     ));
 
-    // The wired TLS modality must bind the serving certificate. The SDK may also
-    // report an HPKE key, but its presence does not make EHBP routable here.
+    // The wired TLS modality must bind the actual serving connection. The
+    // attested fingerprint alone is not enough: the official document repeats
+    // that same AMD report field in two places. The adapter sets
+    // transportBinding only after the private pinned agent receives a response over a TLS
+    // connection whose observed peer SPKI matches that attested fingerprint.
+    // The SDK may also report an HPKE key, but its presence does not make EHBP
+    // routable here.
     const e2ee = expectations.privacyModality === "e2ee";
     const hpkePublicKey = doc?.enclaveMeasurement?.hpkePublicKey ?? doc?.hpkePublicKey;
     const tlsPublicKeyFingerprint = doc?.enclaveMeasurement?.tlsPublicKeyFingerprint;
+    const binding = doc?.transportBinding;
     const keyOk = e2ee ? typeof hpkePublicKey === "string" && hpkePublicKey.length > 0
       : /^[0-9a-f]{64}$/i.test(tlsPublicKeyFingerprint ?? "")
-        && hexEqual(tlsPublicKeyFingerprint, doc?.tlsPublicKey);
+        && binding?.mode === "tls-pinned"
+        && binding.verified === true
+        && binding.endpointIdentity === expectations.endpointIdentity
+        && hexEqual(tlsPublicKeyFingerprint, binding.observedTlsSpki);
     checks.push(check("attested_key_binding", keyOk, true, keyOk ? undefined : "no attested key for the serving modality"));
 
     // Tinfoil attestation is connection-bound (SDK handshake), not caller-nonce
@@ -185,7 +203,7 @@ export class TinfoilTeeVerifier implements TeeVerifier {
 
     return assembleResult({
       expectations,
-      hardwareType: "amd-sev-snp+nvidia-cc",
+      hardwareType: "amd-sev-snp",
       requestedLevel: "sdk-verified",
       privacyModality: expectations.privacyModality,
       measurementIdentities: {

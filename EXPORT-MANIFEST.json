@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 192,
+  "copiedSourceFiles": 193,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 200,
+  "fileCount": 201,
   "files": [
     {
       "path": ".dockerignore",
@@ -506,8 +506,8 @@
     },
     {
       "path": "src/providers/attestation/policies.ts",
-      "sha256": "957b758f13ec1cd31d04bb05eb3b945e5f5b785f5a2b8701dd60fb56fe4c09e3",
-      "bytes": 18939
+      "sha256": "c46dd373846f6d51f8524244e5199a6e609c9c7b047d1d08a2f8ffa12173817f",
+      "bytes": 19010
     },
     {
       "path": "src/providers/attestation/presentation.ts",
@@ -531,8 +531,8 @@
     },
     {
       "path": "src/providers/attestation/tinfoil.ts",
-      "sha256": "1f5d1f4e5620ec8ccb795e951030ec3565778c9be68b6db07ba721c3528c83bb",
-      "bytes": 10779
+      "sha256": "94d7f975ad8dc190d02507b9ddc8ce4129af25bf5841a40fb866a6d76e97561e",
+      "bytes": 11607
     },
     {
       "path": "src/providers/attestation/types.ts",
@@ -656,8 +656,8 @@
     },
     {
       "path": "src/providers/catalog/tinfoilNormalize.ts",
-      "sha256": "ed08bc5124a7cdebe756044c125d01356c5ceaa50f497ccd625a14783460f89f",
-      "bytes": 11940
+      "sha256": "800a06a7709d5be01a394d80654aa6b7a074fd7ca0f3822da90176ef099225a8",
+      "bytes": 11985
     },
     {
       "path": "src/providers/catalog/tinfoilSync.ts",
@@ -756,8 +756,8 @@
     },
     {
       "path": "src/providers/tinfoil.ts",
-      "sha256": "fab66b0bc9e56ed9f2ca734235d6e5dc4b8d35ea5ec2933ed632b9a90c064923",
-      "bytes": 8718
+      "sha256": "4dcceb5dea975c0b2949c75b4b20456d2a6235d741fa1b5ad677174601ab5172",
+      "bytes": 16119
     },
     {
       "path": "src/providers/tools.ts",
@@ -1023,6 +1023,11 @@
       "path": "tests/unit/tinfoil-provider-authority-policy.test.ts",
       "sha256": "3c9791dd7e387cb352c76f99478d8b806e4a937dc40695b03b910f4b7abb2749",
       "bytes": 1069
+    },
+    {
+      "path": "tests/unit/tinfoil-secure-transport.test.ts",
+      "sha256": "28e78d1273514173c8146d6d119828a9ef6d4c9b8b2f7036973c3f84ca32bcf6",
+      "bytes": 12910
     },
     {
       "path": "tsconfig.json",
