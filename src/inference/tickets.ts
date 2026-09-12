@@ -129,6 +129,18 @@ export interface TicketBinding {
    * text-only surface. Tickets issued before this field exists parse false.
    */
   trial?: boolean;
+  /**
+   * The request is on the pinned trial route but is NOT trial-funded, so it will
+   * be charged to the wallet.
+   *
+   * CONTROL-PLANE ONLY, and deliberately absent from TicketPublicConstraints
+   * below: the relay enforces the trial's surface and has no funding decision to
+   * make, so this would be a field it is given and cannot use. It exists so the
+   * reservation can say "trial unavailable" instead of "insufficient balance"
+   * when the account cannot absorb the fallthrough. Tickets issued before this
+   * field exists parse false, which is the same answer as "not on the route".
+   */
+  trialContractMissed?: boolean;
 }
 
 /** The subset of a ticket the relay is permitted to see. */

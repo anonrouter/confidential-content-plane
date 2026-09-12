@@ -43,7 +43,7 @@
 
   "ungovernedProviders": {
     "near-ai": "No callable tee or e2ee route in the live catalog. Nothing to govern.",
-    "tinfoil": "Seven callable `tee` routes, none governed here. Their availability is decided by the attestation-ticket mint and the measurement pin, and this policy deliberately does not touch either."
+    "tinfoil": "TEE routes are not governed by this per-route E2EE allowlist. Their attestation is decided by Tinfoil's official verifier bound to the supported GitHub release authority, repository and endpoint; AnonRouter does not maintain a second per-release fingerprint pin."
   },
 
   "verified": [

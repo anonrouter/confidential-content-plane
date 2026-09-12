@@ -19,7 +19,7 @@ const MAX_OUTPUT_CEILING = 32_768;
 
 const PRIVACY_SUMMARY = "Tinfoil verified enclave (AMD SEV-SNP + NVIDIA CC)";
 const PRIVACY_NOTES = [
-  "Tinfoil runs this model inside an attested confidential enclave (AMD SEV-SNP measured boot, NVIDIA Hopper/Blackwell confidential compute, Sigstore-logged code measurement, and model-weight fingerprint binding); AnonRouter's worker verifies the attestation before routing.",
+  "Tinfoil runs this model inside an attested confidential enclave (AMD SEV-SNP measured boot, NVIDIA Hopper/Blackwell confidential compute, a Sigstore-logged signed release, live code-measurement equality, and TLS key binding); AnonRouter's worker verifies those properties before routing. Tinfoil's current evidence does not independently bind model weights.",
   "AnonRouter uses the TLS (certificate-pinned) transport, so the verified enclave sees plaintext prompts and generations: this is a TEE guarantee, not end-to-end encryption.",
   "Tinfoil also offers an HPKE (EHBP) body-encryption transport, but its model selector is inside the ciphertext and the documented outer metadata cannot bind it to an AnonRouter ticket and reservation; AnonRouter therefore fails closed and exposes only the standard TEE route."
 ];

@@ -63,9 +63,10 @@ interface TinfoilSdkVerifier {
  * verified SEV-SNP + NVIDIA CC enclave, but AnonRouter's gateway still sees
  * plaintext, so it is classified `tee` (not `e2ee`). Attestation is verified by
  * Tinfoil's own SDK (the cryptographic root of trust: hardware + Sigstore code
- * measurement + weights + key binding); we run that SDK on the credential worker
- * and surface its verification document to TinfoilTeeVerifier. Tinfoil exposes no
- * offline-verifiable per-request signature.
+ * measurement + live-enclave equality + TLS key binding); we run that SDK on the
+ * credential worker and surface its verification document to
+ * TinfoilTeeVerifier. The current evidence does not independently bind model
+ * weights, and Tinfoil exposes no offline-verifiable per-request signature.
  *
  * Tinfoil also documents an EHBP/HPKE transport. AnonRouter does not expose it:
  * the model selector remains inside the ciphertext and the documented outer
