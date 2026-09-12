@@ -10,6 +10,7 @@ import type { EmbeddingProviderRequest } from "../../src/providers/embeddings.js
 import type { TinfoilVerificationDocument } from "../../src/providers/attestation/tinfoil.js";
 import {
   TINFOIL_ENCLAVE_ORIGIN,
+  TINFOIL_VERIFICATION_TTL_MS,
   TinfoilProviderAdapter,
   TinfoilTlsPinError,
   createTinfoilPinnedTlsTransport,
@@ -198,6 +199,79 @@ describe("TinfoilProviderAdapter attested TLS transport", () => {
       "https://inference.tinfoil.sh/v1/chat/completions",
       "https://inference.tinfoil.sh/v1/embeddings"
     ]);
+  });
+
+  it("uses the pinned transport for the authenticated model catalog", async () => {
+    const globalFetch = vi.fn();
+    vi.stubGlobal("fetch", globalFetch);
+    const secureFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("https://inference.tinfoil.sh/v1/models");
+      expect(init?.method).toBe("GET");
+      expect((init?.headers as Record<string, string>).authorization).toBe("Bearer tinfoil_test_secret");
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as typeof fetch;
+    const adapter = new TinfoilProviderAdapter(config, dependencies(fakeTransport(secureFetch)));
+
+    await expect(adapter.fetchModels(1_000)).resolves.toMatchObject({ status: 200 });
+    expect(secureFetch).toHaveBeenCalledOnce();
+    expect(globalFetch).not.toHaveBeenCalled();
+  });
+
+  it("retries verification on a later request after a transient failure", async () => {
+    let verifierCalls = 0;
+    const secureFetch = vi.fn(async () => new Response(JSON.stringify({ usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    })) as typeof fetch;
+    const adapter = new TinfoilProviderAdapter(config, {
+      verifierFactory: async () => ({
+        verify: async () => {
+          verifierCalls += 1;
+          if (verifierCalls === 1) throw new Error("temporary verifier outage");
+        },
+        getVerificationDocument: () => document()
+      }),
+      transportFactory: () => fakeTransport(secureFetch)
+    });
+
+    await expect(adapter.chat(chatRequest())).rejects.toMatchObject({
+      code: "provider_security_verification_failed"
+    });
+    await expect(adapter.chat(chatRequest())).resolves.toBeDefined();
+    expect(verifierCalls).toBe(2);
+  });
+
+  it("refreshes successful provider authority evidence after ten minutes", async () => {
+    let now = 1_000;
+    let verifierCalls = 0;
+    const transports: TinfoilPinnedTlsTransport[] = [];
+    const secureFetch = vi.fn(async () => new Response(JSON.stringify({ usage: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    })) as typeof fetch;
+    const adapter = new TinfoilProviderAdapter(config, {
+      now: () => now,
+      verifierFactory: async () => ({
+        verify: async () => { verifierCalls += 1; },
+        getVerificationDocument: () => document()
+      }),
+      transportFactory: () => {
+        const transport = fakeTransport(secureFetch);
+        transports.push(transport);
+        return transport;
+      }
+    });
+
+    await adapter.chat(chatRequest());
+    now += TINFOIL_VERIFICATION_TTL_MS - 1;
+    await adapter.chat(chatRequest());
+    expect(verifierCalls).toBe(1);
+
+    now += 1;
+    await adapter.chat(chatRequest());
+    expect(verifierCalls).toBe(2);
+    expect(transports).toHaveLength(2);
+    expect(transports[0]?.close).toHaveBeenCalledOnce();
   });
 
   it("records the independently observed peer SPKI only after a pinned request", async () => {

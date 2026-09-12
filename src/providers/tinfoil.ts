@@ -20,6 +20,7 @@ import type {
 
 const CHAT_TIMEOUT_MS = 10 * 60_000;
 const ATTESTATION_TIMEOUT_MS = 20_000;
+export const TINFOIL_VERIFICATION_TTL_MS = 10 * 60_000;
 export const TINFOIL_ENCLAVE_ORIGIN = "https://inference.tinfoil.sh";
 
 export class TinfoilTlsPinError extends Error {
@@ -180,6 +181,8 @@ export interface TinfoilSdkVerifier {
 export interface TinfoilProviderDependencies {
   verifierFactory?: (options: { serverURL: string; configRepo: string }) => TinfoilSdkVerifier | Promise<TinfoilSdkVerifier>;
   transportFactory?: (origin: string, expectedTlsSpki: string) => TinfoilPinnedTlsTransport;
+  now?: () => number;
+  verificationTtlMs?: number;
 }
 
 interface VerifiedTinfoilTransport {
@@ -202,6 +205,7 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
   private readonly configRepo: string;
   private readonly dependencies: TinfoilProviderDependencies;
   private verifiedTransportPromise: Promise<VerifiedTinfoilTransport | null> | null = null;
+  private verifiedTransportExpiresAtMs = 0;
 
   constructor(config: ContentPlaneConfig, dependencies: TinfoilProviderDependencies = {}) {
     this.baseUrl = config.providers.tinfoilBaseUrl;
@@ -275,6 +279,22 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
     return { ...normalized, providerRequestId: response.headers.get("x-request-id") ?? undefined };
   }
 
+  /** Fetch the provider catalog over the same attested, SPKI-pinned transport as
+   * inference. The catalog carries no prompt, but it does carry the provider
+   * credential and must not get a weaker network path. */
+  async fetchModels(timeoutMs: number): Promise<Response> {
+    if (!this.apiKey) {
+      throw new ProviderError("provider_not_configured", "Tinfoil API key is not configured");
+    }
+    const url = new URL(this.baseUrl);
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/models`;
+    url.search = "";
+    return (await this.requestThroughAttestedTls(url.toString(), {
+      method: "GET",
+      headers: { authorization: `Bearer ${this.apiKey}` }
+    }, undefined, timeoutMs)).response;
+  }
+
   async fetchAttestation(_externalModelId: string): Promise<TinfoilVerificationDocument> {
     try {
       const { response, verified } = await this.requestThroughAttestedTls(
@@ -339,12 +359,32 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
   }
 
   private async getVerifiedTransport(): Promise<VerifiedTinfoilTransport | null> {
+    if (
+      this.verifiedTransportPromise
+      && this.verifiedTransportExpiresAtMs > 0
+      && (this.dependencies.now?.() ?? Date.now()) >= this.verifiedTransportExpiresAtMs
+    ) {
+      // Re-run the provider authority periodically even when the TLS key stays
+      // stable. Otherwise a long-lived worker could keep accepting a release it
+      // verified days ago merely because its keep-alive socket still works.
+      this.invalidateVerifiedTransport();
+    }
     if (!this.verifiedTransportPromise) {
       const pending = this.loadVerifiedTransport();
       this.verifiedTransportPromise = pending;
-      void pending.catch(() => {
-        if (this.verifiedTransportPromise === pending) this.verifiedTransportPromise = null;
-      });
+      const verified = await pending;
+      if (this.verifiedTransportPromise === pending) {
+        if (verified) {
+          this.verifiedTransportExpiresAtMs = (this.dependencies.now?.() ?? Date.now())
+            + (this.dependencies.verificationTtlMs ?? TINFOIL_VERIFICATION_TTL_MS);
+        } else {
+          // A transient verifier or network failure darks this attempt, not the
+          // worker for the rest of its process lifetime. The next request gets a
+          // fresh verification attempt and still fails closed until one passes.
+          this.verifiedTransportPromise = null;
+        }
+      }
+      return verified;
     }
     return this.verifiedTransportPromise;
   }
@@ -393,5 +433,6 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
   private invalidateVerifiedTransport(): void {
     void this.verifiedTransportPromise?.then((verified) => verified?.transport.close()).catch(() => undefined);
     this.verifiedTransportPromise = null;
+    this.verifiedTransportExpiresAtMs = 0;
   }
 }

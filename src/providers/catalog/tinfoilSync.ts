@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { ContentPlaneConfig } from "../../contentPlaneConfig.js";
+import { TinfoilProviderAdapter } from "../tinfoil.js";
 import { computeSourceHash } from "./hash.js";
 import { normalizeTinfoilCatalog, type RawTinfoilModel } from "./tinfoilNormalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
@@ -7,6 +8,10 @@ import { backoffDelayMs, parseRetryAfterMs, type FetchOptions } from "./sync.js"
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
+
+export interface TinfoilFetchOptions extends FetchOptions {
+  adapter?: Pick<TinfoilProviderAdapter, "fetchModels">;
+}
 
 class NonRetryableHttpError extends Error {
   constructor(readonly status: number) {
@@ -31,7 +36,7 @@ export function tinfoilCatalogUrl(baseUrl: string): string {
   return url.toString();
 }
 
-export async function fetchRawTinfoilModels(config: ContentPlaneConfig, opts: FetchOptions = {}): Promise<RawTinfoilModel[]> {
+export async function fetchRawTinfoilModels(config: ContentPlaneConfig, opts: TinfoilFetchOptions = {}): Promise<RawTinfoilModel[]> {
   const key = config.providers.tinfoilApiKey;
   // Fail closed: without the credential the provider stays un-synced (and thus
   // never callable), even though /v1/models is itself publicly readable.
@@ -39,15 +44,13 @@ export async function fetchRawTinfoilModels(config: ContentPlaneConfig, opts: Fe
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
   const random = opts.random ?? Math.random;
+  const adapter = opts.adapter ?? new TinfoilProviderAdapter(config);
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     let retryAfterMs: number | null = null;
     try {
-      const response = await fetch(tinfoilCatalogUrl(config.providers.tinfoilBaseUrl), {
-        headers: { authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(timeoutMs)
-      });
+      const response = await adapter.fetchModels(timeoutMs);
       if (response.ok) {
         const body = (await response.json()) as unknown;
         if (Array.isArray(body)) return body as RawTinfoilModel[];
@@ -76,7 +79,7 @@ export async function fetchRawTinfoilModels(config: ContentPlaneConfig, opts: Fe
 
 export async function buildTinfoilCatalogPayload(
   config: ContentPlaneConfig,
-  opts: FetchOptions & { log?: FastifyBaseLogger } = {}
+  opts: TinfoilFetchOptions & { log?: FastifyBaseLogger } = {}
 ): Promise<NormalizedCatalogPayload | null> {
   try {
     const raw = await fetchRawTinfoilModels(config, opts);

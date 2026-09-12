@@ -1,6 +1,6 @@
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import Fastify, { LogController, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 // Side-effect import: declares the content-plane Fastify decorations for every
 // role built through this module. See src/contentDecorators.ts (D-22).
 import "./contentDecorators.js";
@@ -366,7 +366,10 @@ export async function createBaseServer(
     trustProxy: config.server.trustProxyHops === 1
       ? (address, hop) => hop === 0 && isPrivateProxyAddress(address)
       : false,
-    disableRequestLogging: true
+    // Disconnect tests intentionally leave aborted requests behind. Force
+    // only test servers closed; production retains graceful draining.
+    ...(config.env === "test" ? { forceCloseConnections: true } : {}),
+    logController: new LogController({ disableRequestLogging: true })
   });
 
   options.observe?.(server);
