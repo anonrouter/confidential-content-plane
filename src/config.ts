@@ -186,6 +186,15 @@ const envSchema = z.object({
   CATALOG_SYNC_INTERVAL_SECONDS: z.coerce.number().int().positive().max(86_400).default(300),
   // Gate so exactly one designated worker polls Venice when the service is scaled.
   CATALOG_SYNC_ENABLED: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+  // Required margin over provider cost, as a fraction of cost. Default 0 keeps
+  // today's pass-through pricing exactly. Capped at 10x because a margin an order
+  // of magnitude above cost is far likelier to be a typo (5000 meaning 50.00%)
+  // than an intent, and a typo here reprices the whole catalog on the next sync.
+  CATALOG_PRICE_MARGIN_RATIO: z.coerce.number().min(0).max(10).default(0),
+  // Automatic promotion of attested, validated, probe-proven routes. Off by
+  // default: turning it on is the decision to let the catalog enable routes with
+  // no human in the loop, and that must be an explicit act.
+  CATALOG_AUTO_PROMOTION_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   // Synthetic model health probes: a one-token request per enabled model on a
   // schedule so untouched models still have uptime and stale/down models surface.
   // OFF by default because each probe is a (tiny) billed inference call.
@@ -2240,6 +2249,14 @@ export function loadConfig() {
     },
     providers: {
       defaultProvider: env.DEFAULT_PROVIDER,
+      // Fraction of provider cost required on top of cost before a route may be
+      // billed. 0 is the current arrangement (pass-through: the customer pays the
+      // provider's published price and AnonRouter's margin is taken on the credit
+      // purchase, not the inference), and is deliberately the default so this
+      // release changes no price. Raising it makes catalog apply derive a higher
+      // customer price from the same cost.
+      catalogPriceMarginRatio: env.CATALOG_PRICE_MARGIN_RATIO,
+      catalogAutoPromotionEnabled: env.CATALOG_AUTO_PROMOTION_ENABLED,
       mockBaseUrl: env.MOCK_PROVIDER_BASE_URL.replace(/\/$/, ""),
       veniceBaseUrl: env.VENICE_BASE_URL.replace(/\/$/, ""),
       veniceInferenceKey,

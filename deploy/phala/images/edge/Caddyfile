@@ -74,11 +74,57 @@
 	# arrives carrying a ticket.
 	@compat_static_preflight {
 		method OPTIONS
-		path /v1/models /v1/chat/completions /v1/embeddings
+		path /v1/chat/completions /v1/embeddings
 		header Access-Control-Request-Headers *authorization*
 		not header Access-Control-Request-Headers *x-anonrouter-ticket*
 	}
 	handle @compat_static_preflight {
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+
+	# MODEL DISCOVERY PREFLIGHTS THE WAY IT DISPATCHES, and it is the only route
+	# here where those two are not the same question.
+	#
+	# The block above pairs with @compat_static, and the pairing is exact: that
+	# matcher dispatches the REAL request on `Authorization: Bearer ar_*`, so its
+	# preflight is dispatched on the browser naming `authorization`. A miss on
+	# either goes to the relay, which serves chat and embeddings and answers a
+	# coherent 401 ticket_required.
+	#
+	# @compat_models does NOT select on a credential. It sends GET /v1/models to
+	# the broker whatever the caller presents, because the relay has no such
+	# route to fall through to. Leaving its preflight inside the matcher above
+	# left the two halves disagreeing: the REAL request always reached the
+	# broker's permissive policy, while the PREFLIGHT reached it only when the
+	# browser happened to name `authorization`. A page listing models with no key
+	# at all, or one whose only unsafe headers are the SDK's own
+	# `x-stainless-*`, had its preflight answered by the relay's strict
+	# CORS_ORIGIN allowlist -- no Access-Control-Allow-Origin for an origin
+	# nobody registered -- and the browser refused to send a request the edge
+	# would have served. That is the same invisible failure the block above
+	# exists to fix: no status, no body, nothing in any log, and curl cannot see
+	# it because curl does not enforce CORS.
+	#
+	# SO THE PREDICATE MATCHES @compat_models: method and path, no credential
+	# shape.
+	#
+	# THE ONE DELIBERATE ASYMMETRY IS THE TICKET, carried over unchanged from
+	# the matcher above. src/httpBase.ts reflects Access-Control-Request-Headers
+	# on the compat policy, and what makes reflection safe is that a preflight
+	# naming x-anonrouter-ticket never reaches it -- the browser's preflight
+	# cache stores one entry per allowed header NAME and does not consult Vary.
+	# An ambiguous preflight therefore continues to @preflight and the relay,
+	# byte-identical to before. Nothing is lost by it: there is no ticketed
+	# /v1/models request for such a preflight to be the permission for, so the
+	# shape that stays strict is the shape that never had a destination.
+	@compat_models_preflight {
+		method OPTIONS
+		path /v1/models
+		not header Access-Control-Request-Headers *x-anonrouter-ticket*
+	}
+	handle @compat_models_preflight {
 		reverse_proxy compat:3000 {
 			header_up -Cookie
 		}
@@ -222,11 +268,53 @@
 		respond 404
 	}
 
+	# MODEL DISCOVERY BELONGS TO THE BROKER WHATEVER THE CALLER PRESENTS, and
+	# this is the one route where the Authorization-shaped matcher below was
+	# the wrong tool.
+	#
+	# `@compat_static` selects on `Bearer ar_*`. For the two INFERENCE paths that
+	# is exactly right: a caller without an ar_ key is a ticketed native caller,
+	# the relay serves those paths, and it answers 401 ticket_required. For
+	# /v1/models it is not, because the relay has NO GET /v1/models at all --
+	# the route belongs to the api/control role, which sits outside this trust
+	# domain. So every miss fell through @relay (which listed /v1/models) into a
+	# process that cannot serve it, and Fastify answered
+	# `404 Route GET:/v1/models not found`.
+	#
+	# MEASURED ON PRODUCTION 2026-09-18 against api.anonrouter.ai/v1/models:
+	#   Bearer ar_<invalid>  -> 401 {"error":{"code":"invalid_api_key"}}   (compat)
+	#   Bearer sk-<anything> -> 404 {"message":"Route GET:/v1/models ..."} (relay)
+	#   no Authorization     -> 404 {"message":"Route GET:/v1/models ..."} (relay)
+	#
+	# 404 IS THE WRONG ANSWER, NOT MERELY AN UGLY ONE. A stock OpenAI client
+	# raises NotFoundError for 404 and AuthenticationError for 401, so a customer
+	# whose key is missing, malformed, or copied from an OpenAI `sk-` account is
+	# told the ENDPOINT does not exist. The documented first step of the
+	# migration guide is exactly this call, so the failure lands on the customer's
+	# base URL rather than on their key.
+	#
+	# The broker already authenticates: it 401s a missing token and resolves a
+	# present one at control, so routing an unauthenticated GET here cannot
+	# enumerate anything. Cookie is stripped for the same reason as below.
+	#
+	# GET ONLY, and /v1/models is now absent from BOTH @compat_static and @relay,
+	# so POST /v1/models is refused at this edge with no upstream hop instead of
+	# reaching a process that would 404 it anyway.
+	@compat_models {
+		method GET
+		path /v1/models
+	}
+	handle @compat_models {
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+
 	# Stock OpenAI clients use the ordinary /v1 base URL with an ar_ key.
 	# Ticket-authenticated native traffic falls through to the relay below.
 	@compat_static {
 		method POST GET
-		path /v1/models /v1/chat/completions /v1/embeddings
+		path /v1/chat/completions /v1/embeddings
 		header Authorization "Bearer ar_*"
 	}
 	handle @compat_static {
@@ -252,9 +340,13 @@
 	# Both media surfaces are ticket-authenticated relay routes. The edge strips
 	# reusable credentials below, so only the single-use ticket and request body
 	# enter the attested content tier. Neither is a static-key compat route.
+	# /v1/models IS DELIBERATELY ABSENT from this list and used to be in it. The
+	# relay serves no such route, so its only effect was to turn every
+	# non-`ar_` model listing into a 404 from the wrong process. @compat_models
+	# above owns GET /v1/models outright.
 	@relay {
 		method POST GET
-		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/models /v1/images/generations /v1/audio/speech
+		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/images/generations /v1/audio/speech
 	}
 	handle @relay {
 		reverse_proxy relay:3000 {

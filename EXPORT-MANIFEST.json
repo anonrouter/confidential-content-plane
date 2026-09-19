@@ -111,8 +111,8 @@
     },
     {
       "path": "deploy/phala/images/edge/Caddyfile",
-      "sha256": "2912b6bdae1485d7be045ef180a703af99c2b60d779f6c58e350bbcd1da2640a",
-      "bytes": 11854
+      "sha256": "5118f5cee9b10c30aa1be7ac824d2ebf1f97213904f56bc0ffeea7743f47bbf5",
+      "bytes": 16510
     },
     {
       "path": "deploy/phala/images/egress/haproxy.cfg",
@@ -261,8 +261,8 @@
     },
     {
       "path": "src/compat/broker.ts",
-      "sha256": "64c8737e187473eaa157b2bd7f73f8d9cafaef9abb5474c9d5567ecc4cad2432",
-      "bytes": 19127
+      "sha256": "2864d4eab748fb80b471ccbe0100182c70c94ce08cdb0eecb62c473261c8363a",
+      "bytes": 20806
     },
     {
       "path": "src/compat/controlClient.ts",
@@ -276,8 +276,8 @@
     },
     {
       "path": "src/config.ts",
-      "sha256": "d2cf1dc4ef6076d2c48ceb15ed7af1bd06bf1987a513daa8d090ca101b266d84",
-      "bytes": 128401
+      "sha256": "77e35843aaf641907b83e9d3bed3ca29cb9748648501244bc694fb9b7089ba25",
+      "bytes": 129724
     },
     {
       "path": "src/contentDecorators.ts",
@@ -586,8 +586,8 @@
     },
     {
       "path": "src/providers/catalog/deepinfraReviewed.generated.ts",
-      "sha256": "738d0a64213541b179a206a4315ce4424a08122205798bd483f1e3179a98ea0d",
-      "bytes": 15507
+      "sha256": "5a057ed8c8f4a30656639b2ae534d035412d29c5e92ddb5bfa265af266facf1c",
+      "bytes": 16406
     },
     {
       "path": "src/providers/catalog/deepinfraSync.ts",

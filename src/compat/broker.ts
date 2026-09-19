@@ -31,7 +31,35 @@ const CHAT_PATH = "/v1/chat/completions";
 const EMBEDDINGS_PATH = "/v1/embeddings";
 const COMPLETIONS_PATH = "/v1/completions";
 const MODELS_PATH = "/v1/models";
-const COMPAT_PATHS = new Set([CHAT_PATH, EMBEDDINGS_PATH, COMPLETIONS_PATH]);
+/**
+ * EVERY PATH THE EDGE SENDS HERE, which is what `COMPAT_GUARDED_PATHS` has to
+ * mean rather than "the paths that mint a ticket".
+ *
+ * MODELS_PATH was missing, and the edge change that routes GET /v1/models to
+ * this process for EVERY credential shape is what made that a hole rather than
+ * an omission. Before it, the only way to reach this route was an
+ * `Authorization: Bearer ar_*` header, because `@compat_static` selected on one;
+ * every other shape was dispatched elsewhere and never arrived. Now nothing
+ * stands in front of it, and the route is not free: a present-but-arbitrary
+ * bearer (`Bearer sk-...`, `Bearer garbage`) reaches
+ * `compatControlClient.models()`, which is a content-to-control RPC. Unadmitted,
+ * an unauthenticated client could drive that RPC at the rate it can open
+ * sockets -- the exact load this guard exists to bound, arriving on the one
+ * compat path the guard did not look at.
+ *
+ * `/v1/completions` is here for the same reason and answers 404: a path this
+ * process serves at all, guarded before it decides what to say.
+ *
+ * Exported because tests derive it from the measured Caddyfile rather than
+ * retyping it: a path added to a compat handle at the edge and not added here
+ * reopens this hole silently.
+ */
+export const COMPAT_GUARDED_PATHS: ReadonlySet<string> = new Set([
+  CHAT_PATH,
+  EMBEDDINGS_PATH,
+  COMPLETIONS_PATH,
+  MODELS_PATH
+]);
 const TICKET_HEADER = "x-anonrouter-ticket";
 
 // Response headers the relay sets that are safe and useful to relay back. No
@@ -399,6 +427,12 @@ export function compatErrorHandler(error: unknown, request: FastifyRequest, repl
  * reusing the relay's HMAC-keyed guard (no ticket redemption). Runs in
  * onRequest before body parse or any mint RPC, so a saturating client cannot
  * turn compat into unbounded ticket-mint + relay load.
+ *
+ * It covers COMPAT_GUARDED_PATHS, which is every path the edge dispatches to
+ * this process and not only the ones that mint. Model discovery makes its own
+ * control RPC and is admitted here first; see that constant for why leaving it
+ * out stopped being harmless the moment the edge dropped the `Bearer ar_*`
+ * condition in front of it.
  */
 export function registerCompatIngressGuard(
   server: FastifyInstance,
@@ -410,7 +444,7 @@ export function registerCompatIngressGuard(
 
   server.addHook("onRequest", async (request, reply) => {
     const path = request.url.split("?", 1)[0];
-    if (!COMPAT_PATHS.has(path)) return;
+    if (!COMPAT_GUARDED_PATHS.has(path)) return;
     const release = guard.admit(relayClientAddress(request));
     releases.set(request, release);
     request.raw.once("aborted", release);
