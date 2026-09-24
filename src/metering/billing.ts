@@ -2,6 +2,7 @@ import type { DbPool } from "../db/pool.js";
 import { newId } from "../ids.js";
 import { AppError } from "../security/errors.js";
 import { isOpaqueReceiptId } from "../inference/opaqueReceipt.js";
+import { microsToUsd, readMicros, usdToMicrosCeil } from "./money.js";
 import type { TokenUsage } from "./tokens.js";
 
 export interface ModelPricing {
@@ -10,6 +11,18 @@ export interface ModelPricing {
   cacheReadPricePerMillion?: number | null;
   cacheWritePricePerMillion?: number | null;
 }
+
+/**
+ * How a reservation is paid for. Three disjoint settlement paths.
+ *
+ * 'balance'    prepaid wallet; the only one that moves customer money.
+ * 'trial'      the v1 one-time signup entitlement (migration 094).
+ * 'trial_pool' today's shared-pool allowance (migration 110).
+ *
+ * Neither trial source touches billing.balances, and the usage event each
+ * produces records zero revenue while still carrying the true provider cost.
+ */
+export type FundingSource = "balance" | "trial" | "trial_pool";
 
 export interface BalanceReservationOptions {
   apiKeyId?: string | null;
@@ -21,8 +34,11 @@ export interface BalanceReservationOptions {
    * wallet funds. "trial" reserves against the account's model-locked trial
    * entitlement instead: no wallet movement, no balance events, and the
    * entitlement's reply/prompt-token/spend counters are the admission gate.
+   * "trial_pool" reserves against today's shared-pool allowance: same absence
+   * of wallet movement, but TWO counters must admit it -- the account's daily
+   * allowance and the pool's hard global UTC-day cap.
    */
-  funding?: "balance" | "trial";
+  funding?: FundingSource;
   /** Durable settlement context so settle/abort need no in-flight state. */
   context?: {
     providerId: string;
@@ -32,6 +48,19 @@ export interface BalanceReservationOptions {
     cacheReadPricePerMillion?: number | null;
     cacheWritePricePerMillion?: number | null;
     dailyReservedUsd: number;
+    /**
+     * The `billing.account_daily_budget_usage.usage_date` the hold above was
+     * written to, as `YYYY-MM-DD`, exactly as `reserveDailyBudget` reported it.
+     *
+     * Recorded rather than re-derived (F-9, migration 111). The hold and its
+     * release are two statements in two transactions reading the clock at two
+     * instants, so any date settlement works out for itself is a second guess,
+     * and the one case where the guess is wrong -- a request that straddles UTC
+     * midnight -- strands the hold permanently and silently shrinks that
+     * account's daily budget. Omitted or null means "not recorded", and
+     * settlement falls back to the reservation's own creation date.
+     */
+    dailyBudgetDate?: string | null;
     estInputTokens: number;
     estOutputTokens: number;
     operation?: "chat" | "embeddings" | "image" | "speech";
@@ -226,6 +255,10 @@ export async function reserveBalance(
   // settlement and the metadata-only usage event have a single source of truth.
   let amount = moneyUsd(amountUsd);
   const funding = options.funding ?? "balance";
+  // Pinned for the reservation row when funding is the pool. The date is the
+  // day whose budget admitted this request, not the day it happens to settle
+  // on; see the trial_pool branch below.
+  let trialPoolDate: string | null = null;
 
   const client = await db.connect();
   try {
@@ -297,9 +330,12 @@ export async function reserveBalance(
       if (remainingUsd <= 0) {
         throw new AppError(402, "trial_exhausted", "The trial spending allowance has been used");
       }
-      // Clamp the worst-case reservation to what the ceiling can still fund;
-      // settlement charges at most the reserved amount, so the ceiling is hard.
-      amount = Math.min(amount, remainingUsd);
+      // R-1: the same rule as the pool path. Clamping the reservation down
+      // leaves the provider billing the full worst case while the entitlement
+      // records less, so the ceiling stops bounding real money. Refuse instead.
+      if (amount > remainingUsd) {
+        throw new AppError(402, "trial_exhausted", "The trial spending allowance cannot fund this request");
+      }
       await client.query(
         `
           UPDATE billing.trial_entitlements
@@ -307,6 +343,144 @@ export async function reserveBalance(
           WHERE account_id = $1
         `,
         [accountId, amount]
+      );
+    } else if (funding === "trial_pool") {
+      // FIRST FUNDED SEND IS THE ADMISSION.
+      //
+      // billing.trial_pool_admit commits the account's FULL frozen daily
+      // allowance against the day's budget, or tells us why it cannot. It is
+      // idempotent ('already' for an account admitted earlier today), so this
+      // one call covers both the caller who claimed explicitly and the caller
+      // whose first send is its own admission.
+      //
+      // It is a SQL function and not an import from src/trial on purpose: this
+      // module is inside the confidential content plane's declared input
+      // closure and the trial tree is deliberately outside it, so importing
+      // the admission would drag the whole control-plane trial surface into a
+      // measured image. One implementation, called from both places.
+      //
+      // It also re-reads the operator pause under the day lock, which makes
+      // settings.enabled = false an immediate stop for new reserves without
+      // disturbing the settlement of work already in flight.
+      const admitted = await client.query<{ trial_pool_admit: string }>(
+        `SELECT billing.trial_pool_admit($1) AS trial_pool_admit`,
+        [accountId]
+      );
+      const admitStatus = admitted.rows[0]!.trial_pool_admit;
+      if (admitStatus === "pool_disabled") {
+        throw new AppError(403, "trial_pool_disabled", "The trial pool is not available");
+      }
+      if (admitStatus === "exhausted") {
+        throw new AppError(429, "trial_pool_exhausted", "Today's free trial budget is used up; try again tomorrow");
+      }
+      if (admitStatus !== "ok" && admitStatus !== "already") {
+        throw new AppError(402, "trial_not_available", "No trial allowance is available for this account");
+      }
+
+      // The date comes from the DATABASE clock and is pinned onto the
+      // reservation row, because settlement may land on the other side of
+      // midnight and must release its hold against the day that granted it.
+      const dayDate = await client.query<{ today: string }>(
+        `SELECT to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS today`
+      );
+      trialPoolDate = dayDate.rows[0]!.today;
+
+      // Day first, then user-day. Every path in this feature takes the locks in
+      // that order; settlement inverting it is a real deadlock, proved.
+      const dayRow = await client.query<{
+        committed_micros: string;
+        reserved_micros: string;
+        spent_micros: string;
+      }>(
+        `
+          SELECT committed_micros, reserved_micros, spent_micros
+          FROM billing.trial_pool_days
+          WHERE usage_date = $1
+          FOR UPDATE
+        `,
+        [trialPoolDate]
+      );
+      const day = dayRow.rows[0];
+      if (!day) {
+        throw new AppError(402, "trial_not_available", "No trial allowance is available for this account");
+      }
+
+      const userRow = await client.query<{
+        committed_micros: string;
+        reserved_micros: string;
+        spent_micros: string;
+        replies_total: number;
+        replies_used: number;
+        input_token_budget: number;
+        input_tokens_used: number;
+      }>(
+        `
+          SELECT committed_micros, reserved_micros, spent_micros,
+                 replies_total, replies_used, input_token_budget, input_tokens_used
+          FROM billing.trial_pool_user_days
+          WHERE usage_date = $1 AND account_id = $2
+          FOR UPDATE
+        `,
+        [trialPoolDate, accountId]
+      );
+      const userDay = userRow.rows[0];
+      if (!userDay) {
+        throw new AppError(402, "trial_not_available", "No trial allowance is available for this account");
+      }
+      if (userDay.replies_used >= userDay.replies_total) {
+        throw new AppError(402, "trial_exhausted", "All trial responses for today have been used");
+      }
+      const estInputTokens = options.context?.estInputTokens ?? 0;
+      if (userDay.input_tokens_used + estInputTokens > userDay.input_token_budget) {
+        throw new AppError(402, "trial_exhausted", "The trial conversation has reached its size limit");
+      }
+
+      // THE REQUEST IS BOUNDED BY THE ACCOUNT'S OWN COMMITMENT, NOT BY THE
+      // POOL. The pool's share was already set aside at admission, so a send
+      // competes only with this account's other in-flight work. That is the
+      // whole point of committing up front: an admitted account can spend its
+      // allowance without racing strangers for it.
+      const userRemaining = readMicros(userDay.committed_micros)
+        - readMicros(userDay.reserved_micros)
+        - readMicros(userDay.spent_micros);
+      if (userRemaining <= 0) {
+        throw new AppError(402, "trial_exhausted", "Today's trial allowance has been used");
+      }
+
+      // R-1: RESERVE THE FULL WORST CASE, OR REFUSE. NEVER CLAMP.
+      //
+      // Clamping the reservation down to what is left does not bound the
+      // provider: the request still goes upstream asking for the same work, so
+      // the provider still bills the full amount and the difference lands on
+      // the platform as overage that trial_pool_days.spent_micros never sees.
+      // A "hard global cap" that only caps what we WROTE DOWN is not a cap on
+      // money at all, and it under-reports true spend by construction.
+      //
+      // Refusing is the honest answer: the account is told its allowance
+      // cannot fund this request, which is true, instead of being served a
+      // request whose real cost exceeds what anyone accounted for.
+      const requestedMicros = usdToMicrosCeil(amount);
+      if (requestedMicros > userRemaining) {
+        throw new AppError(
+          402,
+          "trial_exhausted",
+          "This request needs more than today's remaining trial allowance can fund"
+        );
+      }
+      const grantedMicros = requestedMicros;
+      amount = moneyUsd(microsToUsd(grantedMicros));
+
+      await client.query(
+        `UPDATE billing.trial_pool_days
+         SET reserved_micros = reserved_micros + $2
+         WHERE usage_date = $1`,
+        [trialPoolDate, grantedMicros]
+      );
+      await client.query(
+        `UPDATE billing.trial_pool_user_days
+         SET reserved_micros = reserved_micros + $3
+         WHERE usage_date = $1 AND account_id = $2`,
+        [trialPoolDate, accountId, grantedMicros]
       );
     } else {
       const available = Number(result.rows[0]?.available_usd ?? 0);
@@ -401,9 +575,9 @@ export async function reserveBalance(
           provider_id, model_id, input_price_per_million, output_price_per_million,
           cache_read_price_per_million, cache_write_price_per_million,
           daily_reserved_usd, est_input_tokens, est_output_tokens, operation,
-          funding_source
+          funding_source, trial_pool_date, daily_budget_date
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::date)
       `,
       [
         requestId,
@@ -420,7 +594,11 @@ export async function reserveBalance(
         context?.estInputTokens ?? 0,
         context?.estOutputTokens ?? 0,
         context?.operation ?? "chat",
-        funding
+        funding,
+        trialPoolDate,
+        // Null when no daily hold was taken, which is also the only case where
+        // settlement has nothing to release.
+        (context?.dailyReservedUsd ?? 0) > 0 ? context?.dailyBudgetDate ?? null : null
       ]
     );
 
@@ -476,14 +654,33 @@ export async function reconcileReservedBalance(
       reserved_usd: string;
       charged_usd: string;
       status: "reserved" | "settled" | "released";
+      funding_source: FundingSource;
     }>(
-      `SELECT account_id, api_key_id, reserved_usd, charged_usd, status
+      `SELECT account_id, api_key_id, reserved_usd, charged_usd, status, funding_source
        FROM billing.inference_reservations
        WHERE request_id = $1
        FOR UPDATE`,
       [requestId]
     );
     const reservation = reservationResult.rows[0];
+    // THIS FUNCTION ONLY KNOWS HOW TO SETTLE THE WALLET.
+    //
+    // It is the legacy settlement path, superseded by
+    // finalizeInferenceReservation and currently reached only from tests. Its
+    // balance update below is unconditional: applied to a trial or trial-pool
+    // reservation it would decrement a wallet reserve that was never
+    // incremented and credit available_usd that was never debited, which is
+    // either a CHECK violation or minted credit depending on the account's
+    // balance. It would also break the lock ordering the trial paths rely on.
+    //
+    // Refusing is the only safe answer. Teaching it the other two funding
+    // sources would mean maintaining a second copy of settlement logic that
+    // nothing in production calls, which is how the two implementations drift.
+    if (reservation && reservation.funding_source !== "balance") {
+      throw new Error(
+        "reconcileReservedBalance cannot settle a non-wallet reservation; use finalizeInferenceReservation"
+      );
+    }
     if (!reservation) {
       if (expectedReservation <= 0 && providerCostUsd <= 0) {
         await client.query("COMMIT");
@@ -592,7 +789,28 @@ interface ReservationRow {
   delivery_started_at: string | null;
   provider_attempt_started_at: string | null;
   operation: "chat" | "embeddings" | "image" | "speech";
-  funding_source: "balance" | "trial";
+  funding_source: FundingSource;
+  trial_pool_date: string | null;
+  /**
+   * The daily-budget day this reservation holds against, already resolved in
+   * SQL: the stored `daily_budget_date` when there is one, else the row's own
+   * creation date. Selected as text so it never round-trips through a JS Date
+   * and the local timezone. See F-9 and migration 111.
+   */
+  daily_budget_day: string;
+  /** Whether the day above came from the column or from the fallback. */
+  daily_budget_date_recorded: boolean;
+  /**
+   * The reserved and charged amounts as exact integer micro-USD.
+   *
+   * Computed in SQL rather than from Number(reserved_usd) because the pool's
+   * counters are bigint micros and must balance exactly. numeric(12,6) already
+   * has micro precision, so the multiply-and-cast is lossless -- but doing it
+   * in Postgres keeps the value an integer the whole way, where routing it
+   * through a JS float first would make the exactness an accident.
+   */
+  reserved_micros: string;
+  charged_micros: string;
 }
 
 /**
@@ -852,7 +1070,17 @@ export async function finalizeInferenceReservation(
               cache_read_price_per_million, cache_write_price_per_million,
               daily_reserved_usd, est_input_tokens, est_output_tokens,
               delivery_started_at, provider_attempt_started_at, operation,
-              funding_source
+              funding_source, trial_pool_date,
+              (reserved_usd * 1000000)::bigint AS reserved_micros,
+              (charged_usd * 1000000)::bigint AS charged_micros,
+              -- F-9: the recorded day wins; the creation date is the fallback
+              -- for rows written before migration 111 existed, which is exactly
+              -- the day those rows were settled against anyway.
+              to_char(
+                COALESCE(daily_budget_date, (created_at AT TIME ZONE 'UTC')::date),
+                'YYYY-MM-DD'
+              ) AS daily_budget_day,
+              (daily_budget_date IS NOT NULL) AS daily_budget_date_recorded
        FROM billing.inference_reservations WHERE request_id = $1 FOR UPDATE`,
       [params.requestId]
     );
@@ -910,13 +1138,113 @@ export async function finalizeInferenceReservation(
     };
     const latencyMs = params.latencyMs ?? 0;
 
-    const trialFunded = row.funding_source === "trial";
-    if (trialFunded) {
+    const poolFunded = row.funding_source === "trial_pool";
+    // Both trial sources share one property that matters to everything below:
+    // no wallet money moves and no balance event is written.
+    const trialFunded = row.funding_source === "trial" || poolFunded;
+    if (poolFunded) {
+      // Release the hold and charge the actual spend, on BOTH counters, in the
+      // same transaction as the reservation status change.
+      //
+      // AGAINST trial_pool_date, NEVER "today". A request admitted at 23:59:58
+      // that settles at 00:00:03 must release against the day that granted it.
+      // Using the current date would leave the granting day holding a
+      // reservation nothing will ever release -- budget permanently withdrawn
+      // from a pool that has already rolled over -- while charging a new day
+      // for spend it never admitted.
+      //
+      // GREATEST(0, ...) on the release mirrors the v1 entitlement path: the
+      // counters cannot go negative even if a row were somehow finalized
+      // twice, though the status gate above already makes that unreachable.
+      const releaseMicros = readMicros(row.reserved_micros);
+      // Never charge more micros than were reserved. `charge` is already
+      // Math.min(cost, reserved) in dollars and carries at most six decimals,
+      // so the ceiling conversion is exact rather than rounding -- but the
+      // per-user row has a CHECK that reserved + spent <= allowance, and a
+      // single micro of drift would abort a settlement rather than overcharge
+      // quietly. Clamping makes the invariant hold by construction.
+      const chargeMicros = Math.min(releaseMicros, usdToMicrosCeil(charge));
+      const poolDate = row.trial_pool_date;
+      if (!poolDate) {
+        throw new Error("Trial-pool reservation is missing the day it was admitted against");
+      }
+      // DAY BEFORE USER-DAY, because an UPDATE takes the same row-exclusive
+      // lock a SELECT FOR UPDATE does, and every other path in this feature
+      // takes them in that order: claimTrialPoolAllowance locks the day and
+      // then the user-day, and reserveBalance's trial_pool branch does the
+      // same. Settling in the opposite order deadlocks against a concurrent
+      // reservation for the same account.
+      //
+      // The account concurrency clamp hides that for an ordinary send, because
+      // the next request cannot take its slot until this settle has committed.
+      // The stale sweeper holds no such lease: it finalizes on a timer, for any
+      // account, including one starting a request at that moment. The victim
+      // then throws inside the sweeper's batch loop, so one interleaving would
+      // also stop recovery for every other account.
+      await client.query(
+        `UPDATE billing.trial_pool_days
+         SET reserved_micros = GREATEST(0, reserved_micros - $2),
+             spent_micros = spent_micros + $3
+         WHERE usage_date = $1`,
+        [poolDate, releaseMicros, chargeMicros]
+      );
+      await client.query(
+        `UPDATE billing.trial_pool_user_days
+         SET reserved_micros = GREATEST(0, reserved_micros - $3),
+             spent_micros = spent_micros + $4,
+             input_tokens_used = input_tokens_used + $5,
+             replies_used = LEAST(replies_total, replies_used + $6)
+         WHERE usage_date = $1 AND account_id = $2`,
+        [
+          poolDate,
+          row.account_id,
+          releaseMicros,
+          chargeMicros,
+          params.outcome === "settle" || captureAuthorizedCeiling ? Math.max(0, usage.inputTokens) : 0,
+          // R-11: MONEY MAY CAPTURE, A REPLY MAY NOT.
+          //
+          // A reply is consumed only by a settled completion with measured
+          // delivered usage. A captured ceiling still charges the dollars --
+          // the provider did the work and somebody pays for it -- but the
+          // customer did not receive a reply they can read, so spending one of
+          // their counted replies on it charges them twice for one failure.
+          params.outcome === "settle" && params.usage ? 1 : 0
+        ]
+      );
+
+      // DEFINITIVE ENDING RETURNS THE REMAINDER TO THE POOL.
+      //
+      // An allowance that has used its last reply is finished for the day: the
+      // account cannot send again, so whatever is still committed to it is
+      // money the pool is holding for nobody. Releasing it lets somebody else
+      // be admitted today instead of waiting for the UTC rollover.
+      //
+      // ONLY on a definitive ending, never speculatively. An account that has
+      // simply stopped typing is still owed the rest of what it was promised,
+      // and reclaiming that would turn the guarantee back into a hope. The
+      // reply ceiling is the one same-day condition that cannot be undone.
+      //
+      // The function releases only what is neither reserved nor spent, so a
+      // concurrent in-flight request is never stranded, and it takes the day
+      // lock this transaction already holds.
+      await client.query(
+        `SELECT billing.trial_pool_release_unused($1, $2, 'replies_exhausted')
+           WHERE EXISTS (
+             SELECT 1 FROM billing.trial_pool_user_days
+             WHERE usage_date = $1 AND account_id = $2
+               AND replies_used >= replies_total
+           )`,
+        [poolDate, row.account_id]
+      );
+    } else if (trialFunded) {
       // Trial settlement moves no wallet money: release the entitlement's
       // in-flight reservation, charge its spend counter, accumulate the actual
       // prompt tokens, and count a reply only for delivered (billable) work so
       // provider-side failures never consume one of the trial's responses.
       const succeeded = params.outcome === "settle" || captureAuthorizedCeiling;
+      // R-11: as above -- a captured ceiling charges money but consumes no
+      // reply, because no readable reply was delivered.
+      const consumedReply = params.outcome === "settle" && params.usage ? 1 : 0;
       await client.query(
         `
           UPDATE billing.trial_entitlements
@@ -931,7 +1259,7 @@ export async function finalizeInferenceReservation(
           reserved,
           charge,
           succeeded ? Math.max(0, usage.inputTokens) : 0,
-          succeeded ? 1 : 0
+          consumedReply
         ]
       );
     } else {
@@ -950,10 +1278,31 @@ export async function finalizeInferenceReservation(
     const dailyReserved = Number(row.daily_reserved_usd);
     if (dailyReserved > 0 || charge > 0) {
       await client.query(
+        // R-6 / F-9: THE DAY THE HOLD WAS WRITTEN TO. NOT TODAY, AND NOT A
+        // DATE RE-DERIVED HERE.
+        //
+        // reserveDailyBudget chose a usage_date inside its own transaction and
+        // reported it back; reserveBalance stored it on this row. Releasing
+        // against that stored day is the only spelling that cannot miss.
+        //
+        // R-6 first fixed this by keying on created_at, which is right for
+        // every request whose reserve and settle happen on one UTC day -- but
+        // the hold is written by one transaction and the reservation row
+        // inserted by another, so a request that crosses midnight BETWEEN THOSE
+        // TWO STATEMENTS has a hold on day D and a created_at on day D+1. The
+        // UPDATE then matches zero rows: the hold is never returned, and
+        // because reserveDailyBudget admits only while
+        // spent + reserved + amount <= budget, that account's daily budget is
+        // permanently smaller. Silently, and only for accounts that were
+        // mid-request at midnight.
+        //
+        // `daily_budget_day` is COALESCE(daily_budget_date, created_at's date),
+        // resolved in the SELECT above, so a row from before migration 111
+        // behaves exactly as it did and a row from after it cannot miss.
         `UPDATE billing.account_daily_budget_usage
          SET reserved_usd = GREATEST(0, reserved_usd - $2), spent_usd = spent_usd + $3, updated_at = now()
-         WHERE account_id = $1 AND usage_date = (now() AT TIME ZONE 'UTC')::date`,
-        [row.account_id, Math.max(0, dailyReserved), Math.max(0, charge)]
+         WHERE account_id = $1 AND usage_date = $4::date`,
+        [row.account_id, Math.max(0, dailyReserved), Math.max(0, charge), row.daily_budget_day]
       );
     }
 
@@ -1029,17 +1378,64 @@ export async function releaseStaleBalanceReservations(db: DbPool, olderThanMinut
     [Math.max(1, Math.floor(olderThanMinutes))]
   );
   let released = 0;
+  // Distinct from `released`, which counts only holds that finalized at zero
+  // charge and is the function's long-standing return value. Progress is any
+  // row that reached a terminal state, captures included, so a sweep that
+  // captured every row has plainly not stalled.
+  let finalized = 0;
+  const failures: Array<{ requestId: string; error: unknown }> = [];
   for (const row of stale.rows) {
-    const result = await finalizeInferenceReservation(db, {
-      requestId: row.request_id,
-      outcome: row.provider_attempt_started_at || row.delivery_started_at ? "capture" : "abort",
-      abortStatus: "failed",
-      // Connected-app cap checks may use the reservation primitive without an
-      // inference model. Releasing such an abandoned hold must not fabricate a
-      // metering row whose provider/model columns are necessarily null.
-      recordUsage: Boolean(row.provider_id && row.model_id)
-    });
-    if (result.chargedUsd === 0) released += 1;
+    // ONE BAD ROW MUST NOT END THE BATCH.
+    //
+    // The query is `ORDER BY created_at LIMIT 100`, so an un-finalizable row is
+    // the OLDEST and is therefore first on every subsequent pass. Letting its
+    // error propagate turned a single stuck row into a permanent head-of-line
+    // block: no reservation anywhere was ever reclaimed again, and because
+    // trial and trial-pool holds are only released here, every affected
+    // allowance went silently inactive with no operator remedy short of SQL.
+    //
+    // Two reachable causes, neither exotic. A reservation whose `model_id` no
+    // longer exists in the catalog cannot write its metering row, because
+    // `metering.usage_events.model_id` carries a foreign key while
+    // `inference_reservations.model_id` does not. And a settle that deadlocks
+    // against a concurrent reservation loses the tie at random.
+    try {
+      const result = await finalizeInferenceReservation(db, {
+        requestId: row.request_id,
+        outcome: row.provider_attempt_started_at || row.delivery_started_at ? "capture" : "abort",
+        abortStatus: "failed",
+        // Connected-app cap checks may use the reservation primitive without an
+        // inference model. Releasing such an abandoned hold must not fabricate a
+        // metering row whose provider/model columns are necessarily null.
+        recordUsage: Boolean(row.provider_id && row.model_id)
+      });
+      finalized += 1;
+      if (result.chargedUsd === 0) released += 1;
+    } catch (error) {
+      failures.push({ requestId: row.request_id, error });
+    }
+  }
+  // RAISED ONLY ON ZERO PROGRESS, and only after the batch has finished.
+  //
+  // A single un-finalizable row is a normal condition, not an incident: an
+  // account whose balance moved underneath an old hold, a reservation whose
+  // model left the catalog. Those rows must not stop the sweep, and they must
+  // not turn a working sweeper into a failing one either.
+  //
+  // What DOES need to be loud is the state this fix exists to end: a batch that
+  // had work and finalized none of it. That is the head-of-line block, and
+  // because the query is ORDER BY created_at the same row leads every
+  // subsequent pass, so nothing is ever reclaimed again. This module has no
+  // logger by design (see the note on recordSettlementReceipt), so the throw is
+  // how it reaches the caller's existing stale_reservation_recovery_failed log.
+  if (failures.length > 0 && finalized === 0) {
+    const first = failures[0]!;
+    throw new Error(
+      `Stale reservation sweep made no progress: ${failures.length} of ${stale.rows.length} rows `
+        + `could not be finalized (${failures.slice(0, 5).map((f) => f.requestId).join(", ")}). `
+        + `First cause: ${first.error instanceof Error ? first.error.message : String(first.error)}`,
+      { cause: first.error }
+    );
   }
   return released;
 }

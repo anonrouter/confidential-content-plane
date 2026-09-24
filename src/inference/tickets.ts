@@ -141,6 +141,46 @@ export interface TicketBinding {
    * field exists parse false, which is the same answer as "not on the route".
    */
   trialContractMissed?: boolean;
+  /**
+   * Whether this request is funded by today's SHARED POOL allowance rather than
+   * the v1 signup entitlement or wallet balance.
+   *
+   * A separate flag rather than a widened `trial`, because the two fund from
+   * different counters and authorize re-asserts a different thing for each: the
+   * signup trial is pinned to one configured model+provider, while the pool is
+   * pinned to whichever curated routes are admissible at that moment. Merging
+   * them into one boolean would make the authorize guard unable to tell which
+   * pin to apply. Tickets issued before this field exists parse false.
+   */
+  trialPool?: boolean;
+  /**
+   * The EXACT curated facts the pool allowance was bound to at issue time:
+   * canonical model, provider, and the required privacy modality.
+   *
+   * A boolean alone is not enough. `bindingFor` decides pool funding against
+   * the allowlist as it stood at ISSUE; `authorize` rebuilds the route from the
+   * live catalog and live health, and the operator can edit the allowlist in
+   * between. Asking at authorize "is some current row for this canonical model
+   * and provider admissible?" would silently accept a row whose
+   * required_privacy the operator changed from e2ee to private in that window,
+   * which is a different privacy promise than the one the caller was shown.
+   * Comparing against these issued facts refuses instead.
+   *
+   * Tickets issued before these fields exist parse empty, which fails the
+   * comparison and therefore fails closed.
+   */
+  /**
+   * On a curated pool route but NOT pool-funded, so this request is headed for
+   * the wallet while the surface that offered it said Free (R-30).
+   *
+   * Control-plane only, exactly like `trialContractMissed`: it selects the
+   * wording of a refusal the request was already going to get, and the relay
+   * makes no funding decision.
+   */
+  poolContractMissed?: boolean;
+  trialPoolModel?: string;
+  trialPoolProvider?: string;
+  trialPoolPrivacy?: string;
 }
 
 /** The subset of a ticket the relay is permitted to see. */
@@ -255,7 +295,15 @@ function bindingFromHash(hash: Record<string, string>): TicketBinding {
     reasoningKey: hash.reasoningKey || "default",
     planJson: hash.planJson ?? "{}",
     routingPreferencesJson: hash.routingPreferencesJson ?? "{}",
-    trial: hash.trial === "true"
+    trial: hash.trial === "true",
+    trialPool: hash.trialPool === "true",
+    poolContractMissed: hash.poolContractMissed === "true",
+    trialPoolModel: hash.trialPoolModel ?? "",
+    trialPoolProvider: hash.trialPoolProvider ?? "",
+    trialPoolPrivacy: hash.trialPoolPrivacy ?? "",
+    // Absent or malformed reads as false, which is the safe direction: the
+    // caller gets the ordinary out-of-funds message rather than a wrong one.
+    trialContractMissed: hash.trialContractMissed === "true"
   };
 }
 
@@ -296,6 +344,17 @@ export async function issueTicket(redis: Redis, binding: TicketBinding): Promise
     "planJson", binding.planJson,
     "routingPreferencesJson", binding.routingPreferencesJson,
     "trial", String(binding.trial ?? false),
+    "trialPool", String(binding.trialPool ?? false),
+    "poolContractMissed", String(binding.poolContractMissed ?? false),
+    "trialPoolModel", binding.trialPoolModel ?? "",
+    "trialPoolProvider", binding.trialPoolProvider ?? "",
+    "trialPoolPrivacy", binding.trialPoolPrivacy ?? "",
+    // Stored beside the funding flags because authorize reads it off the
+    // REDEEMED binding. While it was omitted here, `binding.trialContractMissed`
+    // was always undefined on the mint -> Redis -> redeem path, so the
+    // `trial_unavailable` branch could only ever fire on the dev-only inline
+    // path that skips the ticket entirely.
+    "trialContractMissed", String(binding.trialContractMissed ?? false),
     "status", "issued" satisfies TicketStatus
   ));
   if (issued !== 1) {

@@ -106,28 +106,67 @@ export function enforcePlanRequest(plan: UsagePlan, modelId: string, estimatedCo
   }
 }
 
-export async function reserveDailyBudget(db: DbPool, accountId: string, dailyBudgetUsd: number | null, estimatedCostUsd: number) {
-  if (dailyBudgetUsd === null || estimatedCostUsd <= 0) return 0;
+/**
+ * The outcome of taking a daily-budget hold: how much, and against WHICH DAY.
+ *
+ * The day is returned, not implied. Settlement has to release the hold against
+ * the row it was written to, and every other way of working out which row that
+ * was is a second guess at a fact this function already knew. See F-9 in
+ * docs/TRIAL_POOL_V2_SECURITY_REVIEW.md and migration 111.
+ */
+export interface DailyBudgetHold {
+  /** Dollars held. Zero when the plan has no daily budget or the request is free. */
+  reservedUsd: number;
+  /**
+   * The `billing.account_daily_budget_usage.usage_date` this hold was written
+   * to, as a `YYYY-MM-DD` string. Null exactly when `reservedUsd` is 0, because
+   * no row was touched.
+   */
+  usageDate: string | null;
+}
+
+export async function reserveDailyBudget(
+  db: DbPool,
+  accountId: string,
+  dailyBudgetUsd: number | null,
+  estimatedCostUsd: number
+): Promise<DailyBudgetHold> {
+  if (dailyBudgetUsd === null || estimatedCostUsd <= 0) return { reservedUsd: 0, usageDate: null };
   const amount = Number(estimatedCostUsd.toFixed(6));
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    // ONE CLOCK READ, TAKEN ONCE AND REUSED.
+    //
+    // `now()` is fixed for a transaction, so the four statements below already
+    // agreed with each other. Reading it into a variable makes that an explicit
+    // fact rather than a property of PostgreSQL the next editor has to know,
+    // and it is the value the caller stores on the reservation row so that
+    // settlement releases against this exact day instead of re-deriving it.
+    //
+    // As text, not as a `date`: node-postgres parses a `date` into a JS Date at
+    // LOCAL midnight, and handing that back as a parameter re-serializes it
+    // through the local zone. A `YYYY-MM-DD` string has no zone to lose.
+    const day = await client.query<{ usage_date: string }>(
+      `SELECT to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS usage_date`
+    );
+    const usageDate = day.rows[0]!.usage_date;
     await client.query(
       `
         INSERT INTO billing.account_daily_budget_usage (account_id, usage_date)
-        VALUES ($1, (now() AT TIME ZONE 'UTC')::date)
+        VALUES ($1, $2::date)
         ON CONFLICT (account_id, usage_date) DO NOTHING
       `,
-      [accountId]
+      [accountId, usageDate]
     );
     const result = await client.query<{ spent_usd: string; reserved_usd: string }>(
       `
         SELECT spent_usd, reserved_usd
         FROM billing.account_daily_budget_usage
-        WHERE account_id = $1 AND usage_date = (now() AT TIME ZONE 'UTC')::date
+        WHERE account_id = $1 AND usage_date = $2::date
         FOR UPDATE
       `,
-      [accountId]
+      [accountId, usageDate]
     );
     const used = Number(result.rows[0]?.spent_usd ?? 0) + Number(result.rows[0]?.reserved_usd ?? 0);
     if (used + amount > dailyBudgetUsd + Number.EPSILON) {
@@ -137,13 +176,13 @@ export async function reserveDailyBudget(db: DbPool, accountId: string, dailyBud
     await client.query(
       `
         UPDATE billing.account_daily_budget_usage
-        SET reserved_usd = reserved_usd + $2, updated_at = now()
-        WHERE account_id = $1 AND usage_date = (now() AT TIME ZONE 'UTC')::date
+        SET reserved_usd = reserved_usd + $3, updated_at = now()
+        WHERE account_id = $1 AND usage_date = $2::date
       `,
-      [accountId, amount]
+      [accountId, usageDate, amount]
     );
     await client.query("COMMIT");
-    return amount;
+    return { reservedUsd: amount, usageDate };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
@@ -152,7 +191,26 @@ export async function reserveDailyBudget(db: DbPool, accountId: string, dailyBud
   }
 }
 
-export async function reconcileDailyBudget(db: DbPool, accountId: string, reservedUsd: number, finalCostUsd: number) {
+/**
+ * Return a daily-budget hold that no reservation row will ever settle.
+ *
+ * `usageDate` is the day `reserveDailyBudget` reported, and it is required for
+ * the same reason settlement stores it (F-9): this runs on the compensating
+ * path after a failed reservation, which is exactly when a request has been
+ * alive long enough to have crossed UTC midnight. Keying on the current date
+ * here would leave the hold outstanding on the previous day forever.
+ *
+ * Null is accepted so a caller with no recorded day still returns SOMETHING
+ * rather than nothing, falling back to today -- the behaviour before the day
+ * was tracked, and never worse than it.
+ */
+export async function reconcileDailyBudget(
+  db: DbPool,
+  accountId: string,
+  reservedUsd: number,
+  finalCostUsd: number,
+  usageDate?: string | null
+) {
   if (reservedUsd <= 0 && finalCostUsd <= 0) return;
   await db.query(
     `
@@ -160,9 +218,10 @@ export async function reconcileDailyBudget(db: DbPool, accountId: string, reserv
       SET reserved_usd = GREATEST(0, reserved_usd - $2),
           spent_usd = spent_usd + $3,
           updated_at = now()
-      WHERE account_id = $1 AND usage_date = (now() AT TIME ZONE 'UTC')::date
+      WHERE account_id = $1
+        AND usage_date = COALESCE($4::date, (now() AT TIME ZONE 'UTC')::date)
     `,
-    [accountId, Math.max(0, reservedUsd), Math.max(0, finalCostUsd)]
+    [accountId, Math.max(0, reservedUsd), Math.max(0, finalCostUsd), usageDate ?? null]
   );
 }
 

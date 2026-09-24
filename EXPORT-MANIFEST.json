@@ -4,8 +4,8 @@
     "src/contentPlane.ts"
   ],
   "note": "Candidate export for owner review. NOT published. The source set is the compile-time module closure of the content-plane entry point, so it cannot disagree with what the image actually runs. `files` is every file in the export except this manifest, which cannot contain its own hash; it therefore includes the generated build inputs.",
-  "runtimeClosureFiles": 116,
-  "compileClosureFiles": 124,
+  "runtimeClosureFiles": 117,
+  "compileClosureFiles": 125,
   "controlPlaneLeakage": [],
   "excludedTestSuites": [],
   "monorepoOnlySuites": [
@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 194,
+  "copiedSourceFiles": 195,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 202,
+  "fileCount": 203,
   "files": [
     {
       "path": ".dockerignore",
@@ -431,8 +431,8 @@
     },
     {
       "path": "src/inference/tickets.ts",
-      "sha256": "bf8c06357d8b6958cf712d37e56b06e1ccce7b323dfc2012b87443823f5fedf7",
-      "bytes": 14735
+      "sha256": "c25f3437929aa01a0db5c038b3a1147c151c988e92834720c8e8119dfa232f8a",
+      "bytes": 17908
     },
     {
       "path": "src/inference/workerClient.ts",
@@ -446,13 +446,18 @@
     },
     {
       "path": "src/metering/billing.ts",
-      "sha256": "cd45939b2c4ff4ecefd8aeaa8d596479cae3bb0d263ba86cd3d52324b4cbea95",
-      "bytes": 41285
+      "sha256": "10bd5a0e6388229fd1cc4b56198c5237d1e049b027635e1c6d8d875a8217f3ed",
+      "bytes": 62105
     },
     {
       "path": "src/metering/e2ee.ts",
       "sha256": "724c21893ba92f701e56a4048222a33ad824cf3ad152923471d9760d3c3b2fe6",
       "bytes": 4816
+    },
+    {
+      "path": "src/metering/money.ts",
+      "sha256": "a33425a01aead6db4c2b510a70509af160697ca1aff6f2b6af6ee450d9abdb4b",
+      "bytes": 7647
     },
     {
       "path": "src/metering/tokens.ts",
@@ -796,8 +801,8 @@
     },
     {
       "path": "src/rate-limit/plans.ts",
-      "sha256": "ca373c6cfa6388c3ed8d49cf8a5401d91b8a3219ab3299425f4eb4a6157b3a87",
-      "bytes": 6693
+      "sha256": "90af7e44df4bca557cec30d7ea9f3fa0942b22dc3ffcd1630518accfe20c706e",
+      "bytes": 9141
     },
     {
       "path": "src/relay/ingress.ts",
