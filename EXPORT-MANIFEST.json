@@ -4,8 +4,8 @@
     "src/contentPlane.ts"
   ],
   "note": "Candidate export for owner review. NOT published. The source set is the compile-time module closure of the content-plane entry point, so it cannot disagree with what the image actually runs. `files` is every file in the export except this manifest, which cannot contain its own hash; it therefore includes the generated build inputs.",
-  "runtimeClosureFiles": 117,
-  "compileClosureFiles": 125,
+  "runtimeClosureFiles": 118,
+  "compileClosureFiles": 126,
   "controlPlaneLeakage": [],
   "excludedTestSuites": [],
   "monorepoOnlySuites": [
@@ -26,13 +26,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 195,
+  "copiedSourceFiles": 196,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 203,
+  "fileCount": 204,
   "files": [
     {
       "path": ".dockerignore",
@@ -710,6 +710,11 @@
       "bytes": 4620
     },
     {
+      "path": "src/providers/health/workerMetadata.ts",
+      "sha256": "da00c95528efa5dc0770f55bf74a880728ba731e1284636f414f99f90a32385c",
+      "bytes": 2709
+    },
+    {
       "path": "src/providers/http.ts",
       "sha256": "9934ccc873541d6ed93887fb3fa9eff604f2b2b96a65c60e5d0fc84fa53e9003",
       "bytes": 1405
@@ -811,8 +816,8 @@
     },
     {
       "path": "src/roles.ts",
-      "sha256": "a75feba2de66bb2da3ce9659aa1b7f8099ed9fbab3b1034cd081936c5750f452",
-      "bytes": 18899
+      "sha256": "c597fadccad2fbc0dd459ee9e7105366cfe505c32d9466938966fc9ec7bc19f3",
+      "bytes": 21722
     },
     {
       "path": "src/routes/chat.ts",

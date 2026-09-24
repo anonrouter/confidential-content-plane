@@ -33,6 +33,12 @@ import { buildTinfoilCatalogPayload } from "./providers/catalog/tinfoilSync.js";
 import { buildNearCatalogPayload } from "./providers/catalog/nearSync.js";
 import { buildPhalaAiCatalogPayload } from "./providers/catalog/phalaAiSync.js";
 import type { NormalizedCatalogPayload } from "./providers/catalog/normalized.js";
+import { newId } from "./ids.js";
+import {
+  workerHealthTargetsResponseSchema,
+  type WorkerHealthCheck,
+  type WorkerHealthTarget
+} from "./providers/health/workerMetadata.js";
 import { GatewayAttestationService } from "./gateway/service.js";
 import {
   registerGatewayAttestationIngressGuard,
@@ -305,6 +311,51 @@ export async function buildWorkerServer(config: AppConfig): Promise<FastifyInsta
   // ONLY that (plus rate limits) to control, which has no Venice key. Never content
   // or identity. Resilient fetch, single-flight, jittered interval; CATALOG_SYNC_
   // ENABLED gates which worker polls when the service is scaled.
+  const deliverHealthChecks = async (targets: WorkerHealthTarget[]) => {
+    if (targets.length === 0 || !server.workerClient.probe) return;
+    const checks: WorkerHealthCheck[] = [];
+    let cursor = 0;
+    const probe = async () => {
+      while (cursor < targets.length) {
+        const target = targets[cursor++];
+        const result = await server.workerClient.probe!({
+          requestId: `probe_${newId()}`,
+          providerName: providerLabel,
+          externalModelId: target.externalModelId
+        }, AbortSignal.timeout(25_000));
+        checks.push({
+          externalModelId: target.externalModelId,
+          ok: result.ok,
+          latencyMs: result.latencyMs,
+          ...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
+          ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode })
+        });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, probe));
+
+    const response = await fetch(`${config.internal.controlMetadataUrl}/internal/control/catalog`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${workerMetadataToken}` },
+      body: JSON.stringify({
+        deploymentId: config.internal.confidentialDeploymentId,
+        provider: providerLabel,
+        healthChecks: checks
+      })
+    });
+    if (!response.ok) {
+      server.log.warn({ provider: providerLabel, status_code: response.status }, "model_health_metadata_push_failed");
+      return;
+    }
+    const acknowledgement = await response.json().catch(() => ({})) as { accepted?: unknown };
+    if (acknowledgement.accepted !== checks.length) {
+      server.log.warn(
+        { provider: providerLabel, attempted: checks.length, accepted: acknowledgement.accepted },
+        "model_health_metadata_push_incomplete"
+      );
+    }
+  };
+
   const deliverCatalog = async (payload: NormalizedCatalogPayload) => {
     const rateLimits = isVeniceWorker ? await fetchVeniceRateLimits(config) : null;
     const response = await fetch(`${config.internal.controlMetadataUrl}/internal/control/catalog`, {
@@ -324,6 +375,21 @@ export async function buildWorkerServer(config: AppConfig): Promise<FastifyInsta
       server.log.warn({ status_code: response.status }, "catalog_metadata_push_failed");
       throw new Error(`catalog_metadata_push_failed_${response.status}`);
     }
+    const raw = await response.json().catch(() => ({}));
+    const parsed = workerHealthTargetsResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      server.log.warn({ provider: providerLabel }, "model_health_targets_invalid");
+      return;
+    }
+    // A health failure is not a catalog failure. Catalog freshness must keep
+    // advancing even when a model refuses a probe; the bounded outcome is sent
+    // back separately and the admission/quarantine policy decides what it means.
+    await deliverHealthChecks(parsed.data.health_probe_targets).catch((error) => {
+      server.log.warn(
+        { provider: providerLabel, error_type: error instanceof Error ? error.name : "health_probe_error" },
+        "model_health_metadata_push_failed"
+      );
+    });
   };
   const synchronizer = createCatalogSynchronizer({
     buildPayload: buildCatalogPayload,
