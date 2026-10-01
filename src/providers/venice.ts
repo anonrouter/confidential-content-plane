@@ -19,6 +19,13 @@ import type { VeniceKeysetStore } from "./veniceKeyStore.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
 import { sha256Hex } from "./attestation/crypto.js";
 import {
+  NearReleaseCollateralSource,
+  defaultNearReleaseSources,
+  isNearServingDocument,
+  withReleaseCollateral,
+  withoutReleaseCollateral
+} from "./attestation/authority/collateral.js";
+import {
   OperationalCircuitBreaker,
   VeniceCircuitBreakerRegistry,
   operationalFailureScope,
@@ -173,12 +180,20 @@ function sanitizedVeniceParameters(body: Record<string, unknown>): Record<string
 export class VeniceProviderAdapter implements ProviderAdapter {
   readonly name = "venice";
   private readonly baseUrl: string;
+  /** NEAR's release-authority fetch layer, for Venice's NEAR-format routes. */
+  private readonly nearReleaseCollateral: NearReleaseCollateralSource;
   private readonly apiKey: string;
   private readonly keysById: Map<string, string>;
   private readonly keyStore?: VeniceKeysetStore;
   private readonly circuitBreakers: VeniceCircuitBreakerRegistry;
 
-  constructor(config: ContentPlaneConfig, circuitBreakers?: VeniceCircuitBreakerRegistry, keyStore?: VeniceKeysetStore) {
+  constructor(
+    config: ContentPlaneConfig,
+    circuitBreakers?: VeniceCircuitBreakerRegistry,
+    keyStore?: VeniceKeysetStore,
+    nearReleaseCollateral?: NearReleaseCollateralSource
+  ) {
+    this.nearReleaseCollateral = nearReleaseCollateral ?? new NearReleaseCollateralSource(defaultNearReleaseSources());
     this.baseUrl = config.providers.veniceBaseUrl;
     this.apiKey = config.providers.veniceInferenceKey;
     // Nullish guard: hand-built partial configs in tests omit the keyset.
@@ -324,7 +339,14 @@ export class VeniceProviderAdapter implements ProviderAdapter {
       const url = `${this.baseUrl}/tee/attestation?model=${encodeURIComponent(externalModelId)}&nonce=${encodeURIComponent(nonce)}`;
       const response = await chatFetch(url, { method: "GET", headers: this.headers("attestation", undefined, providerKeyId) }, signal);
       if (!response.ok) throw await providerHttpError(response);
-      return parseJsonResponse(response);
+      const document = await parseJsonResponse(response);
+      if (!document || typeof document !== "object") return document;
+      // Venice's NEAR-format routes run on NEAR hardware: attach NEAR's
+      // release-authority collateral (no traffic for other formats). The
+      // collateral key is ours, never Venice's: any value Venice sent is
+      // overwritten on that path and removed on every other.
+      if (!isNearServingDocument(document)) return withoutReleaseCollateral(document as object);
+      return withReleaseCollateral(document as object, await this.nearReleaseCollateral.collect(document, signal));
     });
   }
 

@@ -1,17 +1,66 @@
 import type { MeasurementPolicy } from "./types.js";
 import type { TdxMeasurementEntry } from "./tdxQuote.js";
+import { DSTACK_IMAGE_AUTHORITY } from "./authority/dstackImage.js";
+import {
+  NEAR_COMPOSE_MANAGER_REPOSITORY,
+  NEAR_DSTACK_KMS,
+  NEAR_OFFICIAL_COMPOSE_REPOSITORY,
+  NEAR_RELEASE_AUTHORITY,
+  type NearReleaseAuthorityPolicy
+} from "./authority/near.js";
+import {
+  CHUTES_IMAGE_REPOSITORY,
+  CHUTES_MEASUREMENTS_SOURCE,
+  CHUTES_RELEASE_AUTHORITY,
+  type ChutesReleaseAuthorityPolicy
+} from "./authority/chutes.js";
 
-interface NearPinnedMeasurement extends TdxMeasurementEntry {
-  composeSha256: string;
-  composeRepository: string;
-  composeRepositoryCommit: string;
-  composeRepositoryPath: string;
-}
+/**
+ * RELEASE AUTHORITIES (owner policy, 2026-10-01): a provider TD is accepted
+ * because it runs what the provider PUBLISHES in its official public source,
+ * never because it matches one build AnonRouter copied into this file. The
+ * authority and the official source are fixed here; the provider's new
+ * releases pass without an AnonRouter release. Static pins remain possible
+ * only as an ADDITIONAL constraint (`pinned`), never as the gate.
+ */
+export const NEAR_RELEASE_AUTHORITY_POLICY: NearReleaseAuthorityPolicy = Object.freeze({
+  authority: NEAR_RELEASE_AUTHORITY,
+  composeRepository: NEAR_OFFICIAL_COMPOSE_REPOSITORY,
+  // A withdrawn tag or a revoked compose hash must stop passing within this.
+  maxPublicationAgeMs: 2 * 60 * 60_000,
+  // dstack 0.6.0-rc5 and other prereleases stay refused: owner decision.
+  image: Object.freeze({ authority: DSTACK_IMAGE_AUTHORITY, allowPrerelease: false }),
+  kms: NEAR_DSTACK_KMS,
+  composeManagerRepository: NEAR_COMPOSE_MANAGER_REPOSITORY
+}) as NearReleaseAuthorityPolicy;
+
+export const CHUTES_RELEASE_AUTHORITY_POLICY: ChutesReleaseAuthorityPolicy = Object.freeze({
+  authority: CHUTES_RELEASE_AUTHORITY,
+  measurementsSource: CHUTES_MEASUREMENTS_SOURCE,
+  imageRepository: CHUTES_IMAGE_REPOSITORY,
+  maxPublicationAgeMs: 2 * 60 * 60_000
+});
+
+/**
+ * The policy label every Venice attestation reports (`policy_source`). Venice
+ * routes are presented as Venice: the label says what Venice evidence is
+ * checked against (Venice's TEE attestation, plus the upstream release
+ * authority when the serving TD is one an upstream publishes) without naming
+ * the upstream. What is checked is `accepted`, not this string.
+ */
+export const VENICE_POLICY_SOURCE = "venice-tee-attestation+upstream-release-authority";
+
+/** NEAR direct routes: the enclave host each upstream model is served from.
+ *  Exactly the direct routes in APPROVED_NEAR_ROUTES (catalog/nearNormalize.ts);
+ *  gpt-oss-120b and glm-5.2 were withdrawn by NEAR and removed 2026-10-01. */
+const NEAR_DIRECT_ENDPOINTS: Readonly<Record<string, string>> = Object.freeze({
+  "z-ai/glm-5.3-flash": "glm-5-3-flash.completions.near.ai"
+});
 
 /** Operator-reviewed, immutable pins. Updating one of these arrays is a security
  * policy change: capture fresh evidence, cross-check the provider's provenance,
  * review every digest/register, bump the version, and deploy deliberately. */
-const CHUTES_1_3_1: TdxMeasurementEntry[] = [
+export const CHUTES_1_3_1: TdxMeasurementEntry[] = [
   {
     name: "8xh200 [v1.3.0]",
     mrTd: "ddc6efcdd2309e10837f8a7f64b71272b7ef003b129460410fe715bdfffec38c7c0c1686dddb2a23d4fd623d145e8455",
@@ -206,52 +255,45 @@ const CHUTES_1_3_1: TdxMeasurementEntry[] = [
   }
 ];
 
-const NEAR_GPT_OSS_2026_08_13: NearPinnedMeasurement[] = [{
-  name: "gpt-oss-120b/direct/2026-08-13",
-  mrTd: "b24d3b24e9e3c16012376b52362ca09856c4adecb709d5fac33addf1c47e193da075b125b6c364115771390a5461e217",
-  rtmr0: "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
-  rtmr1: "c0445b704e4c48139496ae337423ddb1dcee3a673fd5fb60a53d562f127d235f11de471a7b4ee12c9027c829786757dc",
-  rtmr2: "564622c7ddc55a53272cc9f0956d29b3f7e0dd18ede432720b71fd89e5b5d76cb0b99be7b7ff2a6a92b89b6b01643135",
-  rtmr3: "7fa327ff09d29f0837e9d5cace6b5d5d39f6eb80c111f57cb1b5e126be410e8f737b9e0a56f4e03a7f3fe5f211ee6d64",
-  composeSha256: "fb3d47e5ae94ddfd43721002b127ce07d3828b05687e4e5a394a7a827d0ec55c",
-  composeRepository: "https://github.com/nearai/cvm-compose-files",
-  composeRepositoryCommit: "2390cb8cbb5b1a7dd903c702c9e5b448ebf03e88",
-  composeRepositoryPath: "prod/small-models.yaml"
-}];
-
-const NEAR_GLM_2026_08_13: NearPinnedMeasurement[] = [{
-  name: "glm-5.2/direct/2026-08-13",
-  mrTd: "b24d3b24e9e3c16012376b52362ca09856c4adecb709d5fac33addf1c47e193da075b125b6c364115771390a5461e217",
-  rtmr0: "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
-  rtmr1: "c0445b704e4c48139496ae337423ddb1dcee3a673fd5fb60a53d562f127d235f11de471a7b4ee12c9027c829786757dc",
-  rtmr2: "564622c7ddc55a53272cc9f0956d29b3f7e0dd18ede432720b71fd89e5b5d76cb0b99be7b7ff2a6a92b89b6b01643135",
-  rtmr3: "3738dac7d405c7dab13aa50ae54a3c9b4d8ea7964038a24d80ed46ef9d3cb1bedcbdbe35ad55bc3247b369d8c8d790b4",
-  composeSha256: "db6943f37a4f54bd12144ecbf9f8c780ca14c0c44600a5a9ca09a041d92ba5ca",
-  composeRepository: "https://github.com/nearai/cvm-compose-files",
-  composeRepositoryCommit: "2390cb8cbb5b1a7dd903c702c9e5b448ebf03e88",
-  composeRepositoryPath: "prod/small-models.yaml"
-}];
+// The NEAR static pins of 2026-08-13 (dstack-nvidia-0.5.5 registers plus one
+// compose hash per model) were removed when NEAR moved to the release
+// authority: NEAR redeploys published composes routinely, and one pinned
+// snapshot failed every NEAR route closed on the first redeploy. The registers
+// they pinned are what dstack's published dstack-nvidia-0.5.5 produces
+// (authority/dstackImages.generated.ts), so the authority covers them.
 
 export function pinnedMeasurementPolicyFor(provider: string, upstreamModel: string): MeasurementPolicy | undefined {
   if (provider === "chutes") {
     return {
-      source: "https://api.chutes.ai/servers/tee/measurements",
-      version: "chutes-published-full-2026-08-15",
-      accepted: CHUTES_1_3_1
+      source: "chutes-published-measurements+github.com/chutesai/sek8s-tags",
+      version: "provider-authority/v1",
+      // Chutes' published list (api.chutes.ai/servers/tee/measurements),
+      // version-anchored to a sek8s release tag. CHUTES_1_3_1 below stays
+      // available as an optional extra constraint and is not attached.
+      accepted: { ...CHUTES_RELEASE_AUTHORITY_POLICY }
     };
   }
-  if (provider === "near-ai" && upstreamModel === "openai/gpt-oss-120b") {
+  if (provider === "near-ai") {
     return {
-      source: "nearai/cvm-compose-files+direct-attestation",
-      version: "2390cb8cbb5b1a7dd903c702c9e5b448ebf03e88/2026-08-13",
-      accepted: NEAR_GPT_OSS_2026_08_13
+      source: "nearai/cvm-compose-files+nearai/compose-manager+near-dstack-kms(base)+dstack-published-images",
+      version: "provider-authority/v1",
+      accepted: { ...NEAR_RELEASE_AUTHORITY_POLICY }
     };
   }
-  if (provider === "near-ai" && upstreamModel === "z-ai/glm-5.2") {
+  if (provider === "venice") {
+    // The ACCEPTED policy applies only to Venice routes whose evidence is the
+    // serving-TD (compose-manager) format, which runs on hardware operated by
+    // an upstream that publishes its releases; Venice's other formats ignore
+    // it. Verification semantics are exactly that upstream's authority.
+    //
+    // The SOURCE is a label, and it is customer-visible: `policy_source` in the
+    // attestation view, which the chat attestation dialog prints, and it is
+    // echoed for EVERY Venice route, not only the serving-TD ones. So it names
+    // Venice and the kind of check, never the upstream operator.
     return {
-      source: "nearai/cvm-compose-files+direct-attestation",
-      version: "2390cb8cbb5b1a7dd903c702c9e5b448ebf03e88/2026-08-13",
-      accepted: NEAR_GLM_2026_08_13
+      source: VENICE_POLICY_SOURCE,
+      version: "provider-authority/v1",
+      accepted: { ...NEAR_RELEASE_AUTHORITY_POLICY }
     };
   }
   if (provider === "tinfoil") {
@@ -278,11 +320,8 @@ export function pinnedEndpointIdentityFor(provider: string, upstreamModel: strin
   if (provider === "tinfoil") {
     return "inference.tinfoil.sh";
   }
-  if (provider === "near-ai" && upstreamModel === "openai/gpt-oss-120b") {
-    return "gpt-oss-120b.completions.near.ai";
-  }
-  if (provider === "near-ai" && upstreamModel === "z-ai/glm-5.2") {
-    return "glm-5-2.completions.near.ai";
+  if (provider === "near-ai" && Object.hasOwn(NEAR_DIRECT_ENDPOINTS, upstreamModel)) {
+    return NEAR_DIRECT_ENDPOINTS[upstreamModel];
   }
   return undefined;
 }

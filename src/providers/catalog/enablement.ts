@@ -14,6 +14,7 @@
 
 import type { NormalizedModel, PrivacyClass } from "./normalized.js";
 import { STALE_AFTER_MS } from "./freshness.js";
+import { isLegacyMemberRouteId } from "../publicIdentity.js";
 
 export type AvailabilityStatus =
   | "available" // callable for inference
@@ -50,7 +51,8 @@ export type ModelEligibilityReason =
   | "operator_review_required"
   | "operator_rejected"
   | "independent_quarantine"
-  | "not_listed";
+  | "not_listed"
+  | "legacy_route_id";
 
 export interface StoredModelEligibilityInput {
   /**
@@ -66,6 +68,14 @@ export interface StoredModelEligibilityInput {
    * reviewer having to.
    */
   provider: string;
+  /**
+   * The row's stored public route id. REQUIRED for the same reason as
+   * `provider`: a provider presented under a public group (../publicIdentity.ts)
+   * may still have rows stored under its INTERNAL namespace (`near-ai/<slug>`)
+   * from before the move. Those are ineligible (`legacy_route_id`) until a sync
+   * rewrites them, and every caller has to supply the id for that to hold.
+   */
+  publicModelId: string;
   modelType: string;
   providerAvailability: string;
   availabilityStatus: string;
@@ -115,7 +125,8 @@ const eligibilityDetails: Record<ModelEligibilityReason, string> = {
   operator_review_required: "Operator review is required",
   operator_rejected: "Model was rejected by an operator",
   independent_quarantine: "Model has an independent safety quarantine",
-  not_listed: "Model is not in the callable catalog"
+  not_listed: "Model is not in the callable catalog",
+  legacy_route_id: "Route id predates the provider's public id format; a catalog sync rewrites it"
 };
 
 function ineligible(reason: Exclude<ModelEligibilityReason, "eligible">): StoredModelEligibilityDecision {
@@ -134,6 +145,9 @@ export function evaluateStoredModelEligibility(
 ): StoredModelEligibilityDecision {
   const now = options.now ?? new Date();
 
+  // Structural, so first: no operator action can make a row with a pre-move id
+  // eligible. Its public id resolves to nothing and its internal id is refused.
+  if (isLegacyMemberRouteId(model.provider, model.publicModelId)) return ineligible("legacy_route_id");
   if (model.providerAvailability === "offline") return ineligible("provider_offline");
   if (model.providerAvailability === "deprecated") return ineligible("provider_deprecated");
   if (model.providerAvailability === "missing") return ineligible("provider_missing");
@@ -263,13 +277,22 @@ export function isAutoRoutablePrivacy(privacyClass: PrivacyClass): boolean {
  * before a paid canary has run against the route"). Explicit provider selection
  * is unaffected and is the intended first exposure.
  *
+ * `near-ai`: added with NEAR's relayed (Incognito, `anonymous`) routes, for the
+ * same reason. NEAR's confidential routes are `tee`/`e2ee` and were never
+ * auto-routable, so before the relay routes existed this hold could not change
+ * anything for `near-ai`. The relay routes are new, unproven by a paid canary,
+ * and resold under terms NEAR has not yet confirmed allow it
+ * (docs/hardware-verification/status/near-relay.md). Explicit selection is the
+ * intended first exposure.
+ *
  * REMOVING `phala-ai` FROM THIS SET IS THE DECISION TO TURN AUTO ON. It is a
  * separate, named owner decision and is deliberately a one-line change here, not
  * a database edit, so that it lands in a release with a diff and a review. This
- * is not dead code: it is load-bearing until that decision is taken.
+ * is not dead code: it is load-bearing until that decision is taken. The same
+ * applies to `near-ai`.
  */
 export const PROVIDERS_HELD_FROM_AUTO: ReadonlySet<string> = Object.freeze(
-  new Set<string>(["phala-ai"])
+  new Set<string>(["near-ai", "phala-ai"])
 ) as ReadonlySet<string>;
 
 /**
@@ -328,6 +351,12 @@ function hasValidTextLimits(model: NormalizedModel): boolean {
  * price quarantine, three-strike missing, and >60m stale freeze.
  */
 export function baseEnablement(model: NormalizedModel): EnablementDecision {
+  // A snapshot from a normalizer that predates the provider's public id format
+  // (an older worker during a rolling deploy) is written unlisted and
+  // uncallable: an internal-namespace id must never be listed or enabled.
+  if (isLegacyMemberRouteId(model.publicMetadata.provider, model.publicSlug)) {
+    return { listed: false, callable: false, routingEnabled: false, status: "unsupported", reason: "legacy_route_id" };
+  }
   // Offline routes are not listed and never callable.
   if (!model.online) {
     return { listed: false, callable: false, routingEnabled: false, status: "offline", reason: "provider_offline" };

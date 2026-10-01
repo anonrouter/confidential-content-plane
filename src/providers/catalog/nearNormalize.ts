@@ -3,15 +3,16 @@ import type {
   NormalizedReasoningCapabilities,
   RoutingProfile
 } from "./normalized.js";
+import { NEAR_RELAY_OWNERS, normalizeNearRelayCatalog } from "./nearRelay.js";
+import { providerQualifiedRouteId, publicProviderName } from "../publicIdentity.js";
 
-const PRIVACY_SOURCE = {
-  label: "NEAR AI TLS-in-TEE verification",
-  url: "https://docs.near.ai/cloud/verification/tls/"
-};
-const MODEL_SOURCE = {
-  label: "NEAR AI models",
-  url: "https://cloud-api.near.ai/v1/models"
-};
+// PUBLIC COPY IS WHITE-LABELLED: NEAR AI's models are listed under the public
+// provider "Other" (../publicIdentity.ts), so nothing that lands in
+// `publicMetadata` names NEAR or links to NEAR's pages. The routes' NEAR
+// sources are recorded in docs/hardware-verification/status/near-models.md;
+// the attestation EVIDENCE for a direct route (its TLS domain, NEAR's release
+// repositories) is served by the attestation endpoints, not the catalog.
+const INTERNAL_PROVIDER = "near-ai";
 
 // NEAR caps generation length per model; keep a conservative product ceiling
 // when the live entry omits an explicit generation cap.
@@ -20,17 +21,19 @@ const MAX_OUTPUT_CEILING = 32_768;
 // Upstream-proxy owners: models NEAR merely proxies to a third-party frontier
 // API are NOT verifiable and must NEVER be classified TEE. A route whose live
 // owned_by matches one of these is excluded even if it appears in the allowlist.
-const PROXY_OWNERS: ReadonlySet<string> = new Set(["anthropic", "openai", "google", "qwen"]);
+// Shared with the relay normalizer (./nearRelay.ts), which is the only place
+// these owners' routes are emitted, and only as anonymous/private.
+const PROXY_OWNERS: ReadonlySet<string> = NEAR_RELAY_OWNERS;
 
 const DIRECT_TEE_NOTES = [
-  "This is a NEAR AI direct confidential route: TLS terminates inside the model's own TEE, so AnonRouter attests the enclave (Intel TDX quote + NVIDIA GPU attestation, TLS key bound into the attestation report) before routing.",
+  "This is a direct confidential route: TLS terminates inside the model's own TEE, so AnonRouter attests the enclave (Intel TDX quote + NVIDIA GPU attestation, TLS key bound into the attestation report) before routing.",
   "Direct routes support end-to-end encryption (Curve25519/X25519 + XChaCha20-Poly1305) and per-request model-TEE signatures that AnonRouter can verify by recovering the attested signing address.",
-  "AnonRouter gates the confidential tier on membership in NEAR's authoritative /endpoints list, never on owned_by alone; it excludes NEAR's upstream frontier-proxy routes entirely."
+  "AnonRouter gates the confidential tier on membership in the provider's authoritative endpoint list, never on the model's owner field alone, and keeps the provider's relayed routes out of it."
 ];
 const ATTESTED_3P_NOTES = [
-  "This is a NEAR AI attested third-party route: the model runs in a partner TEE (owned_by \"attested 3p\") behind the NEAR gateway. The current adapter has no direct enclave attestation or compatible per-request signature for this route.",
+  "This is an attested third-party route: the model runs in a partner TEE behind the provider's gateway. The current adapter has no direct enclave attestation or compatible per-request signature for this route.",
   "AnonRouter sees plaintext inside the attested boundary; this is a TEE guarantee, not end-to-end encryption of the standard route.",
-  "AnonRouter gates this tier on the curated allowlist and excludes NEAR's upstream frontier-proxy routes, which are not verifiable."
+  "AnonRouter gates this tier on the curated allowlist and keeps the provider's relayed routes, which are not verifiable, out of it."
 ];
 
 export interface RawNearModel {
@@ -51,7 +54,7 @@ export interface RawNearModel {
 type NearRouteClass = "direct-tee" | "attested-3p";
 
 interface ApprovedNearRoute {
-  /** Provider-qualified, globally-unique public slug suffix (near-ai/<slug>). */
+  /** Provider-qualified, globally-unique public slug suffix (other/<slug>; see ../publicIdentity.ts). */
   slug: string;
   /** Stable canonical creator/model id (dedup identity). */
   canonicalId: string;
@@ -73,19 +76,24 @@ interface ApprovedNearRoute {
  * entry whose owned_by matches a proxy vendor is dropped even if listed here.
  */
 export const APPROVED_NEAR_ROUTES: Readonly<Record<string, ApprovedNearRoute>> = {
-  "openai/gpt-oss-120b": {
-    slug: "gpt-oss-120b", canonicalId: "openai/gpt-oss-120b", displayName: "OpenAI GPT OSS 120B",
-    routeClass: "direct-tee", endpointDomain: "gpt-oss-120b.completions.near.ai",
-    canDisableReasoning: false, qualityTier: 4
-  },
-  "z-ai/glm-5.2": {
-    slug: "glm-5.2", canonicalId: "z-ai/glm-5.2", displayName: "GLM 5.2",
-    routeClass: "direct-tee", endpointDomain: "glm-5-2.completions.near.ai",
-    canDisableReasoning: true, qualityTier: 5
-  },
-  "qwen/qwen3-32b": {
-    slug: "qwen3-32b", canonicalId: "qwen/qwen3-32b", displayName: "Qwen3 32B",
-    routeClass: "attested-3p", canDisableReasoning: true, qualityTier: 4
+  // Withdrawn upstream and removed 2026-10-01 (status/authority.md, "NEAR
+  // re-enable checklist"): openai/gpt-oss-120b (decommissioned by NEAR),
+  // z-ai/glm-5.2 (NEAR's gateway aliases it to glm-5.3-flash, so the route
+  // would serve a different model) and qwen/qwen3-32b (attested-3p, gone from
+  // NEAR's catalog). None is in NEAR's /v1/models; their direct hosts are out
+  // of the NEAR egress allowlist and the endpoint pins too. Re-adding one is a
+  // product decision plus an attestation and egress change, never a revert.
+  //
+  // Added 2026-10-01 (hwv/near-models): the one NEAR "nearai" model whose live
+  // TDs pass NEAR's release authority (authority/near.ts) on today's evidence.
+  // Context, output cap, pricing and modalities come from NEAR's catalog at
+  // sync time; displayName is NEAR's `name`; canDisableReasoning and
+  // qualityTier are this canonical model's existing values in our catalog
+  // (phalaAiNormalize.ts, Venice snapshot), not new judgements.
+  "z-ai/glm-5.3-flash": {
+    slug: "glm-5.3-flash", canonicalId: "z-ai/glm-5.3-flash", displayName: "GLM 5.3 Flash",
+    routeClass: "direct-tee", endpointDomain: "glm-5-3-flash.completions.near.ai",
+    canDisableReasoning: true, qualityTier: 4
   }
 };
 
@@ -136,7 +144,8 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
-/** NEAR /v1/models -> the reviewed direct-TEE and attested-3p confidential routes. */
+/** NEAR /v1/models -> the reviewed direct-TEE and attested-3p confidential routes,
+ *  plus the reviewed relayed (anonymous) routes from ./nearRelay.ts. */
 export function normalizeNearCatalog(raw: RawNearModel[]): NormalizedModel[] {
   const normalized: NormalizedModel[] = [];
   for (const candidate of raw) {
@@ -173,7 +182,7 @@ export function normalizeNearCatalog(raw: RawNearModel[]): NormalizedModel[] {
     const cacheReadPerMillionUsd = pricingObj ? perTokenToMillion(pricingObj.input_cache_read) : null;
 
     const online = candidate.is_ready === true;
-    const publicSlug = `near-ai/${approved.slug}`;
+    const publicSlug = providerQualifiedRouteId(INTERNAL_PROVIDER, approved.slug);
     const modalities = supportsVision ? (["text", "image"] as const) : (["text"] as const);
     const routing: RoutingProfile = {
       qualityTier: approved.qualityTier,
@@ -192,16 +201,12 @@ export function normalizeNearCatalog(raw: RawNearModel[]): NormalizedModel[] {
       ...(isDirect ? ["end-to-end-encryption", "per-request-signatures"] : [])
     ];
     const shortDescription = isDirect
-      ? `${approved.displayName} served in a NEAR AI direct TLS-in-TEE enclave.`
-      : `${approved.displayName} served in a NEAR AI attested third-party enclave.`;
+      ? `${approved.displayName} served in a direct TLS-in-TEE enclave.`
+      : `${approved.displayName} served in an attested third-party enclave.`;
     const privacyNotes = isDirect ? DIRECT_TEE_NOTES : ATTESTED_3P_NOTES;
     const privacySummary = isDirect
-      ? "NEAR AI direct TLS-in-TEE enclave (Intel TDX + NVIDIA CC)"
-      : "NEAR AI attested third-party TEE (no direct signature in this adapter)";
-    const endpointReference =
-      isDirect && approved.endpointDomain
-        ? [{ label: "Direct TEE endpoint", url: `https://${approved.endpointDomain}/v1` }]
-        : [];
+      ? "Direct TLS-in-TEE enclave (Intel TDX + NVIDIA CC)"
+      : "Attested third-party TEE (no direct signature in this adapter)";
 
     normalized.push({
       providerModelId,
@@ -223,7 +228,7 @@ export function normalizeNearCatalog(raw: RawNearModel[]): NormalizedModel[] {
         unit: null,
         inputLabel: null,
         outputLabel: null,
-        note: "NEAR AI pricing in USD per 1M tokens."
+        note: "Pricing in USD per 1M tokens."
       },
       online,
       // One DB route cannot represent both plaintext and ciphertext modalities
@@ -258,8 +263,10 @@ export function normalizeNearCatalog(raw: RawNearModel[]): NormalizedModel[] {
       publicMetadata: {
         id: approved.canonicalId,
         displayName: approved.displayName,
-        provider: "near-ai",
-        providerName: "NEAR AI",
+        // Internal provider id (schema + eligibility); presented as `other` by
+        // the public read boundary (publicView.ts).
+        provider: INTERNAL_PROVIDER,
+        providerName: publicProviderName(INTERNAL_PROVIDER, "NEAR AI"),
         providerRouteId: publicSlug,
         routeId: providerModelId,
         shortDescription,
@@ -271,7 +278,7 @@ export function normalizeNearCatalog(raw: RawNearModel[]): NormalizedModel[] {
         outputPriceUsdPerMillion: outputPerMillionUsd,
         cacheReadPriceUsdPerMillion: cacheReadPerMillionUsd,
         cacheWritePriceUsdPerMillion: null,
-        pricingNote: "NEAR AI pricing in USD per 1M tokens.",
+        pricingNote: "Pricing in USD per 1M tokens.",
         privacyLevel: isDirect ? "e2ee" : "tee",
         privacySummary,
         privacyNotes: [...privacyNotes],
@@ -280,10 +287,16 @@ export function normalizeNearCatalog(raw: RawNearModel[]): NormalizedModel[] {
         features: featureList,
         routingModes: ["anonrouter-hosted", "provider-direct"],
         availability: online ? "available" : "needs-verification",
-        ...(!online ? { statusNote: "NEAR AI does not currently report this route ready." } : {}),
-        sourceReferences: [PRIVACY_SOURCE, ...endpointReference, MODEL_SOURCE]
+        ...(!online ? { statusNote: "The provider does not currently report this route ready." } : {}),
+        // No public source links: every published page for these routes is
+        // NEAR's own. Verification is the attestation endpoint, not a link.
+        sourceReferences: []
       }
     });
   }
+  // Relayed (non-TEE) upstream routes are a separate class with their own
+  // reviewed table; an id already emitted above is never emitted twice.
+  const confidentialIds = new Set(normalized.map((model) => model.providerModelId));
+  normalized.push(...normalizeNearRelayCatalog(raw, confidentialIds));
   return normalized.sort((a, b) => a.providerModelId.localeCompare(b.providerModelId));
 }

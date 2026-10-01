@@ -5,9 +5,15 @@
 //   - the attested TLS SPKI is bound in report_data[0:32] == sha256(signing_addr ‖
 //     tls_cert_fingerprint)  (this is what proves TLS terminates in the TEE);
 //   - the attested model_name equals the route's upstream model;
-//   - mr_config_id binds the pinned app_compose document
+//   - mr_config_id binds the app_compose document
 //     (== "01" + sha256(app_compose));
-//   - boot measurements match NEAR's allowlist;
+//   - NEAR's RELEASE AUTHORITY (authority/near.ts): the base image reproduces
+//     from dstack's published image, the measured boot compose pins
+//     compose-manager to github.com/nearai/cvm-compose-files, and every
+//     compose file the manager ran since boot is published there with the
+//     content the TD logged (a second quote binds that log and the nonce).
+//     Static measurement pins are only an optional ADDITIONAL constraint: a
+//     NEAR redeploy of published software keeps passing without our release;
 //   - TD debug is disabled.
 // The raw TDX/NRAS chains are only cryptographically verified when a vetted chain
 // verifier is wired; otherwise the honest level is `provider-attested`.
@@ -27,6 +33,8 @@ import {
   readEnvelope
 } from "./checks.js";
 import { matchMeasurementAllowlist, parseTdxQuote, type TdxChainVerifier, type TdxMeasurementEntry } from "./tdxQuote.js";
+import { nearCollateralFrom, releaseCollateralOf } from "./authority/collateral.js";
+import { isNearReleaseAuthorityPolicy, nearReleaseAuthorityChecks } from "./authority/near.js";
 import type {
   AttestationCheck,
   AttestationExpectations,
@@ -153,16 +161,37 @@ export class NearTeeVerifier implements TeeVerifier {
         checks.push(check("compose_binding", false, true, "no app_compose provided to bind"));
       }
 
-      const allowlist = (expectations.measurementPolicy?.accepted as TdxMeasurementEntry[] | undefined) ?? [];
-      if (allowlist.length > 0) {
+      const accepted = expectations.measurementPolicy?.accepted;
+      const pinsMatch = (allowlist: TdxMeasurementEntry[]): boolean => {
         const matchedName = matchMeasurementAllowlist(parsed, allowlist);
         const matchedEntry = matchedName ? allowlist.find((entry) => entry.name === matchedName) as (TdxMeasurementEntry & { composeSha256?: string }) | undefined : undefined;
-        matchedPolicy = Boolean(matchedEntry)
+        return Boolean(matchedEntry)
           && typeof matchedEntry?.composeSha256 === "string"
           && hexEqual(matchedEntry.composeSha256, composeSha256);
+      };
+      if (isNearReleaseAuthorityPolicy(accepted)) {
+        const authorityChecks = nearReleaseAuthorityChecks({
+          document: payload,
+          quote: parsed,
+          nonce: expectations.nonce,
+          policy: accepted,
+          collateral: nearCollateralFrom(releaseCollateralOf(payload), accepted.composeRepository),
+          now: expectations.now ?? Date.now()
+        });
+        checks.push(...authorityChecks);
+        matchedPolicy = authorityChecks.every((item) => !item.required || item.passed);
+        // Optional extra constraint: never the gate, but when an operator
+        // pins, both must hold.
+        if (accepted.pinned && accepted.pinned.length > 0) {
+          const pinned = pinsMatch(accepted.pinned as TdxMeasurementEntry[]);
+          checks.push(check("measurement_allowlist", pinned, true, pinned ? undefined : "measurements not in the additional pinned set"));
+          matchedPolicy &&= pinned;
+        }
+      } else if (Array.isArray(accepted) && accepted.length > 0) {
+        matchedPolicy = pinsMatch(accepted as TdxMeasurementEntry[]);
         checks.push(check("measurement_allowlist", matchedPolicy, true, matchedPolicy ? undefined : "measurements not in accepted allowlist"));
       } else {
-        checks.push(check("measurement_allowlist", false, true, "no accepted-measurement policy pinned"));
+        checks.push(check("measurement_allowlist", false, true, "no release authority or accepted-measurement policy"));
       }
     }
 
@@ -179,10 +208,21 @@ export class NearTeeVerifier implements TeeVerifier {
     let level: NormalizedAttestationResult["verificationLevel"] = "provider-attested";
     if (this.chainVerifier && parsed && hasQuote) {
       const chain = this.chainVerifier.verifyChain(quoteRaw as string, payload?.nvidia_payload);
-      const acceptableTcb = chain.verified && chain.tcbStatus === "UpToDate";
+      let acceptableTcb = chain.verified && chain.tcbStatus === "UpToDate";
       checks.push(check("dcap_chain", acceptableTcb, true, acceptableTcb
         ? "tcb:UpToDate"
         : "quote/GPU chain did not verify with an UpToDate TCB"));
+      // The compose-manager quote vouches for the runtime log; it must chain
+      // to Intel too, or the log binding proves nothing.
+      const managerQuote = (payload as { compose_manager_attestation?: { quote?: unknown } } | undefined)?.compose_manager_attestation?.quote;
+      if (typeof managerQuote === "string" && managerQuote.length > 0) {
+        const second = this.chainVerifier.verifyChain(managerQuote, undefined);
+        const secondOk = second.verified && second.tcbStatus === "UpToDate";
+        checks.push(check("dcap_chain_compose_manager", secondOk, true, secondOk
+          ? "tcb:UpToDate"
+          : "the compose-manager quote did not verify with an UpToDate TCB"));
+        acceptableTcb &&= secondOk;
+      }
       level = acceptableTcb && matchedPolicy ? "hardware-verified" : "provider-attested";
     }
 

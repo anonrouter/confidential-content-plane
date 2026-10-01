@@ -7,6 +7,7 @@ import {
 } from "../inference/reasoning.js";
 import { TOOL_BOUNDS, toolCallSchema, toolChoiceSchema, toolsSchema } from "./tools.js";
 import { providerRoutingPolicySchema } from "./routing/policy.js";
+import { publicProviderSlug, publicRouteId } from "./publicIdentity.js";
 import { AppError } from "../security/errors.js";
 import type { EmbeddingProviderRequest, EmbeddingProviderResult } from "./embeddings.js";
 
@@ -354,10 +355,15 @@ export const chatCompletionRequestSchema = z
 export type ChatCompletionRequestBody = z.infer<typeof chatCompletionRequestSchema>;
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 
-/** Provider-qualified display/header id without duplicating an existing prefix. */
+/**
+ * Provider-qualified display/header id without duplicating an existing prefix.
+ * Customer-facing, so both parts are PUBLIC (./publicIdentity.ts): a `near-ai`
+ * route is `other/<slug>`, including a row still stored as `near-ai/<slug>`.
+ */
 export function qualifiedPublicModelId(providerName: string, publicModelId: string): string {
-  const prefix = `${providerName}/`;
-  return publicModelId.startsWith(prefix) ? publicModelId : `${prefix}${publicModelId}`;
+  const routeId = publicRouteId(publicModelId);
+  const prefix = `${publicProviderSlug(providerName)}/`;
+  return routeId.startsWith(prefix) ? routeId : `${prefix}${routeId}`;
 }
 
 export interface ModelRecord {

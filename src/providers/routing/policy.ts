@@ -122,6 +122,9 @@ function normalizeSlug(raw: string): string {
   if (!PROVIDER_SLUG.test(slug)) {
     invalid(`Invalid provider slug: ${JSON.stringify(raw)}`);
   }
+  // Slugs are PUBLIC provider ids (../publicIdentity.ts): `other` selects the
+  // routes listed under "Other". An internal id such as `near-ai` is not
+  // rewritten: it is just a slug no route answers to, like any unknown one.
   return slug;
 }
 

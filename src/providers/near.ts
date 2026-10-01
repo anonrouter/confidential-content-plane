@@ -12,7 +12,16 @@ import type {
   ProviderStreamResult
 } from "./types.js";
 import { APPROVED_NEAR_ROUTES } from "./catalog/nearNormalize.js";
+// ProviderError messages below can reach a customer (an in-process worker
+// forwards them), and this provider is presented publicly as "Other"
+// (./publicIdentity.ts), so they never name NEAR. Logs carry the provider id.
+import { shapeNearRelayBody } from "./catalog/nearRelay.js";
 import { sha256Hex } from "./attestation/crypto.js";
+import {
+  NearReleaseCollateralSource,
+  defaultNearReleaseSources,
+  withReleaseCollateral
+} from "./attestation/authority/collateral.js";
 
 const CHAT_TIMEOUT_MS = 10 * 60_000;
 const ATTESTATION_TIMEOUT_MS = 15_000;
@@ -42,8 +51,10 @@ function nearBody(request: ProviderRequest, stream: boolean): Record<string, unk
     stream_options: _streamOptions,
     ...body
   } = request.body;
+  // Relayed (non-TEE) routes get NEAR's documented per-model request shape;
+  // confidential routes pass through unchanged.
   return {
-    ...body,
+    ...shapeNearRelayBody(request.model.externalModelId, body),
     model: request.model.externalModelId,
     stream,
     ...(stream ? { stream_options: { include_usage: true } } : {})
@@ -68,16 +79,21 @@ export class NearProviderAdapter implements ProviderAdapter {
   private readonly endpointsUrl: string;
   private readonly apiKey: string;
   private endpointsCache: { at: number; byModel: Map<string, string> } | null = null;
+  private readonly releaseCollateral: NearReleaseCollateralSource;
 
-  constructor(config: ContentPlaneConfig) {
+  /** `releaseCollateral`: the fetch layer for NEAR's release authority
+   *  (official compose repository, compose-manager releases, NEAR's on-chain
+   *  KMS registry, published dstack images). Public sources, no credential. */
+  constructor(config: ContentPlaneConfig, releaseCollateral?: NearReleaseCollateralSource) {
     this.gatewayBaseUrl = config.providers.nearBaseUrl;
     this.endpointsUrl = config.providers.nearEndpointsUrl;
     this.apiKey = config.providers.nearApiKey;
+    this.releaseCollateral = releaseCollateral ?? new NearReleaseCollateralSource(defaultNearReleaseSources());
   }
 
   private headers(requestId: string, e2eeHeaders?: Record<string, string>) {
     if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "NEAR AI API key is not configured");
+      throw new ProviderError("provider_not_configured", "Provider API key is not configured");
     }
     const allowedE2eeHeaders: Record<string, string> = {};
     if (e2eeHeaders) {
@@ -98,7 +114,7 @@ export class NearProviderAdapter implements ProviderAdapter {
           "X-Encryption-Version"
         ].includes(name))
       ) {
-        throw new ProviderError("e2ee_headers_invalid", "NEAR E2EE headers failed validation", 400);
+        throw new ProviderError("e2ee_headers_invalid", "Direct-enclave E2EE headers failed validation", 400);
       }
       Object.assign(allowedE2eeHeaders, {
         "X-Signing-Algo": signingAlgo,
@@ -149,7 +165,7 @@ export class NearProviderAdapter implements ProviderAdapter {
     if (!domain || !pinned || domain.toLowerCase() !== pinned.toLowerCase()) {
       throw new ProviderError(
         "e2ee_enclave_endpoint_unavailable",
-        "The pinned NEAR direct enclave endpoint is unavailable",
+        "The pinned direct enclave endpoint is unavailable",
         503
       );
     }
@@ -293,7 +309,7 @@ export class NearProviderAdapter implements ProviderAdapter {
       const candidate = (tcb.app_compose as { docker_compose_file?: unknown }).docker_compose_file;
       if (typeof candidate === "string") dockerComposeFile = candidate;
     }
-    return compose
+    const document = compose
       ? {
           ...report,
           app_compose: compose,
@@ -301,6 +317,9 @@ export class NearProviderAdapter implements ProviderAdapter {
           compose_hash: typeof tcb?.compose_hash === "string" ? tcb.compose_hash : undefined
         }
       : report;
+    // Release-authority collateral (what NEAR publishes) travels beside the
+    // evidence for the pure verifier and the browser; never throws.
+    return withReleaseCollateral(document, await this.releaseCollateral.collect(document, signal));
   }
 
   /**

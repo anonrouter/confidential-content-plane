@@ -5,6 +5,9 @@ import { parseJsonResponse, requireStreamBody } from "./http.js";
 import { normalizeEmbeddingResponse } from "./embeddings.js";
 import type { EmbeddingProviderRequest, EmbeddingProviderResult } from "./embeddings.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
+import type { ChutesReleaseCollateral } from "./attestation/authority/chutes.js";
+import { ChutesPublicationFetcher } from "./attestation/authority/chutesFetcher.js";
+import { replaceReleaseCollateral } from "./attestation/authority/collateral.js";
 import type {
   ProviderAdapter,
   ProviderChatResult,
@@ -68,11 +71,15 @@ export class ChutesProviderAdapter implements ProviderAdapter {
   private readonly baseUrl: string;
   private readonly attestationBaseUrl: string;
   private readonly apiKey: string;
+  private readonly releaseCollateral: ChutesPublicationFetcher;
 
-  constructor(config: ContentPlaneConfig) {
+  /** `releaseCollateral`: the fetch layer for Chutes' release authority
+   *  (published measurement list + chutesai/sek8s tags). Public, no credential. */
+  constructor(config: ContentPlaneConfig, releaseCollateral?: ChutesPublicationFetcher) {
     this.baseUrl = config.providers.chutesBaseUrl;
     this.attestationBaseUrl = config.providers.chutesAttestationBaseUrl;
     this.apiKey = config.providers.chutesApiKey;
+    this.releaseCollateral = releaseCollateral ?? new ChutesPublicationFetcher();
   }
 
   private headers(requestId: string) {
@@ -285,6 +292,18 @@ export class ChutesProviderAdapter implements ProviderAdapter {
         }
       }
     }
-    return { ...raw, e2e_pubkeys: e2ePubkeys, e2e_instances: [...e2eInstances.values()] };
+    const document = { ...raw, e2e_pubkeys: e2ePubkeys, e2e_instances: [...e2eInstances.values()] };
+    // Release-authority collateral: a recent snapshot of Chutes' published
+    // measurement list and chutesai/sek8s release tags. Public, no credential.
+    // Whatever Chutes put under the collateral key is REMOVED first, so the
+    // only collateral a verifier ever sees is our fetch layer's; a failure
+    // leaves the key absent and the verifier fails closed.
+    let chutes: ChutesReleaseCollateral | undefined;
+    try {
+      chutes = await this.releaseCollateral.collect(signal);
+    } catch {
+      chutes = undefined;
+    }
+    return replaceReleaseCollateral(document, chutes ? { chutes } : undefined);
   }
 }

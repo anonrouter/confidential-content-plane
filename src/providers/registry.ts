@@ -15,6 +15,8 @@ import type { VeniceKeysetStore } from "./veniceKeyStore.js";
 import { evaluateStoredModelEligibility } from "./catalog/enablement.js";
 import type { ModelRecord, ProviderAdapter } from "./types.js";
 import { isConfidentialRouteWithheld } from "./confidentialRoutePolicy.js";
+import { isMemberInternalRouteId } from "./publicIdentity.js";
+import { compareProviderTieBreak } from "./routing/engine.js";
 
 type RuntimeModelRecord = ModelRecord & {
   providerAvailability: string;
@@ -65,6 +67,7 @@ function runtimeEligible(model: RuntimeModelRecord, includeWithheld: boolean) {
   }
   return evaluateStoredModelEligibility({
     provider: model.providerName,
+    publicModelId: model.publicModelId,
     modelType: model.modelType,
     providerAvailability: model.providerAvailability,
     availabilityStatus: model.availabilityStatus,
@@ -130,6 +133,9 @@ export async function getEnabledModel(
   includeTestFixtures = false,
   providerName?: string
 ): Promise<ModelRecord | null> {
+  // An internal-namespace id (`near-ai/<slug>`) is not a public model id: it
+  // gets what any unknown id gets, whatever rows exist (no alias, by design).
+  if (isMemberInternalRouteId(publicModelId)) return null;
   const result = await db.query<RuntimeModelRecord>(
     `
       SELECT
@@ -207,7 +213,8 @@ export async function getEnabledModel(
     const price = (left.inputPricePerMillion + left.outputPricePerMillion)
       - (right.inputPricePerMillion + right.outputPricePerMillion);
     if (price !== 0) return price;
-    return left.providerName.localeCompare(right.providerName);
+    // The routing engine's explicit precedence, never the id's spelling.
+    return compareProviderTieBreak(left.providerName, right.providerName);
   });
   const model = candidates[0] ?? null;
   // Defense-in-depth: re-run the same provider/catalog/privacy/pricing decision
@@ -231,6 +238,9 @@ export async function listProviderRoutesForModel(
   includeTestFixtures = false,
   options: { includeWithheld?: boolean } = {}
 ): Promise<ModelRecord[]> {
+  // As in getEnabledModel: refused before the lookup, so a stored row that still
+  // carries the id cannot resolve it, or the canonical group it belongs to.
+  if (isMemberInternalRouteId(requestedModelId)) return [];
   const result = await db.query<RuntimeModelRecord>(
     `
       WITH requested AS (

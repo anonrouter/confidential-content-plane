@@ -6,6 +6,14 @@ import { constants, X509Certificate, verify as nodeVerify } from "node:crypto";
 import { assembleResult, check, freshnessCheck, hexEqual, readEnvelope } from "./checks.js";
 import { sha256Hex } from "./crypto.js";
 import { matchMeasurementAllowlist, parseTdxQuote, type TdxChainVerifier, type TdxMeasurementEntry } from "./tdxQuote.js";
+import {
+  CHUTES_IMAGE_REPOSITORY,
+  CHUTES_MEASUREMENTS_SOURCE,
+  CHUTES_RELEASE_AUTHORITY,
+  chutesReleaseAuthorityCheck,
+  type ChutesReleaseAuthorityPolicy
+} from "./authority/chutes.js";
+import { releaseCollateralOf } from "./authority/collateral.js";
 import type {
   AttestationCheck,
   AttestationExpectations,
@@ -69,9 +77,18 @@ export class ChutesTeeVerifier implements TeeVerifier {
     checks.push(check("all_instances_returned", failedIds.length === 0, true,
       failedIds.length === 0 ? undefined : "evidence retrieval failed for one or more instances"));
 
-    const allowlist = (expectations.measurementPolicy?.accepted as TdxMeasurementEntry[] | undefined) ?? [];
-    checks.push(check("measurement_policy_pinned", allowlist.length > 0, true,
-      allowlist.length > 0 ? undefined : "no accepted-measurement policy pinned"));
+    // RELEASE AUTHORITY (preferred): Chutes' own published list, version
+    // anchored to a sek8s release tag (authority/chutes.ts). A plain array is
+    // the legacy pinned allowlist; with the authority, `pinned` may add an
+    // extra constraint but never replaces it.
+    const accepted = expectations.measurementPolicy?.accepted;
+    const authority = isChutesAuthority(accepted) ? accepted : null;
+    const allowlist: TdxMeasurementEntry[] = authority
+      ? ((authority as { pinned?: TdxMeasurementEntry[] }).pinned ?? [])
+      : Array.isArray(accepted) ? accepted as TdxMeasurementEntry[] : [];
+    const collateral = releaseCollateralOf(payload)?.chutes;
+    checks.push(check("measurement_policy_pinned", authority !== null || allowlist.length > 0, true,
+      authority !== null || allowlist.length > 0 ? undefined : "no release authority or accepted-measurement policy"));
 
     let firstMeasurements: Record<string, string> = {};
     let everyChainVerified = Boolean(this.chainVerifier) && instances.length > 0;
@@ -101,8 +118,19 @@ export class ChutesTeeVerifier implements TeeVerifier {
         parsed.teeType === TDX_TEE_TYPE ? undefined : "not an Intel TDX quote"));
       checks.push(check(`${label}_debug_disabled`, !parsed.debugEnabled, true,
         parsed.debugEnabled ? "TD debug mode enabled" : undefined));
-      checks.push(check(`${label}_measurement_allowlist`, matchMeasurementAllowlist(parsed, allowlist) !== null, true,
-        "measurements not in accepted allowlist"));
+      if (authority) {
+        checks.push(chutesReleaseAuthorityCheck({
+          label,
+          quote: parsed,
+          policy: authority,
+          collateral,
+          now: expectations.now ?? Date.now()
+        }));
+      }
+      if (!authority || allowlist.length > 0) {
+        checks.push(check(`${label}_measurement_allowlist`, matchMeasurementAllowlist(parsed, allowlist) !== null, true,
+          "measurements not in accepted allowlist"));
+      }
 
       const e2ePubkey = instanceId && typeof pubkeys[instanceId] === "string" ? pubkeys[instanceId] as string : null;
       const expectedNonceKey = e2ePubkey ? sha256Hex(expectations.nonce + e2ePubkey) : null;
@@ -225,4 +253,16 @@ function parseAttestedBody(value: Buffer | null): ChutesAttestedBody | null {
 
 function jsonEqual(a: unknown, b: unknown): boolean {
   try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+}
+
+/** Exactly the Chutes release authority this code implements (source and repository fixed). */
+function isChutesAuthority(value: unknown): value is ChutesReleaseAuthorityPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const policy = value as Partial<ChutesReleaseAuthorityPolicy>;
+  return policy.authority === CHUTES_RELEASE_AUTHORITY
+    && policy.measurementsSource === CHUTES_MEASUREMENTS_SOURCE
+    && policy.imageRepository === CHUTES_IMAGE_REPOSITORY
+    && typeof policy.maxPublicationAgeMs === "number"
+    && policy.maxPublicationAgeMs > 0
+    && policy.maxPublicationAgeMs <= 24 * 60 * 60_000;
 }

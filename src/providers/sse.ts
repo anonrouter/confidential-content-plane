@@ -20,14 +20,22 @@ export function openAiUsageToInternal(usage: unknown): TokenUsage | undefined {
       cached_tokens?: unknown;
       cache_creation_input_tokens?: unknown;
       cache_write_tokens?: unknown;
+      cache_creation_tokens?: unknown;
     };
   };
   const inputTokens = Number(candidate.prompt_tokens ?? 0);
   const outputTokens = Number(candidate.completion_tokens ?? 0);
   const cachedTokens = Number(candidate.prompt_tokens_details?.cached_tokens ?? 0);
+  // Three spellings of one quantity, each a subset of prompt_tokens disjoint
+  // from cached_tokens: `cache_creation_input_tokens` (Anthropic-compatible
+  // gateways), `cache_write_tokens` (OpenAI models that bill cache writes) and
+  // `cache_creation_tokens` (NEAR AI's OpenAI translation of an Anthropic
+  // response, nearai/cloud-api crates/anthropic_compat/src/response.rs). A
+  // spelling missed here bills a cache write at the plain input price.
   const cacheWriteTokens = Number(
     candidate.prompt_tokens_details?.cache_creation_input_tokens
       ?? candidate.prompt_tokens_details?.cache_write_tokens
+      ?? candidate.prompt_tokens_details?.cache_creation_tokens
       ?? 0
   );
 

@@ -309,6 +309,17 @@ const envSchema = z.object({
   AUTH_PUBLIC_URL: z.string().url().default("http://127.0.0.1:3001/api/anonrouter/api/auth"),
   AUTH_COOKIE_PREFIX: z.string().regex(/^[a-zA-Z0-9_-]+$/).default("anonrouter_local"),
   AUTH_REQUIRE_EMAIL_VERIFICATION: z.enum(["true", "false"]).default("true").transform((value) => value === "true"),
+  // Whether an unverified email account is refused a session.
+  //
+  // Deliberately separate from AUTH_REQUIRE_EMAIL_VERIFICATION, which stays
+  // true in production and keeps doing everything else it does: sending the
+  // verification email on sign up, and withholding signup credits and the chat
+  // trial until the address is confirmed. This one governs sign-in alone.
+  //
+  // Default false: signing up with an email lets you straight into the
+  // dashboard, which shows an unverified banner, while every benefit worth
+  // farming stays behind the verified flag.
+  AUTH_EMAIL_VERIFICATION_BLOCKS_SIGN_IN: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   // Social login is opt-in. Credentials alone never enable a provider: this
   // avoids an accidentally mounted secret silently changing the public auth
   // surface, and lets production run securely with verified email only.
@@ -317,6 +328,11 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID_FILE: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CLIENT_SECRET_FILE: z.string().optional(),
+  GITHUB_AUTH_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_ID_FILE: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CLIENT_SECRET_FILE: z.string().optional(),
   SMTP_HOST: z.string().default("localhost"),
   SMTP_PORT: z.coerce.number().int().positive().max(65_535).default(1025),
   SMTP_SECURE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
@@ -404,6 +420,10 @@ const envSchema = z.object({
   ALERT_RECEIVER_TOKEN: z.string().optional(),
   ALERT_RECEIVER_TOKEN_FILE: z.string().optional(),
   ALERT_RECEIVER_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(8_000),
+  // Operator mailbox for alert transitions. Delivered through the durable
+  // transactional email outbox, so it rides the guest's existing SMTP egress
+  // instead of needing a new allowlisted receiver. Empty means off.
+  ALERT_EMAIL_TO: z.string().optional(),
   ADMIN_ACCESS_TOKEN: z.string().min(12).optional(),
   ADMIN_ACCESS_TOKEN_FILE: z.string().optional(),
   ADMIN_ENVIRONMENT: z.enum(["local", "production"]).optional(),
@@ -724,6 +744,47 @@ export function sensitiveValue(params: { key: string; direct?: string; file?: st
     return value;
   }
   return params.direct ?? params.fallback ?? "";
+}
+
+// Shared fail-closed contract for optional Better Auth social providers.
+// Credentials alone never enable a provider: any configured credential while
+// the flag is false is rejected, and an enabled provider needs the complete
+// client ID and secret pair (each direct or file-backed, never both).
+function socialProviderCredentials(params: {
+  label: string;
+  envPrefix: string;
+  enabled: boolean;
+  clientId?: string;
+  clientIdFile?: string;
+  clientSecret?: string;
+  clientSecretFile?: string;
+}): { clientId: string; clientSecret: string } | null {
+  const credentialsConfigured = [
+    params.clientId,
+    params.clientIdFile,
+    params.clientSecret,
+    params.clientSecretFile
+  ].some((value) => value !== undefined && value.trim().length > 0);
+  if (!params.enabled) {
+    if (credentialsConfigured) {
+      throw new Error(`${params.label} OAuth credentials must not be configured when ${params.envPrefix}_AUTH_ENABLED is false`);
+    }
+    return null;
+  }
+  const clientId = sensitiveValue({
+    key: `${params.envPrefix}_CLIENT_ID`,
+    direct: params.clientId,
+    file: params.clientIdFile
+  });
+  const clientSecret = sensitiveValue({
+    key: `${params.envPrefix}_CLIENT_SECRET`,
+    direct: params.clientSecret,
+    file: params.clientSecretFile
+  });
+  if (!clientId || !clientSecret) {
+    throw new Error(`${params.envPrefix}_AUTH_ENABLED requires ${params.envPrefix}_CLIENT_ID and ${params.envPrefix}_CLIENT_SECRET`);
+  }
+  return { clientId, clientSecret };
 }
 
 function validateProductionSecrets(entries: Array<{ key: string; value: string; explicitlyConfigured: boolean }>) {
@@ -1357,32 +1418,24 @@ export function loadConfig() {
       file: env.CONNECT_JWKS_FILE
     }));
   }
-  const googleCredentialsConfigured = [
-    env.GOOGLE_CLIENT_ID,
-    env.GOOGLE_CLIENT_ID_FILE,
-    env.GOOGLE_CLIENT_SECRET,
-    env.GOOGLE_CLIENT_SECRET_FILE
-  ].some((value) => value !== undefined && value.trim().length > 0);
-  if (!env.GOOGLE_AUTH_ENABLED && googleCredentialsConfigured) {
-    throw new Error("Google OAuth credentials must not be configured when GOOGLE_AUTH_ENABLED is false");
-  }
-  let googleClientId = "";
-  let googleClientSecret = "";
-  if (env.GOOGLE_AUTH_ENABLED) {
-    googleClientId = sensitiveValue({
-      key: "GOOGLE_CLIENT_ID",
-      direct: env.GOOGLE_CLIENT_ID,
-      file: env.GOOGLE_CLIENT_ID_FILE
-    });
-    googleClientSecret = sensitiveValue({
-      key: "GOOGLE_CLIENT_SECRET",
-      direct: env.GOOGLE_CLIENT_SECRET,
-      file: env.GOOGLE_CLIENT_SECRET_FILE
-    });
-    if (!googleClientId || !googleClientSecret) {
-      throw new Error("GOOGLE_AUTH_ENABLED requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET");
-    }
-  }
+  const google = socialProviderCredentials({
+    label: "Google",
+    envPrefix: "GOOGLE",
+    enabled: env.GOOGLE_AUTH_ENABLED,
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientIdFile: env.GOOGLE_CLIENT_ID_FILE,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    clientSecretFile: env.GOOGLE_CLIENT_SECRET_FILE
+  });
+  const github = socialProviderCredentials({
+    label: "GitHub",
+    envPrefix: "GITHUB",
+    enabled: env.GITHUB_AUTH_ENABLED,
+    clientId: env.GITHUB_CLIENT_ID,
+    clientIdFile: env.GITHUB_CLIENT_ID_FILE,
+    clientSecret: env.GITHUB_CLIENT_SECRET,
+    clientSecretFile: env.GITHUB_CLIENT_SECRET_FILE
+  });
   const smtpPassword = sensitiveValue({
     key: "SMTP_PASSWORD",
     direct: env.SMTP_PASSWORD,
@@ -1461,6 +1514,18 @@ export function loadConfig() {
     }
     if (problems.length > 0) {
       throw new Error(`Operational alert receiver configuration is invalid (${problems.join("; ")})`);
+    }
+  }
+  const alertEmailTo = (env.ALERT_EMAIL_TO ?? "").trim();
+  if (alertEmailTo) {
+    // One plain mailbox, no display name, no list: the value is the only input
+    // that decides where operator mail goes, so it is held to the narrowest shape.
+    if (alertEmailTo.length > 254 || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(alertEmailTo)) {
+      throw new Error("ALERT_EMAIL_TO must be one plain email address");
+    }
+    const domain = alertEmailTo.split("@")[1]!.toLowerCase();
+    if (env.NODE_ENV === "production" && (domain === "localhost" || domain.endsWith(".test") || domain.endsWith(".example") || domain === "example.com")) {
+      throw new Error("production ALERT_EMAIL_TO must be a deliverable mailbox");
     }
   }
   const adminAccessToken = sensitiveValue({
@@ -2193,10 +2258,9 @@ export function loadConfig() {
       cookiePrefix: env.AUTH_COOKIE_PREFIX,
       secret: betterAuthSecret,
       requireEmailVerification: env.AUTH_REQUIRE_EMAIL_VERIFICATION,
-      google: googleClientId && googleClientSecret ? {
-        clientId: googleClientId,
-        clientSecret: googleClientSecret
-      } : null,
+      emailVerificationBlocksSignIn: env.AUTH_EMAIL_VERIFICATION_BLOCKS_SIGN_IN,
+      google,
+      github,
       email: {
         from: env.AUTH_EMAIL_FROM,
         replyTo: env.AUTH_EMAIL_REPLY_TO,
@@ -2245,7 +2309,8 @@ export function loadConfig() {
         authMode: alertReceiverAuthMode,
         token: alertReceiverAuthMode === "bearer" ? alertReceiverToken : null,
         timeoutMs: env.ALERT_RECEIVER_TIMEOUT_MS
-      } : null
+      } : null,
+      alertEmail: alertEmailTo ? { to: alertEmailTo } : null
     },
     providers: {
       defaultProvider: env.DEFAULT_PROVIDER,

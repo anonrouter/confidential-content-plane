@@ -8,6 +8,7 @@ import {
 } from "../providers/attestation/index.js";
 import { AppError } from "../security/errors.js";
 import { OPAQUE_RECEIPT_ID_PATTERN } from "../inference/contentReceipts.js";
+import { publicProviderSlug, publicRouteId } from "../providers/publicIdentity.js";
 
 /**
  * The public receipt endpoint, served by the CONTENT plane.
@@ -86,7 +87,7 @@ export async function registerTeeReceiptRoutes(server: FastifyInstance) {
       throw new AppError(
         501,
         "tee_signature_not_supported",
-        `Provider ${receipt.providerName} does not expose per-request signatures`
+        `Provider ${publicProviderSlug(receipt.providerName)} does not expose per-request signatures`
       );
     }
     if (!server.workerClient.signatureForRequest || !server.workerClient.attestationForModel) {
@@ -157,9 +158,9 @@ export async function registerTeeReceiptRoutes(server: FastifyInstance) {
 
     return {
       receipt_id: receipt.opaqueReceiptId,
-      model: receipt.canonicalModelId ?? receipt.routeId,
-      provider: receipt.providerName,
-      route_id: receipt.routeId,
+      model: publicRouteId(receipt.canonicalModelId ?? receipt.routeId),
+      provider: publicProviderSlug(receipt.providerName),
+      route_id: publicRouteId(receipt.routeId),
       recorded_at: new Date(receipt.recordedAtMs).toISOString(),
       expires_at: new Date(receipt.expiresAtMs).toISOString(),
       signature: {

@@ -58,6 +58,7 @@ import { hasOutputBearingOpenAiDelta } from "../inference/streamTiming.js";
 import { isTerminalProviderCode } from "../inference/rejectionTaxonomy.js";
 import { reportProviderRejection } from "../inference/rejectionReporting.js";
 import { newOpaqueReceiptId } from "../inference/contentReceipts.js";
+import { internalProvidersForPublicSlug, isPublicProviderGroupSlug, publicProviderSlug, publicRouteId } from "../providers/publicIdentity.js";
 
 const TICKET_HEADER = "x-anonrouter-ticket";
 // The opaque settlement receipt id, returned to the caller so it can fetch the
@@ -97,8 +98,16 @@ function hasAnyHeader(request: FastifyRequest, names: readonly string[]): boolea
  * map; arbitrary client headers can never cross the worker boundary.
  */
 export function extractE2eeHeaders(request: FastifyRequest): E2eeHeaderSelection | null {
-  const explicitProvider = headerValue(request.headers[ANONROUTER_E2EE_PROVIDER_HEADER]);
-  if (explicitProvider !== undefined && explicitProvider !== "near-ai" && explicitProvider !== "venice") {
+  // The header names a PUBLIC provider id (../providers/publicIdentity.ts):
+  // `other` selects the direct-enclave v2 protocol of the provider listed under
+  // it. The internal id `near-ai` is unsupported, like any unknown provider.
+  const rawProvider = headerValue(request.headers[ANONROUTER_E2EE_PROVIDER_HEADER]);
+  const explicitProvider = rawProvider === undefined
+    ? undefined
+    : rawProvider === "venice" ? "venice" as const
+      : isPublicProviderGroupSlug(rawProvider) && internalProvidersForPublicSlug(rawProvider).includes("near-ai") ? "near-ai" as const
+        : null;
+  if (explicitProvider === null) {
     throw new AppError(400, "e2ee_provider_unsupported", "The selected E2EE provider is not supported");
   }
 
@@ -119,16 +128,16 @@ export function extractE2eeHeaders(request: FastifyRequest): E2eeHeaderSelection
     const algo = headerValue(request.headers[NEAR_SIGNING_ALGO_HEADER]);
     const version = headerValue(request.headers[NEAR_ENCRYPTION_VERSION_HEADER]);
     if (!client || !algo || !version) {
-      throw new AppError(400, "e2ee_headers_incomplete", "NEAR direct E2EE requires client key, signing algorithm, and encryption version");
+      throw new AppError(400, "e2ee_headers_incomplete", "Direct-enclave E2EE requires client key, signing algorithm, and encryption version");
     }
     if (model !== undefined) {
-      throw new AppError(400, "e2ee_model_key_not_accepted", "NEAR direct E2EE derives the model key from attestation; X-Model-Pub-Key is gateway-only");
+      throw new AppError(400, "e2ee_model_key_not_accepted", "Direct-enclave E2EE derives the model key from attestation; X-Model-Pub-Key is gateway-only");
     }
     if (!/^[0-9a-f]{64}$/i.test(client)) {
-      throw new AppError(400, "e2ee_invalid_key", "The NEAR client public key must be a 32-byte hex Ed25519 key");
+      throw new AppError(400, "e2ee_invalid_key", "The client public key must be a 32-byte hex Ed25519 key");
     }
     if (algo !== "ed25519" || version !== "2") {
-      throw new AppError(400, "e2ee_protocol_unsupported", "NEAR E2EE requires ed25519 encryption version 2");
+      throw new AppError(400, "e2ee_protocol_unsupported", "Direct-enclave E2EE requires ed25519 encryption version 2");
     }
     return {
       providerName,
@@ -140,7 +149,7 @@ export function extractE2eeHeaders(request: FastifyRequest): E2eeHeaderSelection
     };
   }
 
-  if (hasNear) throw new AppError(400, "e2ee_header_conflict", "NEAR E2EE headers do not match the selected provider");
+  if (hasNear) throw new AppError(400, "e2ee_header_conflict", "Direct-enclave E2EE headers do not match the selected provider");
   const client = headerValue(request.headers[VENICE_CLIENT_KEY_HEADER]);
   const model = headerValue(request.headers[VENICE_MODEL_KEY_HEADER]);
   if (!client || !model) {
@@ -304,7 +313,7 @@ function providerFallbackOutcome(error: unknown): ProviderAttemptOutcome | null 
 }
 
 /** Content-free transparency headers describing the route that actually served. */
-function providerTransparencyHeaders(
+export function providerTransparencyHeaders(
   servingModel: RelayModel,
   automatic: boolean,
   attempts: number,
@@ -313,7 +322,8 @@ function providerTransparencyHeaders(
 ): Record<string, string> {
   const privacyClass = servingModel.privacyClass ?? routing?.effectivePrivacyClass ?? "";
   return {
-    "x-anonrouter-provider": servingModel.providerName,
+    // Public provider id (../providers/publicIdentity.ts): `near-ai` is `other`.
+    "x-anonrouter-provider": publicProviderSlug(servingModel.providerName),
     "x-anonrouter-routing": automatic ? "auto" : "exact",
     "x-anonrouter-provider-attempts": String(attempts),
     "x-anonrouter-provider-fallback": fellBack ? "true" : "false",
@@ -540,7 +550,11 @@ export async function registerChatRoutes(server: FastifyInstance) {
     }
     return {
       evidence,
-      provider,
+      // Public provider id (../providers/publicIdentity.ts). The verifier and the
+      // endpoint identity above use the internal one; `evidence` is returned
+      // verbatim and, for a direct-enclave route, necessarily names the serving
+      // operator's own domain and release sources.
+      provider: publicProviderSlug(provider),
       upstream_model: upstreamModel,
       // Route identity and the honest caveat, so a read-only verification panel
       // renders the same thing here as it did on the control GET. All of it is
@@ -549,7 +563,7 @@ export async function registerChatRoutes(server: FastifyInstance) {
       // account. `model` and `route_id` are omitted rather than invented when an
       // older ticket did not carry them.
       ...(redeemed.canonicalModelId ? { model: redeemed.canonicalModelId } : {}),
-      ...(redeemed.routeId ? { route_id: redeemed.routeId } : {}),
+      ...(redeemed.routeId ? { route_id: publicRouteId(redeemed.routeId) } : {}),
       privacy_class: privacyModality,
       note: attestationNoteFor(privacyModality),
       ...(protocol ? { protocol } : {}),

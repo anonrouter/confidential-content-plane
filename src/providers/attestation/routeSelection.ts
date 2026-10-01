@@ -20,6 +20,7 @@
 import { AppError } from "../../security/errors.js";
 import type { ModelRecord } from "../types.js";
 import { providerExposesAttestation } from "./registry.js";
+import { publicProviderSlug } from "../publicIdentity.js";
 
 /**
  * The catalog's test-fixture provider.
@@ -76,7 +77,9 @@ export function resolveExactAttestableRoute(
 ): ModelRecord {
   const attestable = attestableRoutes(routes, options);
   if (provider) {
-    const match = attestable.find((route) => route.providerName === provider);
+    // Compared in PUBLIC form (../publicIdentity.ts): a caller names `other` for
+    // a route served by `near-ai`; the internal id matches nothing.
+    const match = attestable.find((route) => publicProviderSlug(route.providerName) === provider);
     if (!match) {
       // Deliberately the same shape whether the provider serves this model on a
       // non-attestable class, does not serve it at all, or has no verifier. A
@@ -89,7 +92,7 @@ export function resolveExactAttestableRoute(
     throw new AppError(404, "no_tee_route", `No TEE/E2EE route is available for ${requestedModel}`);
   }
   if (attestable.length > 1) {
-    const providers = attestable.map((route) => route.providerName).join(", ");
+    const providers = [...new Set(attestable.map((route) => publicProviderSlug(route.providerName)))].join(", ");
     throw new AppError(
       409,
       "provider_selector_required",

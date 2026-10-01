@@ -4,6 +4,7 @@ import type { ChatCompletionRequestBody, ModelRecord } from "../providers/types.
 import { PROVIDERS_HELD_FROM_AUTO } from "../providers/catalog/enablement.js";
 import { AppError } from "../security/errors.js";
 import type { RoutingClassification, RoutingTask } from "./classifier.js";
+import { publicProviderSlug, publicRouteId } from "../providers/publicIdentity.js";
 
 export interface RoutingDecision {
   model: ModelRecord;
@@ -64,9 +65,14 @@ function globMatches(pattern: string, value: string) {
   return pi === p.length;
 }
 
-function modelMatches(pattern: string, model: ModelRecord) {
-  const canonical = `${model.providerName}/${model.publicModelId}`;
-  return globMatches(pattern, canonical) || globMatches(pattern, model.publicModelId);
+export function modelMatches(pattern: string, model: ModelRecord) {
+  // Customer patterns match PUBLIC ids only (../providers/publicIdentity.ts): a
+  // route served by `near-ai` is `other/...`, and `near-ai/*` matches nothing,
+  // like any unknown provider. Identical to the stored ids for every other
+  // provider.
+  const publicId = publicRouteId(model.publicModelId);
+  const canonical = `${publicProviderSlug(model.providerName)}/${publicId}`;
+  return globMatches(pattern, canonical) || globMatches(pattern, publicId);
 }
 
 function privacyPolicyAllows(model: ModelRecord, privacyClasses: Set<string>) {

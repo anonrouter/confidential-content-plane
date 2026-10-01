@@ -11,6 +11,8 @@ import {
   type EthMessageRecoverer
 } from "./crypto.js";
 import { dstackDeclaredGpuCount, parseTdxQuote, tdxHardwareTypeFor } from "./tdxQuote.js";
+import { isNearServingDocument, nearCollateralFrom, releaseCollateralOf } from "./authority/collateral.js";
+import { isNearReleaseAuthorityPolicy, nearReleaseAuthorityChecks } from "./authority/near.js";
 import type {
   AttestationCheck,
   AttestationExpectations,
@@ -82,6 +84,10 @@ export class VeniceTeeVerifier implements TeeVerifier {
 
   verifyAttestation(evidence: unknown, expectations: AttestationExpectations): NormalizedAttestationResult {
     const envelope = readEnvelope(evidence, expectations);
+    // Venice relays three upstream formats (audit FINDINGS 4). NEAR's
+    // serving-TD format runs on NEAR hardware and is verified under NEAR's
+    // release authority; the Phala aggregator format is handled below.
+    if (isNearServingDocument(envelope.payload)) return this.verifyNearFormat(envelope, expectations);
     const payload = envelope.payload as VeniceAttestationPayload | undefined;
     const checks: AttestationCheck[] = [];
     const quoteRaw = typeof payload?.intel_quote === "string" ? payload.intel_quote : null;
@@ -191,6 +197,99 @@ export class VeniceTeeVerifier implements TeeVerifier {
       attestedEncryptionKey: signingPublicKey,
       attestedSigningKey: signingAddress,
       boundNonce: parsed && nonce && hexEqual(nonce, expectations.nonce) ? expectations.nonce : nonce,
+      verifierVersion: this.verifierVersion,
+      supportsClientOpaqueE2ee: true,
+      checks
+    });
+  }
+
+  /**
+   * Venice's NEAR format (`tee_provider: "near-ai"`): a NEAR serving TD that
+   * owns its GPUs, started by NEAR's compose-manager. Bindings re-derived:
+   * report_data = signing_address(20) || 0^12 || caller nonce, with the
+   * address = keccak(signing_public_key); the TD's own model_name must equal
+   * the model Venice says this route maps to (the audit caught
+   * e2ee-deepseek-v4-flash attesting a glm-5.3-flash TD); and NEAR's release
+   * authority (authority/near.ts) must hold.
+   */
+  private verifyNearFormat(envelope: ReturnType<typeof readEnvelope>, expectations: AttestationExpectations): NormalizedAttestationResult {
+    const payload = envelope.payload as VeniceAttestationPayload & {
+      model_name?: unknown;
+      upstream_model?: unknown;
+      request_nonce?: unknown;
+      info?: { vm_config?: unknown };
+    };
+    const checks: AttestationCheck[] = [];
+    const quoteRaw = typeof payload.intel_quote === "string" ? payload.intel_quote : null;
+    const parsed = quoteRaw ? parseTdxQuote(quoteRaw) : null;
+    const signingAddress = typeof payload.signing_address === "string" ? payload.signing_address.toLowerCase() : null;
+    const signingPublicKey = typeof payload.signing_public_key === "string"
+      ? payload.signing_public_key
+      : typeof payload.signing_key === "string" ? payload.signing_key : null;
+    const derivedAddress = signingPublicKey ? secp256k1AddressFromPublicKey(signingPublicKey) : null;
+    checks.push(check("evidence_present", Boolean(quoteRaw), true, quoteRaw ? undefined : "no Intel quote"));
+    checks.push(check("quote_parsed", parsed !== null, true, parsed ? undefined : "TDX quote did not parse"));
+    checks.push(check("expected_tee_type", parsed?.teeType === TDX_TEE_TYPE, true,
+      parsed?.teeType === TDX_TEE_TYPE ? undefined : "not an Intel TDX quote"));
+    checks.push(check("debug_disabled", parsed !== null && !parsed.debugEnabled, true,
+      parsed?.debugEnabled ? "TD debug mode enabled" : undefined));
+    const declaredNonces = [payload.request_nonce, payload.nonce].filter((value) => value !== undefined);
+    const nonceOk = Boolean(parsed && hexEqual(parsed.reportData.slice(64, 128), expectations.nonce)
+      && declaredNonces.length > 0 && declaredNonces.every((value) => typeof value === "string" && hexEqual(value, expectations.nonce)));
+    checks.push(check("nonce_binding", nonceOk, true, nonceOk ? undefined : "report_data or the declared nonce is not the caller nonce"));
+    const venicesModel = typeof payload.model === "string" ? payload.model : null;
+    checks.push(check("model_binding", venicesModel === expectations.upstreamModel, true,
+      venicesModel ? undefined : "attestation did not name the route model"));
+    const served = typeof payload.model_name === "string" ? payload.model_name : null;
+    const mapped = typeof payload.upstream_model === "string" ? payload.upstream_model : null;
+    const servedOk = served !== null && mapped !== null && served === mapped;
+    checks.push(check("served_model_binding", servedOk, true, servedOk
+      ? undefined
+      : `the attested TD serves ${served ?? "no named model"} but this route maps to ${mapped ?? "no named model"}`));
+    checks.push(check("signing_algorithm", payload.signing_algo === "ecdsa", true,
+      payload.signing_algo === "ecdsa" ? undefined : "unsupported attested signing algorithm"));
+    checks.push(check("signing_key_address", Boolean(derivedAddress && signingAddress && hexEqual(derivedAddress, signingAddress)), true,
+      derivedAddress ? undefined : "attested secp256k1 key was missing or malformed"));
+    const prefix = signingAddress && /^0x[0-9a-f]{40}$/.test(signingAddress) ? signingAddress.slice(2).padEnd(64, "0") : null;
+    checks.push(check("signing_address_quote_binding", Boolean(parsed && prefix && hexEqual(parsed.reportData.slice(0, 64), prefix)), true,
+      prefix ? undefined : "attested signing address was malformed"));
+    const gpuPresent = typeof payload.nvidia_payload === "string" && payload.nvidia_payload.length > 0;
+    checks.push(check("gpu_evidence_present", gpuPresent, true, gpuPresent ? undefined : "no NVIDIA GPU evidence"));
+    const accepted = expectations.measurementPolicy?.accepted;
+    if (parsed && isNearReleaseAuthorityPolicy(accepted)) {
+      checks.push(...nearReleaseAuthorityChecks({
+        document: payload,
+        quote: parsed,
+        nonce: expectations.nonce,
+        policy: accepted,
+        collateral: nearCollateralFrom(releaseCollateralOf(payload), accepted.composeRepository),
+        now: expectations.now ?? Date.now()
+      }));
+    } else {
+      checks.push(check("measurement_allowlist", false, true, parsed
+        ? "no upstream release authority policy for a serving-TD route"
+        : "the TDX quote did not parse, so no release authority could be applied"));
+    }
+    checks.push(freshnessCheck(envelope.fetchedAtMs, expectations));
+    const declaredGpus = dstackDeclaredGpuCount(payload.info?.vm_config);
+    return assembleResult({
+      expectations,
+      hardwareType: tdxHardwareTypeFor(declaredGpus),
+      requestedLevel: "provider-attested",
+      privacyModality: expectations.privacyModality,
+      measurementIdentities: parsed ? {
+        mrtd: parsed.mrTd,
+        mr_config_id: parsed.mrConfigId,
+        rtmr0: parsed.rtmr0,
+        rtmr1: parsed.rtmr1,
+        rtmr2: parsed.rtmr2,
+        rtmr3: parsed.rtmr3
+      } : {},
+      modelWeightIdentity: null,
+      attestedTlsSpki: null,
+      attestedEncryptionKey: signingPublicKey,
+      attestedSigningKey: signingAddress,
+      boundNonce: nonceOk ? expectations.nonce : null,
       verifierVersion: this.verifierVersion,
       supportsClientOpaqueE2ee: true,
       checks
