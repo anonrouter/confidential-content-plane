@@ -441,8 +441,8 @@
     },
     {
       "path": "src/logger.ts",
-      "sha256": "25754d556c18059ce683bd737df97504a063663ae27bd3a80ad57e265aa2dcc3",
-      "bytes": 14488
+      "sha256": "a3861254172a428b27180b85a09de44c987b74a973fca2b46328a8fee1d67704",
+      "bytes": 14612
     },
     {
       "path": "src/metering/billing.ts",
@@ -691,8 +691,8 @@
     },
     {
       "path": "src/providers/catalog/nearRelay.ts",
-      "sha256": "d028da8f0231a9d987109fcdf010260c9ecb9c88d2c514176885fe8e9cf5e116",
-      "bytes": 45757
+      "sha256": "d68a30b728ea5c3ace1c5bbfe95b14295a1b50721edf70a9e0f6b4e40302f7a7",
+      "bytes": 47154
     },
     {
       "path": "src/providers/catalog/nearRelayReviewed.generated.ts",

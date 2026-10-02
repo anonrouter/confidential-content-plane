@@ -574,12 +574,32 @@ export function nearRelayRequestProfile(externalModelId: string): NearRelayReque
     const map = new Map<string, NearRelayRequestProfile>();
     for (const [id, reviewed] of Object.entries(NEAR_RELAY_REVIEWED_ROUTES)) {
       if (!NEAR_RELAY_ROUTES[id]) continue;
-      map.set(id, { samplingParameters: new Set(reviewed.samplingParameters) });
+      const allowed = DEFAULT_SAMPLING_ONLY_ROUTES.has(id)
+        ? reviewed.samplingParameters.filter((field) => DEFAULT_SAMPLING_ONLY_FIELDS.has(field))
+        : reviewed.samplingParameters;
+      map.set(id, { samplingParameters: new Set(allowed) });
     }
     requestProfiles = map;
   }
   return requestProfiles.get(externalModelId) ?? null;
 }
+
+/**
+ * Relayed OpenAI reasoning models that accept only the DEFAULT sampling
+ * values. NEAR's catalog lists temperature/top_p/penalties for them, but the
+ * upstream answers any non-default value with a 400 ("'temperature' does not
+ * support 0.0 with this model", live canary 2026-10-02). They get o3's
+ * reviewed profile instead: the sampling fields are dropped, as for o3.
+ */
+const DEFAULT_SAMPLING_ONLY_ROUTES: ReadonlySet<string> = new Set([
+  "openai/gpt-5",
+  "openai/gpt-5-mini",
+  "openai/gpt-5-nano",
+  "openai/gpt-5.5",
+  "openai/gpt-5.6-luna",
+  "openai/gpt-5.6-sol"
+]);
+const DEFAULT_SAMPLING_ONLY_FIELDS: ReadonlySet<string> = new Set(["max_tokens", "seed", "stop"]);
 
 /** Optional OpenAI sampling fields AnonRouter's chat contract can carry. */
 const RELAY_SAMPLING_FIELDS = ["temperature", "top_p", "frequency_penalty", "presence_penalty", "stop", "seed"] as const;
@@ -600,9 +620,13 @@ export function isNearRelayRoute(externalModelId: string): boolean {
  *  - Optional sampling fields are forwarded only when NEAR's REVIEWED catalog
  *    entry lists them for the model (for example o3 and the Claude 5 family do
  *    not accept `temperature`). An unreviewed relay route forwards none.
- *  - `max_tokens` / `max_completion_tokens` (the reservation bound) always pass:
- *    review requires `max_tokens`, and NEAR maps the pair to each upstream's
- *    own name, letting `max_completion_tokens` win when both are present.
+ *  - `max_tokens` / `max_completion_tokens` (the reservation bound) always pass,
+ *    as ONE field for OpenAI routes. NEAR's OpenAI bridge copies `max_tokens`
+ *    into `max_completion_tokens`, so a body carrying both reaches OpenAI with
+ *    a duplicate key and every request fails 400 (live canary, 2026-10-02).
+ *    OpenAI routes therefore get only `max_completion_tokens`, set to the same
+ *    bound (the two must already be equal; see canonicalOutputTokenLimit).
+ *    Other families keep the pair, which NEAR maps to their own name.
  *  - Every `cache_control` breakpoint is removed (top level, messages, content
  *    parts, tools). NEAR copies a client breakpoint verbatim to Anthropic,
  *    which then bills a cache WRITE at 1.25x input; NEAR publishes no such
@@ -617,6 +641,11 @@ export function shapeNearRelayBody(externalModelId: string, body: Record<string,
   const { user: _user, cache_control: _cacheControl, ...rest } = body;
   for (const field of RELAY_SAMPLING_FIELDS) {
     if (!accepted.has(field)) delete rest[field];
+  }
+  if (NEAR_RELAY_ROUTES[externalModelId]?.owner === "openai") {
+    const limit = rest.max_completion_tokens ?? rest.max_tokens;
+    delete rest.max_tokens;
+    if (limit !== undefined) rest.max_completion_tokens = limit;
   }
   if (Array.isArray(rest.messages)) {
     rest.messages = rest.messages.map((message) => {

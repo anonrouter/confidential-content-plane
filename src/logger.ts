@@ -90,6 +90,10 @@ export const LOGGED_FIELD_ALLOWLIST: ReadonlySet<string> = new Set([
   "quarantined_events",
   "rollups_purged",
   "buckets_flushed",
+  "skipped",
+  "examined",
+  "credited",
+  "closed",
 
   // Transactional email. `email_purpose` is a fixed enum of template names.
   "email_purpose"
@@ -153,8 +157,10 @@ export const LOGGED_MESSAGE_ALLOWLIST: ReadonlySet<string> = new Set([
   "model_health_probe_record_failed",
   "operational_alert_delivery_failed",
   "operational_alert_delivery_processed",
+  "operational_alert_email_notice_failed",
   "operational_metrics_collection_failed",
   "payment_checkout_failed",
+  "stripe_orders_resolved",
   "provider_rejection_record_failed",
   "rejection_purge_batch_capped",
   "rejection_purge_failed",
