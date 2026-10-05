@@ -16,15 +16,16 @@ import type { EmbeddingProviderRequest, EmbeddingProviderResult } from "./embedd
 import { normalizeEmbeddingResponse } from "./embeddings.js";
 import { parseJsonResponse, requireStreamBody } from "./http.js";
 import type { VeniceKeysetStore } from "./veniceKeyStore.js";
+import { veniceProviderTransport, type ProviderTransport } from "./transport.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
 import { sha256Hex } from "./attestation/crypto.js";
 import {
-  NearReleaseCollateralSource,
-  defaultNearReleaseSources,
+  type NearReleaseCollateralSource,
   isNearServingDocument,
   withReleaseCollateral,
   withoutReleaseCollateral
 } from "./attestation/authority/collateral.js";
+import { nearReleaseCollateralSourceFor } from "../releaseCollateral/client.js";
 import {
   OperationalCircuitBreaker,
   VeniceCircuitBreakerRegistry,
@@ -96,11 +97,19 @@ interface VeniceCircuitGuard {
   scopedPermit: CircuitPermit;
 }
 
-async function chatFetch(url: string, init: RequestInit, cancellation?: AbortSignal): Promise<Response> {
+// `keyId` is the control-selected credential for this dispatch; the transport
+// resolves it at send time and fails rather than substituting another key.
+async function chatFetch(
+  transport: ProviderTransport,
+  url: string,
+  init: RequestInit,
+  cancellation?: AbortSignal,
+  keyId?: string | null
+): Promise<Response> {
   const timeout = AbortSignal.timeout(CHAT_TIMEOUT_MS);
   const signal = cancellation ? AbortSignal.any([cancellation, timeout]) : timeout;
   try {
-    return await fetch(url, { ...init, signal });
+    return await transport.fetch(url, { ...init, signal }, { keyId });
   } catch (error) {
     if (cancellation?.aborted) throw cancellation.reason ?? error;
     if (timeout.aborted || (error instanceof DOMException && error.name === "TimeoutError")) {
@@ -110,11 +119,17 @@ async function chatFetch(url: string, init: RequestInit, cancellation?: AbortSig
   }
 }
 
-async function mediaFetch(url: string, init: RequestInit, cancellation?: AbortSignal): Promise<Response> {
+async function mediaFetch(
+  transport: ProviderTransport,
+  url: string,
+  init: RequestInit,
+  cancellation?: AbortSignal,
+  keyId?: string | null
+): Promise<Response> {
   const timeout = AbortSignal.timeout(MEDIA_TIMEOUT_MS);
   const signal = cancellation ? AbortSignal.any([cancellation, timeout]) : timeout;
   try {
-    return await fetch(url, { ...init, signal });
+    return await transport.fetch(url, { ...init, signal }, { keyId });
   } catch (error) {
     if (cancellation?.aborted) throw cancellation.reason ?? error;
     if (timeout.aborted || (error instanceof DOMException && error.name === "TimeoutError")) {
@@ -180,11 +195,10 @@ function sanitizedVeniceParameters(body: Record<string, unknown>): Record<string
 export class VeniceProviderAdapter implements ProviderAdapter {
   readonly name = "venice";
   private readonly baseUrl: string;
-  /** NEAR's release-authority fetch layer, for Venice's NEAR-format routes. */
+  /** NEAR's release-authority fetch layer, for Venice's NEAR-format routes:
+   *  direct lookups, or the release-collateral role where one is configured (the pool). */
   private readonly nearReleaseCollateral: NearReleaseCollateralSource;
-  private readonly apiKey: string;
-  private readonly keysById: Map<string, string>;
-  private readonly keyStore?: VeniceKeysetStore;
+  private readonly transport: ProviderTransport;
   private readonly circuitBreakers: VeniceCircuitBreakerRegistry;
 
   constructor(
@@ -193,15 +207,12 @@ export class VeniceProviderAdapter implements ProviderAdapter {
     keyStore?: VeniceKeysetStore,
     nearReleaseCollateral?: NearReleaseCollateralSource
   ) {
-    this.nearReleaseCollateral = nearReleaseCollateral ?? new NearReleaseCollateralSource(defaultNearReleaseSources());
+    this.nearReleaseCollateral = nearReleaseCollateral ?? nearReleaseCollateralSourceFor(config);
     this.baseUrl = config.providers.veniceBaseUrl;
-    this.apiKey = config.providers.veniceInferenceKey;
-    // Nullish guard: hand-built partial configs in tests omit the keyset.
-    this.keysById = new Map((config.providers.veniceKeys ?? []).map((entry) => [entry.id, entry.key]));
     // When the durable overlay store is wired (the credential worker), key ids
     // resolve against the live effective keyset so operator add/remove actions
-    // apply without a restart.
-    this.keyStore = keyStore;
+    // apply without a restart. Otherwise they resolve against the boot keyset.
+    this.transport = veniceProviderTransport(config, keyStore);
     // Production may construct more than one adapter in the credential worker;
     // share process-local, bounded breaker state across them. Tests get isolated
     // state unless they explicitly inject a registry.
@@ -308,20 +319,12 @@ export class VeniceProviderAdapter implements ProviderAdapter {
   private headers(requestId: string, e2eeHeaders?: Record<string, string>, providerKeyId?: string | null) {
     // A control-selected key id must resolve against the local keyset; an
     // unknown id fails closed rather than silently using another credential.
-    const apiKey = providerKeyId
-      ? this.keyStore
-        ? this.keyStore.keyById(providerKeyId) ?? undefined
-        : this.keysById.get(providerKeyId)
-      : this.keyStore
-        ? this.keyStore.defaultKey() ?? undefined
-        : this.apiKey;
-    if (!apiKey) {
-      throw new ProviderError("provider_not_configured", "Venice inference key is not configured");
-    }
+    // The transport attaches the credential. Asserting it here keeps that
+    // failure at the point in a dispatch where it always was.
+    this.transport.assertCredential({ keyId: providerKeyId });
 
     return {
       "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
       "x-request-id": requestId,
       // For E2EE, carry the client's TEE headers verbatim to the enclave. The
       // relay never sees plaintext; content stays encrypted end to end.
@@ -337,7 +340,13 @@ export class VeniceProviderAdapter implements ProviderAdapter {
   async fetchAttestation(externalModelId: string, nonce: string, signal?: AbortSignal, providerKeyId?: string | null): Promise<unknown> {
     return this.guarded("attestation", externalModelId, signal, async () => {
       const url = `${this.baseUrl}/tee/attestation?model=${encodeURIComponent(externalModelId)}&nonce=${encodeURIComponent(nonce)}`;
-      const response = await chatFetch(url, { method: "GET", headers: this.headers("attestation", undefined, providerKeyId) }, signal);
+      const response = await chatFetch(
+        this.transport,
+        url,
+        { method: "GET", headers: this.headers("attestation", undefined, providerKeyId) },
+        signal,
+        providerKeyId
+      );
       if (!response.ok) throw await providerHttpError(response);
       const document = await parseJsonResponse(response);
       if (!document || typeof document !== "object") return document;
@@ -360,10 +369,10 @@ export class VeniceProviderAdapter implements ProviderAdapter {
   ): Promise<unknown> {
     return this.guarded("attestation", externalModelId, signal, async () => {
       const url = `${this.baseUrl}/tee/signature?model=${encodeURIComponent(externalModelId)}&request_id=${encodeURIComponent(providerRequestId)}`;
-      const response = await chatFetch(url, {
+      const response = await chatFetch(this.transport, url, {
         method: "GET",
         headers: this.headers("signature", undefined, providerKeyId)
-      }, signal);
+      }, signal, providerKeyId);
       if (!response.ok) throw await providerHttpError(response);
       return parseJsonResponse(response);
     });
@@ -388,7 +397,7 @@ export class VeniceProviderAdapter implements ProviderAdapter {
         headers: this.headers(request.requestId, request.e2eeHeaders, dispatchAuth?.providerKeyId),
         body: requestBody
       };
-      const response = await chatFetch(url, init, request.signal);
+      const response = await chatFetch(this.transport, url, init, request.signal, dispatchAuth?.providerKeyId);
       if (!response.ok) throw await providerHttpError(response);
       let responseText: string;
       let json: unknown;
@@ -436,7 +445,7 @@ export class VeniceProviderAdapter implements ProviderAdapter {
         headers: this.headers(request.requestId, request.e2eeHeaders, dispatchAuth?.providerKeyId),
         body: requestBody
       };
-      const response = await chatFetch(url, init, request.signal);
+      const response = await chatFetch(this.transport, url, init, request.signal, dispatchAuth?.providerKeyId);
 
       const body = await requireStreamBody(response);
       const hashed = withSha256(body);
@@ -491,7 +500,7 @@ export class VeniceProviderAdapter implements ProviderAdapter {
         headers: this.headers(request.requestId, undefined, dispatchAuth?.providerKeyId),
         body: JSON.stringify({ ...request.body, model: request.model.externalModelId })
       };
-      const response = await chatFetch(`${this.baseUrl}/embeddings`, init, request.signal);
+      const response = await chatFetch(this.transport, `${this.baseUrl}/embeddings`, init, request.signal, dispatchAuth?.providerKeyId);
       const raw = await parseJsonResponse(response);
       const normalized = normalizeEmbeddingResponse(raw, request.body, request.model.externalModelId);
       return {
@@ -510,7 +519,7 @@ export class VeniceProviderAdapter implements ProviderAdapter {
       request.signal?.throwIfAborted();
       const dispatchAuth = await request.onProviderAttempt?.();
       request.signal?.throwIfAborted();
-      const response = await mediaFetch(`${this.baseUrl}/image/generate`, {
+      const response = await mediaFetch(this.transport, `${this.baseUrl}/image/generate`, {
         method: "POST",
         headers: this.headers(request.requestId, undefined, dispatchAuth?.providerKeyId),
         body: JSON.stringify({
@@ -525,7 +534,7 @@ export class VeniceProviderAdapter implements ProviderAdapter {
           safe_mode: false,
           return_binary: false
         })
-      }, request.signal);
+      }, request.signal, dispatchAuth?.providerKeyId);
 
       if (!response.ok) throw await providerHttpError(response);
       const text = await readBoundedResponseText(response, MAX_IMAGE_RESPONSE_BYTES);
@@ -561,7 +570,7 @@ export class VeniceProviderAdapter implements ProviderAdapter {
       request.signal?.throwIfAborted();
       const dispatchAuth = await request.onProviderAttempt?.();
       request.signal?.throwIfAborted();
-      const response = await mediaFetch(`${this.baseUrl}/audio/speech`, {
+      const response = await mediaFetch(this.transport, `${this.baseUrl}/audio/speech`, {
         method: "POST",
         headers: this.headers(request.requestId, undefined, dispatchAuth?.providerKeyId),
         body: JSON.stringify({
@@ -570,7 +579,7 @@ export class VeniceProviderAdapter implements ProviderAdapter {
           ...(request.voice ? { voice: request.voice } : {}),
           response_format: request.responseFormat ?? "mp3"
         })
-      }, request.signal);
+      }, request.signal, dispatchAuth?.providerKeyId);
 
       if (!response.ok) throw await providerHttpError(response);
       const audio = Buffer.from(await response.arrayBuffer());

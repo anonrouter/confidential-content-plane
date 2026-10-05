@@ -4,6 +4,7 @@ import { computeSourceHash } from "./hash.js";
 import { normalizePhalaAiCatalog, type RawPhalaAiModel } from "./phalaAiNormalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
 import { backoffDelayMs, parseRetryAfterMs, type FetchOptions } from "./sync.js";
+import { staticProviderTransport } from "../transport.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -35,13 +36,13 @@ export async function fetchRawPhalaAiModels(
   config: ContentPlaneConfig,
   opts: FetchOptions = {}
 ): Promise<RawPhalaAiModel[]> {
-  const key = config.providers.phalaAiApiKey;
+  const transport = staticProviderTransport(config, "phala-ai");
   // Fail closed without the credential even though Phala's `/v1/models` answers
   // 200 unauthenticated (measured). A provider AnonRouter cannot bill against is
   // a provider whose catalog must not become callable, and letting the sync
   // succeed anyway would leave priced, enable-able rows for a route that would
   // fail at the first request.
-  if (!key) throw new Error("phala_ai_credential_missing");
+  if (!transport.hasCredential()) throw new Error("phala_ai_credential_missing");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
   const random = opts.random ?? Math.random;
@@ -50,8 +51,7 @@ export async function fetchRawPhalaAiModels(
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     let retryAfterMs: number | null = null;
     try {
-      const response = await fetch(phalaAiCatalogUrl(config.providers.phalaAiBaseUrl), {
-        headers: { authorization: `Bearer ${key}` },
+      const response = await transport.fetch(phalaAiCatalogUrl(config.providers.phalaAiBaseUrl), {
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (response.ok) {

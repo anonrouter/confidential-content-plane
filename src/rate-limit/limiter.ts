@@ -3,6 +3,7 @@ import { Redis } from "ioredis";
 import { assertDisposableTestRedisUrl } from "../db/localSafety.js";
 import type { AppConfig } from "../config.js";
 import { VALKEY_LUA_WRITE_CAPACITY_FUNCTION } from "../observability/valkey.js";
+import { veniceProviderTransport } from "../providers/transport.js";
 import { AppError } from "../security/errors.js";
 import type { UsagePlan } from "./plans.js";
 
@@ -731,8 +732,8 @@ export class RateLimiter {
 
   private async refreshVeniceLimits() {
     if (Date.now() < this.veniceLimitsExpiresAt) return;
-    const key = this.config.providers.veniceInferenceKey;
-    if (!key) {
+    const venice = veniceProviderTransport(this.config);
+    if (!venice.hasCredential()) {
       // Split control has no Venice key; use the limits the worker published.
       try {
         const raw = await this.redis.get("venice:published:ratelimits");
@@ -754,8 +755,7 @@ export class RateLimiter {
       return;
     }
     try {
-      const response = await fetch(`${this.config.providers.veniceBaseUrl}/api_keys/rate_limits`, {
-        headers: { authorization: `Bearer ${key}` },
+      const response = await venice.fetch(`${this.config.providers.veniceBaseUrl}/api_keys/rate_limits`, {
         signal: AbortSignal.timeout(5_000)
       });
       if (!response.ok) throw new Error(`Venice rate-limit API returned ${response.status}`);

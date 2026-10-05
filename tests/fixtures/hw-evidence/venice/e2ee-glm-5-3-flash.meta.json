@@ -1,0 +1,15 @@
+{
+  "provider": "venice",
+  "public_route": "z-ai/glm-5.3-flash-e2ee",
+  "upstream_model": "e2ee-glm-5-3-flash",
+  "url": "https://api.venice.ai/api/v1/tee/attestation?model=e2ee-glm-5-3-flash&nonce=d3be17b46f8dd602878b7eb8361ca0e37af49068073baa890fb20eb725fbfbae",
+  "method": "GET",
+  "unauthenticated": true,
+  "nonce": "d3be17b46f8dd602878b7eb8361ca0e37af49068073baa890fb20eb725fbfbae",
+  "captured_at": "2026-10-01T02:42:10Z",
+  "http_status": 200,
+  "content_type": "application/json; charset=utf-8",
+  "sha256_of_body": "79f64fe415e52bcbe1b379f0a8fce0b9cf096600f58890638b971b6983b9274e",
+  "body_bytes": 214352,
+  "notes": "Raw response body exactly as received; not edited. Captured provider-direct from the audit laptop with no credential."
+}

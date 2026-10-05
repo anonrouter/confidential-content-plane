@@ -41,7 +41,8 @@ if [ ${#files[@]} -eq 0 ]; then
   # regression introduced with a base swap would otherwise be measured into the
   # app id before anything looked at it.
   for generated in docker-compose.prod5-xl.yml docker-compose.prod5-xl-preprod.yml \
-                   docker-compose.prod5-xl.candidate.yml; do
+                   docker-compose.prod5-xl.candidate.yml docker-compose.prod5-pool.yml \
+                   docker-compose.prod5-pool-preprod.yml; do
     [ -f "$generated" ] && files+=("$generated")
   done
 fi
@@ -161,6 +162,37 @@ for file in "${files[@]}"; do
     fi
   done
 
+  # --- Root and file-ownership capabilities ---------------------------------
+  # The only capability a long-running service here needs is NET_BIND_SERVICE.
+  # CHOWN and FOWNER exist for one purpose: the pooled topology's
+  # credential-state-init, which hands the worker's volume to the worker's
+  # account (POOL_CVM_TEST_RESULTS.md, finding 2). Whatever runs as root or
+  # holds them must be a one-shot with no network and no value from the
+  # encrypted environment, so the privilege cannot meet a secret or a socket.
+  privileged_bad=0
+  for svc in $(service_fields "$file" | cut -f1 | sort -u); do
+    block=$(service_fields "$file" | awk -F'\t' -v s="$svc" '$1==s { print $2 }')
+    caps=$(printf '%s\n' "$block" | awk '/^    cap_add:/ { c = 1; next } /^    [^ ]/ { c = 0 } c && /^      - / { print $2 }')
+    for cap in $caps; do
+      case "$cap" in
+        NET_BIND_SERVICE|CHOWN|FOWNER) ;;
+        *) bad "[$file] $svc adds capability $cap"; privileged_bad=1 ;;
+      esac
+    done
+    privileged=0
+    printf '%s\n' "$block" | /usr/bin/grep -qE '^    user: "?(0|0:0|root|root:root)"?[[:space:]]*$' && privileged=1
+    printf '%s\n' "$caps" | /usr/bin/grep -qxE 'CHOWN|FOWNER' && privileged=1
+    if [ "$privileged" = 1 ]; then
+      if ! printf '%s\n' "$block" | /usr/bin/grep -qE '^    network_mode: "?none"?[[:space:]]*$' \
+         || ! printf '%s\n' "$block" | /usr/bin/grep -qE '^    restart: "?no"?[[:space:]]*$' \
+         || printf '%s\n' "$block" | /usr/bin/grep -qF '${'; then
+        bad "[$file] $svc runs as root or holds CHOWN/FOWNER, so it must be a one-shot (restart: \"no\") with network_mode: none and no \${...} value"
+        privileged_bad=1
+      fi
+    fi
+  done
+  [ "$privileged_bad" -eq 0 ] && ok "[$file] root and ownership capabilities are confined to network-less one-shots"
+
   # --- No literal secret material -------------------------------------------
   if service_fields "$file" \
      | grep -EI '(api[_-]?key|secret|token|password)[[:space:]]*:[[:space:]]*["'"'"']?[A-Za-z0-9/_+.-]{16,}' \
@@ -168,6 +200,16 @@ for file in "${files[@]}"; do
     bad "[$file] appears to contain a literal credential; every secret must be a \${VAR} reference"
   else
     ok "[$file] contains no literal credential"
+  fi
+
+  # --- Every healthcheck names a test ----------------------------------------
+  # Phala's deploy API refuses a healthcheck without a `test` field (HTTP 422,
+  # seen on a real CVM with `disable: true`), so the whole deployment fails
+  # before anything changes. Use `test: ["NONE"]` to switch one off.
+  if awk '/^    healthcheck:[[:space:]]*$/ { h = NR; next } h && NR == h + 1 { if ($0 !~ /^      test:/) bad = 1; h = 0 } END { exit bad ? 0 : 1 }' "$file"; then
+    bad "[$file] has a healthcheck without a test field; Phala's API rejects it"
+  else
+    ok "[$file] every healthcheck names a test"
   fi
 
   # --- amd64 on every service ------------------------------------------------
@@ -195,14 +237,49 @@ for file in "${files[@]}"; do
     END { for (n in internal) if (!internal[n]) print n }
   ' "$file")
   for svc in $(service_fields "$file" | cut -f1 | sort -u); do
-    case "$svc" in relay|attest|venice-worker) ;; *) continue ;; esac
+    case "$svc" in relay|attest|venice-worker|pool-worker|bedrock-worker|release-collateral) ;; *) continue ;; esac
     for net in $routable; do
-      if service_fields "$file" | awk -F'\t' -v s="$svc" '$1==s' | grep -qE "^[^\t]*\t[[:space:]]*-?[[:space:]]*${net}(:|$)"; then
+      if service_fields "$file" | awk -F'\t' -v s="$svc" '$1==s { print $2 }' | /usr/bin/grep -qE "^[[:space:]]*-?[[:space:]]*${net}(:|$)"; then
         bad "[$file] $svc is attached to routable network '$net'; the SNI egress allowlist is then bypassable"
       fi
     done
   done
   ok "[$file] no content or credential service is on a routable network"
+
+  # --- Addressing (the pooled topology) -------------------------------------
+  # A dstack compose update leaves the networks of the previous topology in
+  # place, and Docker's default address pools are 31 networks in all. The
+  # first in-place update to the pooled topology on a real CVM ran them out
+  # (POOL_CVM_TEST_RESULTS.md, finding 1). So every network a pool compose
+  # declares must carry exactly one explicit subnet, and no service may fall
+  # back to the project `default` network, which Compose would create from
+  # those pools.
+  if grep -qE '^  pool-worker:' "$file"; then
+    unaddressed=$(awk '
+      /^networks:/ { in_nets = 1; next }
+      /^[a-z]/     { in_nets = 0 }
+      in_nets && /^  [A-Za-z0-9_-]+:/ { name = $1; sub(":.*", "", name); subnets[name] = 0; order[++n] = name; next }
+      in_nets && /^        - subnet: [0-9]/ { subnets[name] += 1 }
+      END { if (n == 0) print "(no networks declared)"; for (i = 1; i <= n; i++) if (subnets[order[i]] != 1) print order[i] }
+    ' "$file" | tr '\n' ' ')
+    if [ -n "$unaddressed" ]; then
+      bad "[$file] network(s) without exactly one explicit subnet, which draw on Docker's default address pools: $unaddressed"
+    else
+      ok "[$file] every network has an explicit subnet"
+    fi
+    defaulted=""
+    for svc in $(service_fields "$file" | cut -f1 | sort -u); do
+      if ! service_fields "$file" | awk -F'\t' -v s="$svc" '$1==s { print $2 }' \
+         | /usr/bin/grep -qE '^    (networks:|network_mode: "?none"?[[:space:]]*$)'; then
+        defaulted="$defaulted $svc"
+      fi
+    done
+    if [ -n "$defaulted" ]; then
+      bad "[$file] service(s) with neither networks: nor network_mode: none join Compose's default network:$defaulted"
+    else
+      ok "[$file] no service falls back to the implicit default network"
+    fi
+  fi
 done
 
 # --- The deployed image variable, when set, must itself be a digest ---------

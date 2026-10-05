@@ -22,6 +22,9 @@ import { requireServiceToken } from "./serviceAuth.js";
 import { abortOnClientDisconnect, isAbortError } from "../../inference/disconnect.js";
 import { writeWithBackpressure } from "../../inference/backpressure.js";
 import { KEY_ID_PATTERN, veniceKeyFingerprint } from "../../providers/veniceKeys.js";
+import { providerCredentialStore } from "../../providers/veniceKeyStore.js";
+import { veniceProviderTransport } from "../../providers/transport.js";
+import { isPoolWorkerRole, workerProvidersForRole, type WorkerProviderName } from "../../providers/workerProviders.js";
 
 const attestationSchema = z
   .object({
@@ -114,29 +117,48 @@ const speechSchema = z.object({
   input: z.string().min(1).max(SPEECH_MAX_INPUT_CHARS)
 }).strict();
 
+type ServiceTokenGuard = ReturnType<typeof requireServiceToken>;
+
 /**
- * Venice worker internal RPC. Authenticated by the worker service token. Holds
- * ONLY the Venice credential; it has no DB, Redis, account, auth, or payment
- * access. It forwards inference/attestation work and streams responses back.
+ * Provider worker internal RPC. Authenticated by the worker service token. A
+ * worker holds its provider credential and nothing else: it has no DB, Redis,
+ * account, auth, or payment access. It forwards inference/attestation work and
+ * streams responses back.
+ *
+ * `providers` is every provider this server serves. Each gets its own route set
+ * under /internal/<provider>/, registered once. The routes that belong to no
+ * one provider's namespace are registered once per server, however long the
+ * list. A single-provider role serves one; the pool serves its configured list.
  */
-export async function registerWorkerRpcRoutes(server: FastifyInstance) {
+export async function registerWorkerRpcRoutes(
+  server: FastifyInstance,
+  providers: readonly WorkerProviderName[] = workerProvidersForRole(
+    server.config.internal.role,
+    server.config.internal.poolProviders
+  )
+) {
   const guard = requireServiceToken(server.config.internal.workerRpcToken);
-  const workerProvider = server.config.internal.role === "fireworks-worker"
-    ? "fireworks"
-    : server.config.internal.role === "bedrock-worker"
-      ? "aws-bedrock"
-      : server.config.internal.role === "deepinfra-worker"
-        ? "deepinfra"
-        : server.config.internal.role === "chutes-worker"
-          ? "chutes"
-          : server.config.internal.role === "tinfoil-worker"
-            ? "tinfoil"
-            : server.config.internal.role === "near-worker"
-              ? "near-ai"
-              : server.config.internal.role === "phala-ai-worker"
-                ? "phala-ai"
-                : "venice";
+  for (const provider of providers) registerProviderRpcRoutes(server, provider, guard);
+  registerLegacyVeniceKeyRoutes(server, providers, guard);
+}
+
+/** One provider's routes, all under /internal/<provider>/. */
+function registerProviderRpcRoutes(
+  server: FastifyInstance,
+  workerProvider: WorkerProviderName,
+  guard: ServiceTokenGuard
+) {
   const workerBase = `/internal/${workerProvider}`;
+
+  // In production the provider a request names must be the provider whose path
+  // it arrived on, so each route set runs only its own provider's adapter with
+  // its own provider's credential. Mock routing exists only for dev/test split
+  // harnesses and the monolith.
+  const assertWorkerProvider = (providerName: string) => {
+    if (server.config.env === "production" && providerName !== workerProvider) {
+      throw new AppError(400, "worker_provider_forbidden", `This worker accepts only the ${workerProvider} provider`);
+    }
+  };
 
   server.post(`${workerBase}/attestation`, { preHandler: guard }, async (request, reply) => {
     const signal = abortOnClientDisconnect(request, reply);
@@ -169,14 +191,6 @@ export async function registerWorkerRpcRoutes(server: FastifyInstance) {
     const evidence = await server.workerClient.signatureForRequest(body.providerName, body.externalModelId, body.providerRequestId, signal);
     return { evidence };
   });
-
-  // In production each worker is locked to its configured provider. Mock
-  // routing exists only for dev/test split harnesses and the monolith.
-  const assertWorkerProvider = (providerName: string) => {
-    if (server.config.env === "production" && providerName !== workerProvider) {
-      throw new AppError(400, "worker_provider_forbidden", `This worker accepts only the ${workerProvider} provider`);
-    }
-  };
 
   server.post(`${workerBase}/chat`, { preHandler: guard }, async (request, reply) => {
     const signal = abortOnClientDisconnect(request, reply);
@@ -229,83 +243,6 @@ export async function registerWorkerRpcRoutes(server: FastifyInstance) {
     return server.workerClient.generateSpeech(body, signal);
   });
 
-  // Operator key lifecycle. Only this credential-holding process ever touches
-  // the secret: control forwards it through one POST body and stores nothing
-  // but id/label/fingerprint. The overlay file is the durable record.
-  const keyUpsertSchema = z
-    .object({
-      id: z.string().regex(KEY_ID_PATTERN),
-      label: z.string().trim().min(1).max(120).optional(),
-      key: z.string().trim().min(1).max(512)
-    })
-    .strict();
-
-  server.post("/internal/venice/keys", { preHandler: guard }, async (request) => {
-    // CLOSED in capability mode. This route is the legacy direction: a bearer
-    // token authorizes the control plane to PUSH a provider secret into the
-    // worker, which makes the control plane a credential custodian.
-    // CONTROL_RPC_CONTRACT.md forbids that at launch. The replacement is
-    // POST /internal/credentials/secret, where a signed single-use capability
-    // authorizes and the secret comes straight from the operator's verifying
-    // client. Refusing here rather than deleting the route means an operator
-    // running the old procedure gets told why, instead of a 404 they might read
-    // as a deployment fault.
-    if (server.config.internal.credentialAdmin.mode === "capability") {
-      throw new AppError(
-        410,
-        "credential_push_disabled",
-        "Provider credentials are no longer pushed from the control plane. Use the attested capability flow at POST /internal/credentials/secret."
-      );
-    }
-    if (workerProvider !== "venice") throw new AppError(404, "worker_route_unavailable", "Venice key management is unavailable on this provider worker");
-    const store = server.veniceKeyStore;
-    if (!store) throw new AppError(503, "worker_admin_unavailable", "Key lifecycle is unavailable on this worker");
-    const body = parseBody(keyUpsertSchema, request.body);
-    // Live check against Venice before accepting the credential. Skipped for
-    // tests and the mock provider; a network failure is not proof of an
-    // invalid key, so only an explicit 401 rejects.
-    if (server.config.env !== "test" && server.config.providers.defaultProvider !== "mock") {
-      let response: Response;
-      try {
-        response = await fetch(`${server.config.providers.veniceBaseUrl}/api_keys/rate_limits`, {
-          headers: { authorization: `Bearer ${body.key}` },
-          signal: AbortSignal.timeout(10_000)
-        });
-      } catch {
-        throw new AppError(503, "venice_key_verification_unavailable", "Venice could not be reached to verify the credential");
-      }
-      await response.body?.cancel().catch(() => undefined);
-      if (response.status === 401) {
-        throw new AppError(400, "venice_key_invalid", "Venice rejected the credential");
-      }
-    }
-    store.addKey({ id: body.id, label: body.label ?? null, key: body.key });
-    return { id: body.id, label: body.label ?? null, fingerprint: veniceKeyFingerprint(body.key) };
-  });
-
-  server.delete("/internal/venice/keys/:id", { preHandler: guard }, async (request) => {
-    if (server.config.internal.credentialAdmin.mode === "capability") {
-      throw new AppError(
-        410,
-        "credential_push_disabled",
-        "Provider credentials are no longer removed from the control plane. Use the attested capability flow at POST /internal/credentials/revoke."
-      );
-    }
-    if (workerProvider !== "venice") throw new AppError(404, "worker_route_unavailable", "Venice key management is unavailable on this provider worker");
-    const store = server.veniceKeyStore;
-    if (!store) throw new AppError(503, "worker_admin_unavailable", "Key lifecycle is unavailable on this worker");
-    const idResult = z.string().regex(KEY_ID_PATTERN).safeParse(String((request.params as { id: string }).id));
-    if (!idResult.success) throw new AppError(400, "invalid_venice_key_id", "Venice key id is invalid");
-    const id = idResult.data;
-    if (store.isLastRemaining(id)) {
-      throw new AppError(409, "venice_key_last_remaining", "Refusing to remove the last remaining Venice credential");
-    }
-    if (!store.removeKey(id)) {
-      throw new AppError(404, "venice_key_not_found", "Venice key is not present in the effective keyset");
-    }
-    return { ok: true };
-  });
-
   // On-demand catalog refresh: control's admin sync route delegates here in the
   // split topology, since only the worker holds a Venice credential. The worker
   // fetches + normalizes the catalog and pushes it back to control before this
@@ -316,7 +253,7 @@ export async function registerWorkerRpcRoutes(server: FastifyInstance) {
       throw new AppError(503, "catalog_sync_unavailable", "Catalog sync does not run on this worker");
     }
     try {
-      await syncNow();
+      await syncNow(workerProvider);
     } catch {
       throw new AppError(502, "pricing_sync_failed", "Provider catalog sync failed");
     }
@@ -360,5 +297,103 @@ export async function registerWorkerRpcRoutes(server: FastifyInstance) {
     }
     if (!reply.raw.destroyed && !reply.raw.writableEnded) reply.raw.end();
     return reply;
+  });
+}
+
+/**
+ * The legacy bearer-authorized Venice key lifecycle: two fixed paths that sit
+ * in no provider's route set, so they are registered once per server. They act
+ * only where Venice is served, and only on Venice's own store.
+ */
+function registerLegacyVeniceKeyRoutes(
+  server: FastifyInstance,
+  providers: readonly WorkerProviderName[],
+  guard: ServiceTokenGuard
+) {
+  const servesVenice = providers.includes("venice");
+  // Where the capability flow that replaces these routes lives: namespaced by
+  // provider on the pool, un-namespaced on a single-provider worker.
+  const capabilityBase = isPoolWorkerRole(server.config.internal.role)
+    ? "/internal/credentials/venice"
+    : "/internal/credentials";
+
+  // Operator key lifecycle. Only this credential-holding process ever touches
+  // the secret: control forwards it through one POST body and stores nothing
+  // but id/label/fingerprint. The overlay file is the durable record.
+  const keyUpsertSchema = z
+    .object({
+      id: z.string().regex(KEY_ID_PATTERN),
+      label: z.string().trim().min(1).max(120).optional(),
+      key: z.string().trim().min(1).max(512)
+    })
+    .strict();
+
+  server.post("/internal/venice/keys", { preHandler: guard }, async (request) => {
+    // CLOSED in capability mode. This route is the legacy direction: a bearer
+    // token authorizes the control plane to PUSH a provider secret into the
+    // worker, which makes the control plane a credential custodian.
+    // CONTROL_RPC_CONTRACT.md forbids that at launch. The replacement is
+    // POST /internal/credentials/secret, where a signed single-use capability
+    // authorizes and the secret comes straight from the operator's verifying
+    // client. Refusing here rather than deleting the route means an operator
+    // running the old procedure gets told why, instead of a 404 they might read
+    // as a deployment fault.
+    if (server.config.internal.credentialAdmin.mode === "capability") {
+      throw new AppError(
+        410,
+        "credential_push_disabled",
+        `Provider credentials are no longer pushed from the control plane. Use the attested capability flow at POST ${capabilityBase}/secret.`
+      );
+    }
+    if (!servesVenice) throw new AppError(404, "worker_route_unavailable", "Venice key management is unavailable on this provider worker");
+    const store = providerCredentialStore(server, "venice");
+    if (!store) throw new AppError(503, "worker_admin_unavailable", "Key lifecycle is unavailable on this worker");
+    const body = parseBody(keyUpsertSchema, request.body);
+    // Live check against Venice before accepting the credential. Skipped for
+    // tests and the mock provider; a network failure is not proof of an
+    // invalid key, so only an explicit 401 rejects.
+    if (server.config.env !== "test" && server.config.providers.defaultProvider !== "mock") {
+      let response: Response;
+      try {
+        // The candidate is not installed yet, so no resolver knows it. The
+        // transport still pins it to Venice's own origin and refuses a redirect.
+        response = await veniceProviderTransport(server.config).probeCandidate(
+          `${server.config.providers.veniceBaseUrl}/api_keys/rate_limits`,
+          body.key,
+          AbortSignal.timeout(10_000)
+        );
+      } catch {
+        throw new AppError(503, "venice_key_verification_unavailable", "Venice could not be reached to verify the credential");
+      }
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status === 401) {
+        throw new AppError(400, "venice_key_invalid", "Venice rejected the credential");
+      }
+    }
+    store.addKey({ id: body.id, label: body.label ?? null, key: body.key });
+    return { id: body.id, label: body.label ?? null, fingerprint: veniceKeyFingerprint(body.key) };
+  });
+
+  server.delete("/internal/venice/keys/:id", { preHandler: guard }, async (request) => {
+    if (server.config.internal.credentialAdmin.mode === "capability") {
+      throw new AppError(
+        410,
+        "credential_push_disabled",
+        `Provider credentials are no longer removed from the control plane. Use the attested capability flow at POST ${capabilityBase}/revoke.`
+      );
+    }
+    if (!servesVenice) throw new AppError(404, "worker_route_unavailable", "Venice key management is unavailable on this provider worker");
+    const store = providerCredentialStore(server, "venice");
+    if (!store) throw new AppError(503, "worker_admin_unavailable", "Key lifecycle is unavailable on this worker");
+    const idResult = z.string().regex(KEY_ID_PATTERN).safeParse(String((request.params as { id: string }).id));
+    if (!idResult.success) throw new AppError(400, "invalid_venice_key_id", "Venice key id is invalid");
+    const id = idResult.data;
+    if (store.isLastRemaining(id)) {
+      throw new AppError(409, "venice_key_last_remaining", "Refusing to remove the last remaining Venice credential");
+    }
+    if (!store.removeKey(id)) {
+      throw new AppError(404, "venice_key_not_found", "Venice key is not present in the effective keyset");
+    }
+    return { ok: true };
   });
 }

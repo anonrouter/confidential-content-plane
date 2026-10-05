@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
 import { AppError } from "../../security/errors.js";
 import { parseBody } from "../helpers.js";
@@ -19,6 +20,17 @@ import {
 } from "../../credentials/capabilityConfig.js";
 import { ConsumedCapabilityLog } from "../../credentials/consumedCapabilities.js";
 import { veniceKeyFingerprint, KEY_ID_PATTERN } from "../../providers/veniceKeys.js";
+import { providerCredentialStore } from "../../providers/veniceKeyStore.js";
+import { veniceProviderTransport } from "../../providers/transport.js";
+import {
+  consumedCapabilityFileName,
+  isPoolWorkerRole,
+  POOL_WORKER_ROLE,
+  workerMetadataTokenFor,
+  workerProviderForRole,
+  type PoolProviderName,
+  type WorkerProviderName
+} from "../../providers/workerProviders.js";
 import { credentialOutcomeSchema } from "./rpcSchemas.js";
 
 /**
@@ -99,18 +111,82 @@ function fingerprintFor(provider: string, secret: string): string {
   return full.slice(0, 16);
 }
 
-export async function registerCredentialAdminRoutes(server: FastifyInstance) {
+/** Where one provider's routes are mounted, and where its replay record lives. */
+interface CredentialAdminMount {
+  /** The path the three routes hang under. */
+  readonly basePath: string;
+  /** This provider's consumed-capability log. Never shared between providers. */
+  readonly consumedCapabilityFile: string;
+}
+
+/**
+ * A single-provider worker's credential administration, at the un-namespaced
+ * paths it has always had: /internal/credentials/{identity,secret,revoke}.
+ *
+ * `provider` is the ONE provider these routes administer. It defaults to the
+ * role's own provider (Venice for a role that is not a provider worker, as
+ * before).
+ *
+ * Refused on the pool. These paths name no provider, so on a server that
+ * serves several they could only be one provider's by accident; the pool
+ * registers registerPooledCredentialAdminRoutes instead.
+ */
+export async function registerCredentialAdminRoutes(
+  server: FastifyInstance,
+  provider?: WorkerProviderName
+) {
+  if (isPoolWorkerRole(server.config.internal.role)) {
+    throw new Error(`${POOL_WORKER_ROLE} registers credential administration per provider, under namespaced paths`);
+  }
+  await registerProviderCredentialAdminRoutes(
+    server,
+    provider ?? workerProviderForRole(server.config.internal.role) ?? "venice",
+    {
+      basePath: "/internal/credentials",
+      consumedCapabilityFile: server.config.internal.credentialAdmin.consumedCapabilityFile
+    }
+  );
+}
+
+/**
+ * The pool's credential administration: one route set PER PROVIDER, at
+ * /internal/credentials/<provider>/{identity,secret,revoke}, `<provider>` being
+ * the canonical name.
+ *
+ * Each set is bound to its provider exactly as a single-provider worker's is:
+ * the capability must be for the provider of the path it arrived on, the store
+ * is that provider's or none, and the outcome goes out under that provider's
+ * metadata token. Each also keeps its OWN replay log, under the filename that
+ * provider's own worker uses, so rolling back to the per-provider workers
+ * finds the same consumed capabilities (review finding C5).
+ */
+export async function registerPooledCredentialAdminRoutes(
+  server: FastifyInstance,
+  providers: readonly PoolProviderName[]
+) {
+  const directory = server.config.internal.credentialAdmin.consumedCapabilityDir;
+  for (const provider of providers) {
+    await registerProviderCredentialAdminRoutes(server, provider, {
+      basePath: `/internal/credentials/${provider}`,
+      consumedCapabilityFile: join(directory, consumedCapabilityFileName(provider))
+    });
+  }
+}
+
+/**
+ * One provider's routes. Everything below acts for `provider` and for nothing
+ * else: the capability must be bound to it, the store is the one bound to it,
+ * and the outcome is reported under its metadata token. Nothing reads the role
+ * again, so the routes can be registered for a provider by whoever knows which
+ * one they are for.
+ */
+async function registerProviderCredentialAdminRoutes(
+  server: FastifyInstance,
+  provider: WorkerProviderName,
+  mount: CredentialAdminMount
+) {
   const settings = server.config.internal.credentialAdmin;
   if (settings.mode !== "capability") return;
-
-  const provider = server.config.internal.role === "fireworks-worker" ? "fireworks"
-    : server.config.internal.role === "bedrock-worker" ? "aws-bedrock"
-      : server.config.internal.role === "deepinfra-worker" ? "deepinfra"
-        : server.config.internal.role === "chutes-worker" ? "chutes"
-          : server.config.internal.role === "tinfoil-worker" ? "tinfoil"
-            : server.config.internal.role === "near-worker" ? "near-ai"
-              : server.config.internal.role === "phala-ai-worker" ? "phala-ai"
-                : "venice";
 
   // Fail at BOOT, not at first use. A workload configured for capability mode
   // without a pinned signer cannot verify anything, and discovering that during
@@ -128,8 +204,11 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
     throw new Error("CREDENTIAL_ADMIN_MODE=capability requires CONTENT_TLS_SPKI_SHA256 to publish the serving endpoint identity");
   }
 
-  const consumed = new ConsumedCapabilityLog(settings.consumedCapabilityFile);
+  const consumed = new ConsumedCapabilityLog(mount.consumedCapabilityFile);
   const deploymentId = server.config.internal.confidentialDeploymentId;
+  // Outcomes go to control under the metadata token of the provider these
+  // routes serve, as every other worker-to-control call made for it does.
+  const workerMetadataToken = workerMetadataTokenFor(server.config.internal, provider);
 
   /**
    * Verify, then consume. Both, in that order, before anything is stored.
@@ -159,10 +238,12 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
         publicKeys: signers.publicKeys,
         deploymentId,
         // Every one of these is compared against LOCAL truth by the verifier:
-        // this deployment's id, this worker's provider, and the action and
-        // credential id the signed bytes themselves carry. A caller supplies
-        // none of them.
+        // this deployment's id, the provider these routes serve, and the
+        // action and credential id the signed bytes themselves carry. A caller
+        // supplies none of them.
         action: claimed.action,
+        // The capability must be bound to THIS provider. One issued for any
+        // other is refused here, before it is consumed or anything is stored.
         provider,
         credentialId: claimed.credentialId,
         now: Math.floor(Date.now() / 1000),
@@ -239,7 +320,7 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${server.config.internal.workerMetadataToken}`
+          authorization: `Bearer ${workerMetadataToken}`
         },
         body: JSON.stringify(validated.data),
         signal: AbortSignal.timeout(10_000)
@@ -277,12 +358,15 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
    * id: the store replaces the entry atomically, so the new secret is live
    * before the old one is unreachable and no request sees an empty keyset.
    */
-  server.post("/internal/credentials/secret", async (request) => {
+  server.post(`${mount.basePath}/secret`, async (request) => {
     const body = parseBody(installSchema, request.body);
     const label = readLabel(request.body);
     const capability = authorize(body.capability, INSTALL_ACTIONS);
 
-    const store = server.veniceKeyStore;
+    // The store BOUND TO THIS PROVIDER, never "whatever store this process
+    // has". A provider with no store is refused here, before any store is
+    // touched, even when a Venice store is present in the same process.
+    const store = providerCredentialStore(server, provider);
     if (!store) {
       await reportOutcome(request, { capabilityId: capability.capabilityId, outcome: "failed", outcomeCode: "credential_store_unavailable" });
       throw new AppError(503, "credential_store_unavailable", "This workload has no measured credential store");
@@ -298,10 +382,13 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
     if (server.config.env !== "test" && server.config.providers.defaultProvider !== "mock" && provider === "venice") {
       let response: Response;
       try {
-        response = await fetch(`${server.config.providers.veniceBaseUrl}/api_keys/rate_limits`, {
-          headers: { authorization: `Bearer ${body.secret}` },
-          signal: AbortSignal.timeout(10_000)
-        });
+        // The candidate is not installed yet, so no resolver knows it. The
+        // transport still pins it to Venice's own origin and refuses a redirect.
+        response = await veniceProviderTransport(server.config).probeCandidate(
+          `${server.config.providers.veniceBaseUrl}/api_keys/rate_limits`,
+          body.secret,
+          AbortSignal.timeout(10_000)
+        );
       } catch {
         await reportOutcome(request, { capabilityId: capability.capabilityId, outcome: "failed", outcomeCode: "provider_unreachable" });
         throw new AppError(503, "credential_verification_unavailable", "The provider could not be reached to verify the credential");
@@ -320,7 +407,7 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
 
     // Publish the content-free descriptor set so the control plane's metadata
     // catches up immediately rather than at the next poll.
-    await server.catalogSyncNow?.().catch(() => undefined);
+    await server.catalogSyncNow?.(provider).catch(() => undefined);
     await reportOutcome(request, {
       capabilityId: capability.capabilityId,
       outcome: "applied",
@@ -341,11 +428,12 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
     return auditView(capability, fingerprint, "active", label);
   });
 
-  server.post("/internal/credentials/revoke", async (request) => {
+  server.post(`${mount.basePath}/revoke`, async (request) => {
     const body = parseBody(revokeSchema, request.body);
     const capability = authorize(body.capability, REVOKE_ACTIONS);
 
-    const store = server.veniceKeyStore;
+    // Same binding as installation: this provider's store or none.
+    const store = providerCredentialStore(server, provider);
     if (!store) {
       await reportOutcome(request, { capabilityId: capability.capabilityId, outcome: "failed", outcomeCode: "credential_store_unavailable" });
       throw new AppError(503, "credential_store_unavailable", "This workload has no measured credential store");
@@ -358,7 +446,7 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
       await reportOutcome(request, { capabilityId: capability.capabilityId, outcome: "rejected", outcomeCode: "credential_not_found" });
       throw new AppError(404, "credential_not_found", "No such credential is present in the effective keyset");
     }
-    await server.catalogSyncNow?.().catch(() => undefined);
+    await server.catalogSyncNow?.(provider).catch(() => undefined);
     await reportOutcome(request, {
       capabilityId: capability.capabilityId,
       outcome: "applied",
@@ -389,13 +477,15 @@ export async function registerCredentialAdminRoutes(server: FastifyInstance) {
    * capability, so this comparison is the client's job and this route is what
    * makes it possible.
    */
-  server.get("/internal/credentials/identity", async () => ({
+  server.get(`${mount.basePath}/identity`, async () => ({
     deployment_id: deploymentId,
     provider,
     tls_spki_sha256: settings.tlsSpkiSha256,
     capability_protocol: CAPABILITY_PROTOCOL,
     capability_signer_key_ids: Object.keys(signers.publicKeys).sort(),
-    accepted_actions: [...INSTALL_ACTIONS, ...REVOKE_ACTIONS]
+    // What this endpoint will actually perform for its provider. A provider
+    // with no store accepts nothing, and says so before a client sends a secret.
+    accepted_actions: providerCredentialStore(server, provider) ? [...INSTALL_ACTIONS, ...REVOKE_ACTIONS] : []
   }));
 }
 

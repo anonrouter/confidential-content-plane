@@ -17,7 +17,12 @@
 //   relay              full request and response bodies, transiently
 //   compat             full bodies and the caller's static `ar_` key
 //   <provider>-worker  full bodies plus exactly one provider credential
+//   pool-worker        full bodies plus the credentials of every provider it
+//                      is configured to serve (POOL_PROVIDERS)
 //   gateway-attestation  no content at all; sole holder of /var/run/dstack.sock
+//   release-collateral  no content and no credential; makes the pool's
+//                      release-authority lookups, and is the only role whose
+//                      egress reaches GitHub and Base
 //
 // A role this entry point does not recognize is refused rather than defaulted.
 // `index.ts` falls through to the monolith, which is right for a dev process and
@@ -44,7 +49,9 @@ const CONTENT_ROLES = new Set([
   "chutes-worker",
   "tinfoil-worker",
   "near-worker",
-  "phala-ai-worker"
+  "phala-ai-worker",
+  "pool-worker",
+  "release-collateral"
 ]);
 
 async function buildForRole() {
@@ -62,6 +69,7 @@ async function buildForRole() {
   if (role === "relay") return roles.buildRelayServer(config);
   if (role === "compat") return roles.buildCompatServer(config);
   if (role === "gateway-attestation") return roles.buildGatewayAttestationServer(config);
+  if (role === "release-collateral") return roles.buildReleaseCollateralServer(config);
   return roles.buildWorkerServer(config);
 }
 

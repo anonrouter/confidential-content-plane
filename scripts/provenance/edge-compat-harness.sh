@@ -46,18 +46,23 @@ set -euo pipefail
 CANDIDATE="${1:?usage: edge-compat-harness.sh <candidate-image> [--caddyfile <path>] [--json <out>]}"
 shift || true
 CADDYFILE="deploy/phala/images/edge-xl/Caddyfile"
+TOPOLOGY=xl
+CADDY_OVERRIDE=""
 JSON_OUT=""
 # The base the edge runs today, pinned to its linux/amd64 child manifest exactly
 # as deploy/phala/images/edge/Dockerfile pins it.
 STOCK_BASE="caddy:2.11.4-alpine@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a3411ad798f7a423a"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --caddyfile) CADDYFILE="$2"; shift 2 ;;
+    --caddyfile) CADDY_OVERRIDE="$2"; shift 2 ;;
+    --topology) TOPOLOGY="${2:-}"; shift 2 ;;
     --json) JSON_OUT="$2"; shift 2 ;;
     --stock-base) STOCK_BASE="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+case "$TOPOLOGY" in xl|pool) ;; *) echo "--topology must be xl or pool" >&2; exit 2 ;; esac
+CADDYFILE="${CADDY_OVERRIDE:-deploy/phala/images/edge-${TOPOLOGY}/Caddyfile}"
 [ -f "$CADDYFILE" ] || { echo "no Caddyfile at $CADDYFILE" >&2; exit 2; }
 
 TAG=$$
@@ -65,6 +70,7 @@ NET="edge-compat-$TAG"
 WORK="$(mktemp -d)"
 VOL="edge-compat-evidences-$TAG"
 STUBS="relay compat attest venice-worker fireworks-worker deepinfra-worker chutes-worker tinfoil-worker near-worker bedrock-worker"
+[ "$TOPOLOGY" = xl ] || STUBS="relay compat attest pool-worker bedrock-worker release-collateral"
 declare -A RESULT
 
 cleanup() {

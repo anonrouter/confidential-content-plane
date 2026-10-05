@@ -4,6 +4,7 @@ import { computeSourceHash } from "./hash.js";
 import { normalizeNearCatalog, type RawNearModel } from "./nearNormalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
 import { backoffDelayMs, parseRetryAfterMs, type FetchOptions } from "./sync.js";
+import { staticProviderTransport } from "../transport.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -32,10 +33,10 @@ export function nearCatalogUrl(baseUrl: string): string {
 }
 
 export async function fetchRawNearModels(config: ContentPlaneConfig, opts: FetchOptions = {}): Promise<RawNearModel[]> {
-  const key = config.providers.nearApiKey;
+  const transport = staticProviderTransport(config, "near-ai");
   // Fail closed: without the credential the provider stays un-synced (and thus
   // never callable). The NEAR gateway model list requires a bearer token.
-  if (!key) throw new Error("near_credential_missing");
+  if (!transport.hasCredential()) throw new Error("near_credential_missing");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
   const random = opts.random ?? Math.random;
@@ -44,8 +45,7 @@ export async function fetchRawNearModels(config: ContentPlaneConfig, opts: Fetch
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     let retryAfterMs: number | null = null;
     try {
-      const response = await fetch(nearCatalogUrl(config.providers.nearBaseUrl), {
-        headers: { authorization: `Bearer ${key}` },
+      const response = await transport.fetch(nearCatalogUrl(config.providers.nearBaseUrl), {
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (response.ok) {

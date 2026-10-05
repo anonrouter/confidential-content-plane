@@ -1,0 +1,430 @@
+{
+  "dstackImages": [
+    {
+      "computedBy": "dstack-mr @ Dstack-TEE/dstack 3c877847",
+      "image": "dstack-nvidia-0.5.5",
+      "isDev": false,
+      "measurementDocumentSha256": "e482b083a31637bb4be08f64cd9d991cee874d033b33e9b69b45f04d7010fc43",
+      "measurements": [
+        {
+          "mrtd": "b24d3b24e9e3c16012376b52362ca09856c4adecb709d5fac33addf1c47e193da075b125b6c364115771390a5461e217",
+          "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+          "rtmr1": "c0445b704e4c48139496ae337423ddb1dcee3a673fd5fb60a53d562f127d235f11de471a7b4ee12c9027c829786757dc",
+          "rtmr2": "564622c7ddc55a53272cc9f0956d29b3f7e0dd18ede432720b71fd89e5b5d76cb0b99be7b7ff2a6a92b89b6b01643135",
+          "shape": {
+            "cpu_count": 64,
+            "hotplug_off": true,
+            "hugepages": false,
+            "memory_size": 2199023255552,
+            "num_gpus": 8,
+            "num_nvswitches": 4,
+            "pci_hole64_size": 1125899906842624,
+            "qemu_version": "9.2.1"
+          }
+        }
+      ],
+      "osImageHash": "9b69bb1698bacbb6985409a2c272bcb892e09cdcea63d5399c6768b67d3ff677",
+      "prerelease": false,
+      "source": "https://github.com/Dstack-TEE/meta-dstack/releases/download/v0.5.5/dstack-nvidia-0.5.5.tar.gz (sha256sum.txt verified: 4 files; git_revision 25c25025c556ab2f797eeda3bab433f38a8ffb7a)"
+    }
+  ],
+  "github": [
+    {
+      "v": 1,
+      "repository": "nearai/cvm-compose-files",
+      "fetchedAtMs": 1790874850999,
+      "defaultBranch": "main",
+      "defaultBranchHead": "0e55b0e7ddc212b085ffded94857af4a7b645611",
+      "tags": {
+        "v0.0.212": "e9f44404746b7d99ea1265a907d25aed479a3065",
+        "v0.0.213": "17ff9cf3f0fd5dfcf3128757ffc6fe1b5f616a0e",
+        "v0.0.214": "8cb87c4f865bc7945ea3dd7286392c4b6f96b0d5",
+        "v0.0.215": "ca36a213ccaeaed188f80c74ec2e03eebc28bb95",
+        "v0.0.232": "bf952c8081c2478a14618960392f2cf5cb2c4fb3",
+        "v0.0.243": "f12d031a28a87ca022301e87a554cb86e1a1090a",
+        "v0.0.244": "59a5ee274d486173a5ea136f7083c9091ccb0971",
+        "v0.0.245": "d29c6f591a837c4432d63f0b18ffe1017ec8a363",
+        "v0.0.248": "e3155012d0b8735dd9193541eee80f27f4a3fdd0",
+        "v0.0.252": "19a293df58bda717fdbe4b50543f96b4e8b267da",
+        "v0.0.251": "f4fae0779b93525ca37093f326c106ba1f4ee358",
+        "v0.0.258": "af768283208224d3d582719389e767c289d2b7f9",
+        "v0.0.259": "9b0b28c442723a58d5b2e528bba432cb7e34245a",
+        "v0.0.264": "053dd2205783334eaf85e2713164e74d210bacb8",
+        "v0.0.267": "a3ba934483e2236165af9447b68af6ee58222320",
+        "v0.0.268": "a23ce58a6cdcedb502d36948f5d1c3e1a143e000",
+        "v0.0.269": "222f060e2376a17ab58cd35cec498f64e00c9098",
+        "v0.0.270": "3bed512232b4413ea893e12a3284c9c375e80951",
+        "v0.0.271": "ae133b197a50b1ef59d81dd4fcf86ae1bb4c18b1",
+        "v0.0.275": "aa2e3db100546c3e4e99de16c68e111f469ce200",
+        "v0.0.282": "e3d39ddc737beb5356d6b0b61b84a5ea4f09fda7",
+        "v0.0.294": "cb64f432f8a1a1733b3c7828f312054b106cbbe3",
+        "v0.0.295": "6a284da32cbd385192d3d9de96f48af2d5794cbc",
+        "v0.0.339": "ed7dac33e50b4891cf432b0ed5c5f260ca14af53",
+        "v0.0.344": "1a7d6e548b1914dc38206d00da37898bde1b0a13",
+        "v0.0.353": "30ef5aeff572e49ca12eeaf1b733c32c30081165",
+        "v0.0.356": "83c34077aa7ffe500bc08894a52b44e05ae4af86",
+        "v0.0.358": "7d631eb1267e3c7f2a63e34fdf5a66b438de38ca",
+        "v0.0.385": "33b77d54c5bc8ef3ac137134e5ff7cab866e7579",
+        "v0.0.401": "ea8b3d5505659385f004d5e1febf6fbc19eed0b3",
+        "v0.0.402": "02254afadea3c4a90b1226306b0dc87a2c990a5b",
+        "v0.0.403": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+        "v0.0.405": "1755bb7c005a84f7a9fd5aafe9ce8739a0156f40",
+        "v0.0.409": "e14107901d202215ab44eb027eb4792047d5ec83",
+        "v0.0.411": "6bb6b2bf347ea3b1e8e92208b2292a12d4db9032",
+        "v0.0.419": "e223fbaabcee70fb55339d13055797914f19572f",
+        "v0.0.430": "752ff956b2efd85d3962aefe008fe5d6b261ddc4",
+        "v0.0.431": "3560f542ec3055aaea25759d2f1495f555c9f78d",
+        "v0.0.435": "7aa9fac88b92b587580216fc00e5d36ac563e8e9",
+        "v0.0.438": "fed23856b76ac00bca632e6c2fff671d18235370",
+        "v0.0.444": "c3059d27b9b7140d18b6fa8e939388bf63f6581e",
+        "v0.0.445": "e3a62492e37de51824a9e2c8b4936ba1482eab61",
+        "v0.0.454": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+        "v0.0.455": "beddc6b91b8ee8b2888bdaf8db5eff9f6fcb3c60",
+        "v0.0.457": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+        "v0.0.458": "56fd700ac2bbe5bdeaf08176e62c2fcf698dd2df"
+      },
+      "defaultBranchAncestors": [
+        "1776c27a2df4523549a0a27547990072d526e032",
+        "216559ef2af1cb973a6ff5743d143fbb22fd80b7",
+        "8e1e0a4e32e9f8190061159f433960a1dba87d76"
+      ],
+      "files": [
+        {
+          "commit": "01356c5dedfec944058ebfa9dc935a82b1d1e754",
+          "path": "prod/small-models.yaml",
+          "sha256": "da2ad1fac408b4c1207b7452763088bfb6e066bb99e1d3a77686ece606af63d9"
+        },
+        {
+          "commit": "02254afadea3c4a90b1226306b0dc87a2c990a5b",
+          "path": "prod/small-models.yaml",
+          "sha256": "55c3580bd8dec12d497846c12db583e5781bec1b378092286fcaff6d572e326d"
+        },
+        {
+          "commit": "053dd2205783334eaf85e2713164e74d210bacb8",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "ac799789afd3c2a04e86b6406953ee99c4d6c4620144bc3e91c1dada7c0996f3"
+        },
+        {
+          "commit": "1755bb7c005a84f7a9fd5aafe9ce8739a0156f40",
+          "path": "prod/small-models.yaml",
+          "sha256": "78eeefb4c69ff5dd7f562f056d2eb5049a9934b6a366af00f80e05177b1d9cc7"
+        },
+        {
+          "commit": "1776c27a2df4523549a0a27547990072d526e032",
+          "path": "prod/gpu13-qwen-handover.yaml",
+          "sha256": "75970ee35818dc03a28592b5d8cc953978d2272cae06d70bffea828781aff941"
+        },
+        {
+          "commit": "17ff9cf3f0fd5dfcf3128757ffc6fe1b5f616a0e",
+          "path": "dsv4-qwen36-gemma4.yaml",
+          "sha256": "a4d3196ea7c309033cbae1600bc566da5f5123d9dc131581e969a78a9291e5d3"
+        },
+        {
+          "commit": "19a293df58bda717fdbe4b50543f96b4e8b267da",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "49c292d021b3a451bd6ef9ac556eeebda908f2e404df789881e4ff32a7c71ccb"
+        },
+        {
+          "commit": "1a7d6e548b1914dc38206d00da37898bde1b0a13",
+          "path": "prod/small-models.yaml",
+          "sha256": "ce39ea4cfe0ddf4dc2e4fbb96b6c66ab9f72954444d5419b196d06940db5e297"
+        },
+        {
+          "commit": "216559ef2af1cb973a6ff5743d143fbb22fd80b7",
+          "path": "prod/gpu13-qwen-handover.yaml",
+          "sha256": "55edf1c621f6c5ba5ab877f7fd67067069c8286562211c261802f7b9e0f09370"
+        },
+        {
+          "commit": "222f060e2376a17ab58cd35cec498f64e00c9098",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "fa978df21f94bd9cc28f9c2066e476e50ff5e20646cf232fef342d122075f718"
+        },
+        {
+          "commit": "30ef5aeff572e49ca12eeaf1b733c32c30081165",
+          "path": "prod/small-models.yaml",
+          "sha256": "ce39ea4cfe0ddf4dc2e4fbb96b6c66ab9f72954444d5419b196d06940db5e297"
+        },
+        {
+          "commit": "33b77d54c5bc8ef3ac137134e5ff7cab866e7579",
+          "path": "prod/small-models.yaml",
+          "sha256": "3bc665774f57d12cc851c200b7926373d1fb9226890109abae482ed26d309ccc"
+        },
+        {
+          "commit": "3560f542ec3055aaea25759d2f1495f555c9f78d",
+          "path": "prod/small-models.yaml",
+          "sha256": "28ed5ef65cbbdcf336354fc6c33844f868e076cc214062c24829a1a5ed2554b8"
+        },
+        {
+          "commit": "3bed512232b4413ea893e12a3284c9c375e80951",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "60eb21433e3284612170223565b6c82d577f4cdbd50b832584d72136ec50a0c3"
+        },
+        {
+          "commit": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+          "path": "prod/rotate-compose-manager-token.yaml",
+          "sha256": "0d1263e5169ebacdb1da157857aafff9a5bb5645aabbd921b3bd7e18d60a8ee2"
+        },
+        {
+          "commit": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+          "path": "prod/small-models.yaml",
+          "sha256": "415b7368eb7f3119cd31bc06f5634d4caeb782716e58c7226d49e0e46bf0af8a"
+        },
+        {
+          "commit": "56fd700ac2bbe5bdeaf08176e62c2fcf698dd2df",
+          "path": "prod/small-models.yaml",
+          "sha256": "f7eb49fe05f6a93da4a5c48849990f2256547f1e087fc9101cc574b4655cf276"
+        },
+        {
+          "commit": "59a5ee274d486173a5ea136f7083c9091ccb0971",
+          "path": "deepseek-v4-gemma4-int4-autoround-test.yaml",
+          "sha256": "37a7ed54d7fce337e201f81813340293e8f6170f965876d1460a3a01119c4d63"
+        },
+        {
+          "commit": "6a284da32cbd385192d3d9de96f48af2d5794cbc",
+          "path": "prod/small-models.yaml",
+          "sha256": "a385f19a51054767b8be49a64ebc3111e0e62f721a861e54c78984b186904599"
+        },
+        {
+          "commit": "6bb6b2bf347ea3b1e8e92208b2292a12d4db9032",
+          "path": "prod/small-models.yaml",
+          "sha256": "f636fc32f35a9499694c89c79943948a419b671c4d11f1d608ab48f368afb1c5"
+        },
+        {
+          "commit": "752ff956b2efd85d3962aefe008fe5d6b261ddc4",
+          "path": "prod/small-models.yaml",
+          "sha256": "c8ec362a1edf7f1f11688bfc0109522d5e5ac290ec1f45983ec24668bf9df084"
+        },
+        {
+          "commit": "7aa9fac88b92b587580216fc00e5d36ac563e8e9",
+          "path": "prod/small-models.yaml",
+          "sha256": "128af0a14e9377e331755647f511dcbe37ae2a3ce0b76898ccc4581085075037"
+        },
+        {
+          "commit": "7d631eb1267e3c7f2a63e34fdf5a66b438de38ca",
+          "path": "prod/small-models.yaml",
+          "sha256": "cb9040a3e32a0e9157baf26b804d95a3ec55b91d9ae87383e0acd4300490078e"
+        },
+        {
+          "commit": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+          "path": "prod/small-models.yaml",
+          "sha256": "7b9b36ef679724450d45d1fdb231175ad2b14accc81e3175d50ba6d638648d0a"
+        },
+        {
+          "commit": "83c34077aa7ffe500bc08894a52b44e05ae4af86",
+          "path": "prod/small-models.yaml",
+          "sha256": "ce39ea4cfe0ddf4dc2e4fbb96b6c66ab9f72954444d5419b196d06940db5e297"
+        },
+        {
+          "commit": "8cb87c4f865bc7945ea3dd7286392c4b6f96b0d5",
+          "path": "dsv4-qwen36-gemma4.yaml",
+          "sha256": "eafcdc2c260a4a564221246f72860f2eca6a8da29c631184478c31ebe2eac73e"
+        },
+        {
+          "commit": "8e1e0a4e32e9f8190061159f433960a1dba87d76",
+          "path": "prod/migration-gpu-preflight.yaml",
+          "sha256": "62b2bc14c57ea6c8231eee4e79895423a7bd472db56f6c8ce0ad17e85046f6db"
+        },
+        {
+          "commit": "9b0b28c442723a58d5b2e528bba432cb7e34245a",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "ac799789afd3c2a04e86b6406953ee99c4d6c4620144bc3e91c1dada7c0996f3"
+        },
+        {
+          "commit": "a23ce58a6cdcedb502d36948f5d1c3e1a143e000",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "60eb21433e3284612170223565b6c82d577f4cdbd50b832584d72136ec50a0c3"
+        },
+        {
+          "commit": "a3ba934483e2236165af9447b68af6ee58222320",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "60eb21433e3284612170223565b6c82d577f4cdbd50b832584d72136ec50a0c3"
+        },
+        {
+          "commit": "aa2e3db100546c3e4e99de16c68e111f469ce200",
+          "path": "prod/GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "d111c68d2c94ec524247663e59052c7fd4f751f7ad057acfdf86ab08ff1840b4"
+        },
+        {
+          "commit": "ae133b197a50b1ef59d81dd4fcf86ae1bb4c18b1",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "d20b7b863e82490b6d8d957e10326f8a4b99a9fb7eb940362f3e7aeb6c6a50d9"
+        },
+        {
+          "commit": "af768283208224d3d582719389e767c289d2b7f9",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "7d53bd707f61ecd33095bd12edda70c28a3489023aeb84fb71ffe52056061136"
+        },
+        {
+          "commit": "beddc6b91b8ee8b2888bdaf8db5eff9f6fcb3c60",
+          "path": "prod/small-models.yaml",
+          "sha256": "7e55dffa6932cb9302e1ed43b2cc49917e362674973332239dd87408fdda5596"
+        },
+        {
+          "commit": "bf952c8081c2478a14618960392f2cf5cb2c4fb3",
+          "path": "glm51_otel_test.yaml",
+          "sha256": "1a90c20c52766d4342ba13c50e6a24fb28288fba34535bedd6fa6a2aecab4f7c"
+        },
+        {
+          "commit": "c3059d27b9b7140d18b6fa8e939388bf63f6581e",
+          "path": "prod/small-models.yaml",
+          "sha256": "e2a3b1de00693c0a7127aece54e02456eb230198db38e1f8058d298be2b6588d"
+        },
+        {
+          "commit": "ca36a213ccaeaed188f80c74ec2e03eebc28bb95",
+          "path": "dsv4-qwen36-gemma4.yaml",
+          "sha256": "3820077bcdfca8b148229f621b25b73bb73f61585c8b1107365fa27f00053e99"
+        },
+        {
+          "commit": "cb64f432f8a1a1733b3c7828f312054b106cbbe3",
+          "path": "prod/small-models.yaml",
+          "sha256": "a385f19a51054767b8be49a64ebc3111e0e62f721a861e54c78984b186904599"
+        },
+        {
+          "commit": "d29c6f591a837c4432d63f0b18ffe1017ec8a363",
+          "path": "deepseek-v4-gemma4-int4-autoround-test.yaml",
+          "sha256": "71e8ad9e0e37e00fb37173162834dece4643603e625554e1998513921237f6bb"
+        },
+        {
+          "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+          "path": "prod/small-models.yaml",
+          "sha256": "a03816ba0c737f1ed438bd595bbd6fba6ed1657bff4283c02655e06f1729df60"
+        },
+        {
+          "commit": "e223fbaabcee70fb55339d13055797914f19572f",
+          "path": "prod/small-models.yaml",
+          "sha256": "72cea129aaedb6b81ecf646e27c1537ee36561f6a16b1fffabfd554acbc3a414"
+        },
+        {
+          "commit": "e3155012d0b8735dd9193541eee80f27f4a3fdd0",
+          "path": "deepseek-v4-gemma4-int4-autoround-test.yaml",
+          "sha256": "bbace4d337c139fda12afc762cc43e36298d35b2bb1dfc5c940385a3c77f2f5e"
+        },
+        {
+          "commit": "e3155012d0b8735dd9193541eee80f27f4a3fdd0",
+          "path": "glm51_otel_test.yaml",
+          "sha256": "d0d1719688e4bc3c00ccf74e21aa3dcd932679317c0718b529bfaf796f8aff52"
+        },
+        {
+          "commit": "e3a62492e37de51824a9e2c8b4936ba1482eab61",
+          "path": "prod/small-models.yaml",
+          "sha256": "6a57ff51ef1f7d466f2384d5432788d3f7d407f7bb25ef17061086b0b3a595fb"
+        },
+        {
+          "commit": "e3d39ddc737beb5356d6b0b61b84a5ea4f09fda7",
+          "path": "cleanup-hf-model.yaml",
+          "sha256": "339cbf76e8db192fe897e361725f2bf857328943fa70fad4e5f3d41317e5f934"
+        },
+        {
+          "commit": "e3d39ddc737beb5356d6b0b61b84a5ea4f09fda7",
+          "path": "prod/GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "f3741c05ab1030764f09e0550054bde7bed4e6260c08dfb24ea618925c8be06e"
+        },
+        {
+          "commit": "e9f44404746b7d99ea1265a907d25aed479a3065",
+          "path": "dsv4-qwen36-gemma4.yaml",
+          "sha256": "fad038d9b5187203dc6476a0d8b7c763d64b01b26911108bab526cbe0e92dd7a"
+        },
+        {
+          "commit": "ea8b3d5505659385f004d5e1febf6fbc19eed0b3",
+          "path": "prod/gpu13-qwen-handover.yaml",
+          "sha256": "75970ee35818dc03a28592b5d8cc953978d2272cae06d70bffea828781aff941"
+        },
+        {
+          "commit": "ed7dac33e50b4891cf432b0ed5c5f260ca14af53",
+          "path": "prod/small-models.yaml",
+          "sha256": "2443fde49e26f83d931c443501544fa0c510c658360c45324190c3d243dfefa3"
+        },
+        {
+          "commit": "f12d031a28a87ca022301e87a554cb86e1a1090a",
+          "path": "deepseek-v4-gemma4-int4-autoround-test.yaml",
+          "sha256": "4a0a374c616e3174751ed996e6e77d804d80a737373169665cec0744dead07af"
+        },
+        {
+          "commit": "f4fae0779b93525ca37093f326c106ba1f4ee358",
+          "path": "GLM-5.1-SGL-AWQ-TP4.yaml",
+          "sha256": "c1ff14577d75052d795f5e21a4b61424deb39134102d811ced507d4857e86e03"
+        },
+        {
+          "commit": "fed23856b76ac00bca632e6c2fff671d18235370",
+          "path": "prod/small-models.yaml",
+          "sha256": "5467ab102ab0d119dd0537ff25963cf2fa5f9385fe3467ca2b95a145074f3c9d"
+        }
+      ]
+    }
+  ],
+  "githubReleases": [
+    {
+      "v": 1,
+      "repository": "nearai/compose-manager",
+      "fetchedAtMs": 1790874851009,
+      "images": [
+        {
+          "release": "prod-20260925-aa9de34",
+          "component": "compose-manager",
+          "digest": "sha256:bc44e44e619dc003b3b5bcf53420b759a0ea058d0b81cf0caffc063a9d733193"
+        },
+        {
+          "release": "prod-20260925-aa9de34",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:8af4d5cf983e1d974da9997aa71de56467b2dc7daf82e3005c8f00c4acebe015"
+        },
+        {
+          "release": "prod-20260702-8e07c35",
+          "component": "compose-manager",
+          "digest": "sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+        },
+        {
+          "release": "prod-20260702-8e07c35",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56"
+        },
+        {
+          "release": "prod-20260619-9a035b2",
+          "component": "compose-manager",
+          "digest": "sha256:b487f39160e9a53c3d98943a9c709d28e12babef75e0bb5a6cd5692abc8b2db6"
+        },
+        {
+          "release": "prod-20260619-9a035b2",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:78afb82330137c2fd90a9c8c6e452f8f178c15d863f87c079a11c13e92216e00"
+        },
+        {
+          "release": "prod-20260617-b4f3932",
+          "component": "compose-manager",
+          "digest": "sha256:94ddb89d580ffd7b351fcb51bd9d759d07f226f1a9c56ff9a7f5dbea69710de3"
+        },
+        {
+          "release": "prod-20260617-b4f3932",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:560fc82fe98b741c1e88ce227d95a6bff0753c54c2ee43250bcdc808e9481244"
+        },
+        {
+          "release": "prod-20260617-3e4a080",
+          "component": "compose-manager",
+          "digest": "sha256:53b598c46aac51edf0eb40919e3be96e7ae6d228250c662c2a885dfb0b37c9ef"
+        },
+        {
+          "release": "prod-20260617-3e4a080",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:e9c4b70bac422414ac022e1ecc15ac8e87ce8dce056f10778a2004ec71bad166"
+        }
+      ]
+    }
+  ],
+  "onchain": [
+    {
+      "v": 1,
+      "chainId": 8453,
+      "kms": "0x8fa1593fac104c1aa0c59eaa3553f7e3e162d637",
+      "rpc": "https://base-rpc.publicnode.com",
+      "blockNumber": 52042753,
+      "fetchedAtMs": 1790874854731,
+      "appId": "0x2c0a0c96cb6dbd659bf1446e2f3fce58172ff91b",
+      "appRegistered": true,
+      "composeHash": "d4c89033fb55cdac9db00c775fbbbeff6319fba7249344b2dca99b23ff048479",
+      "composeHashAllowed": true,
+      "osImageHash": "9b69bb1698bacbb6985409a2c272bcb892e09cdcea63d5399c6768b67d3ff677",
+      "osImageAllowed": true
+    }
+  ]
+}

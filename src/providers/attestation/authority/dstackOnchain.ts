@@ -134,6 +134,18 @@ export interface DstackOnchainFetcherOptions {
   negativeTtlMs?: number;
   /** Oldest all-allowed answer served when every RPC endpoint fails (capped at AUTHORITY_MAX_STALE_MS). */
   maxStaleMs?: number;
+  /** Most subjects held in the cache (default 1024). */
+  maxCachedSubjects?: number;
+  /**
+   * Ask the KMS whether the app is registered BEFORE calling the app contract,
+   * and call it only if it is. Off by default: a worker reads the three
+   * booleans in parallel. The release-collateral role sets it, because there the
+   * subject arrives from another process: without it, any address that process
+   * names is called as a contract and handed the compose hash. An app the KMS
+   * does not register authorizes nothing, so its compose is reported not
+   * allowed without asking.
+   */
+  requireRegisteredApp?: boolean;
   budget?: RequestBudget;
   now?: () => number;
 }
@@ -172,7 +184,7 @@ export class DstackOnchainFetcher {
     this.cache = new AuthorityCache<OnchainAnswer>({
       freshMs: (answer) => (answer.appRegistered && answer.composeHashAllowed && answer.osImageAllowed ? positiveTtlMs : negativeTtlMs),
       maxStaleMs: options.maxStaleMs ?? AUTHORITY_MAX_STALE_MS
-    }, { maxEntries: 1024, now: this.now });
+    }, { maxEntries: options.maxCachedSubjects ?? 1024, now: this.now });
   }
 
   async authorize(subject: { appId: string; composeHash: string; osImageHash: string }, signal?: AbortSignal): Promise<DstackOnchainAuthorization> {
@@ -190,11 +202,25 @@ export class DstackOnchainFetcher {
           const kms = this.options.kms.kms.toLowerCase();
           const word = (hex: string) => hex.replace(/^0x/, "").padStart(64, "0");
           const truthy = (result: string) => /^0x0*1$/.test(result);
-          const [registered, compose, image] = await Promise.all([
-            this.rpc(rpc, "eth_call", [{ to: kms, data: SELECTOR.registeredApps + word(appId) }, blockHex]),
-            this.rpc(rpc, "eth_call", [{ to: appId, data: SELECTOR.allowedComposeHashes + composeHash }, blockHex]),
-            this.rpc(rpc, "eth_call", [{ to: kms, data: SELECTOR.allowedOsImages + osImageHash }, blockHex])
-          ]);
+          let registered: string;
+          let compose: string;
+          let image: string;
+          if (this.options.requireRegisteredApp) {
+            // Both KMS answers first, at the same block as everything else.
+            [registered, image] = await Promise.all([
+              this.rpc(rpc, "eth_call", [{ to: kms, data: SELECTOR.registeredApps + word(appId) }, blockHex]),
+              this.rpc(rpc, "eth_call", [{ to: kms, data: SELECTOR.allowedOsImages + osImageHash }, blockHex])
+            ]);
+            compose = truthy(registered)
+              ? await this.rpc(rpc, "eth_call", [{ to: appId, data: SELECTOR.allowedComposeHashes + composeHash }, blockHex])
+              : "0x0";
+          } else {
+            [registered, compose, image] = await Promise.all([
+              this.rpc(rpc, "eth_call", [{ to: kms, data: SELECTOR.registeredApps + word(appId) }, blockHex]),
+              this.rpc(rpc, "eth_call", [{ to: appId, data: SELECTOR.allowedComposeHashes + composeHash }, blockHex]),
+              this.rpc(rpc, "eth_call", [{ to: kms, data: SELECTOR.allowedOsImages + osImageHash }, blockHex])
+            ]);
+          }
           return {
             value: {
               v: 1 as const,

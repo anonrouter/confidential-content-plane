@@ -2,6 +2,7 @@ import type { ContentPlaneConfig } from "../contentPlaneConfig.js";
 import { estimateInputTokens, estimateTextTokens } from "../metering/tokens.js";
 import { ProviderError } from "../security/errors.js";
 import { parseJsonResponse, requireStreamBody } from "./http.js";
+import { staticProviderTransport, type ProviderTransport } from "./transport.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
 import type {
   ProviderAdapter,
@@ -13,6 +14,7 @@ import type {
 const CHAT_TIMEOUT_MS = 10 * 60_000;
 
 async function phalaAiFetch(
+  transport: ProviderTransport,
   url: string,
   init: RequestInit,
   cancellation?: AbortSignal,
@@ -21,7 +23,7 @@ async function phalaAiFetch(
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = cancellation ? AbortSignal.any([cancellation, timeout]) : timeout;
   try {
-    return await fetch(url, { ...init, signal });
+    return await transport.fetch(url, { ...init, signal });
   } catch (error) {
     if (cancellation?.aborted) throw cancellation.reason ?? error;
     if (timeout.aborted || (error instanceof DOMException && error.name === "TimeoutError")) {
@@ -80,20 +82,19 @@ function phalaAiBody(request: ProviderRequest, stream: boolean): Record<string, 
 export class PhalaAiProviderAdapter implements ProviderAdapter {
   readonly name = "phala-ai";
   private readonly baseUrl: string;
-  private readonly apiKey: string;
+  private readonly transport: ProviderTransport;
 
   constructor(config: ContentPlaneConfig) {
     this.baseUrl = config.providers.phalaAiBaseUrl;
-    this.apiKey = config.providers.phalaAiApiKey;
+    this.transport = staticProviderTransport(config, "phala-ai");
   }
 
   private headers(requestId: string) {
-    if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "Phala AI API key is not configured");
-    }
+    // The transport attaches the credential. Asserting it here keeps the
+    // not-configured failure at the point in a dispatch where it always was.
+    this.transport.assertCredential();
     return {
       "content-type": "application/json",
-      authorization: `Bearer ${this.apiKey}`,
       "x-request-id": requestId
     };
   }
@@ -115,7 +116,7 @@ export class PhalaAiProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await phalaAiFetch(`${this.baseUrl}/chat/completions`, {
+    const response = await phalaAiFetch(this.transport, `${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify(phalaAiBody(request, false))
@@ -132,7 +133,7 @@ export class PhalaAiProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await phalaAiFetch(`${this.baseUrl}/chat/completions`, {
+    const response = await phalaAiFetch(this.transport, `${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify(phalaAiBody(request, true))

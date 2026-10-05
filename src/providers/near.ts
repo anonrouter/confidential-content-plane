@@ -4,6 +4,7 @@ import { ProviderError } from "../security/errors.js";
 import { parseJsonResponse, requireStreamBody } from "./http.js";
 import { normalizeEmbeddingResponse } from "./embeddings.js";
 import type { EmbeddingProviderRequest, EmbeddingProviderResult } from "./embeddings.js";
+import { staticProviderTransport, type ProviderTransport } from "./transport.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
 import type {
   ProviderAdapter,
@@ -17,21 +18,32 @@ import { APPROVED_NEAR_ROUTES } from "./catalog/nearNormalize.js";
 // (./publicIdentity.ts), so they never name NEAR. Logs carry the provider id.
 import { shapeNearRelayBody } from "./catalog/nearRelay.js";
 import { sha256Hex } from "./attestation/crypto.js";
-import {
-  NearReleaseCollateralSource,
-  defaultNearReleaseSources,
-  withReleaseCollateral
-} from "./attestation/authority/collateral.js";
+import { type NearReleaseCollateralSource, withReleaseCollateral } from "./attestation/authority/collateral.js";
+import { nearReleaseCollateralSourceFor } from "../releaseCollateral/client.js";
 
 const CHAT_TIMEOUT_MS = 10 * 60_000;
 const ATTESTATION_TIMEOUT_MS = 15_000;
 const ENDPOINTS_TTL_MS = 5 * 60_000;
 
-async function nearFetch(url: string, init: RequestInit, cancellation?: AbortSignal, timeoutMs = CHAT_TIMEOUT_MS): Promise<Response> {
+/**
+ * `transport` decides whether the request carries the credential: a transport
+ * attaches the key and refuses any origin but the gateway and the pinned
+ * enclave hosts; `null` sends a keyless request (endpoint discovery, the
+ * enclave's attestation report) that has no access to one.
+ */
+async function nearFetch(
+  transport: ProviderTransport | null,
+  url: string,
+  init: RequestInit,
+  cancellation?: AbortSignal,
+  timeoutMs = CHAT_TIMEOUT_MS
+): Promise<Response> {
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = cancellation ? AbortSignal.any([cancellation, timeout]) : timeout;
   try {
-    return await fetch(url, { ...init, signal });
+    return transport
+      ? await transport.fetch(url, { ...init, signal })
+      : await fetch(url, { ...init, signal });
   } catch (error) {
     if (cancellation?.aborted) throw cancellation.reason ?? error;
     if (timeout.aborted || (error instanceof DOMException && error.name === "TimeoutError")) {
@@ -77,24 +89,26 @@ export class NearProviderAdapter implements ProviderAdapter {
   readonly name = "near-ai";
   private readonly gatewayBaseUrl: string;
   private readonly endpointsUrl: string;
-  private readonly apiKey: string;
+  private readonly transport: ProviderTransport;
   private endpointsCache: { at: number; byModel: Map<string, string> } | null = null;
   private readonly releaseCollateral: NearReleaseCollateralSource;
 
   /** `releaseCollateral`: the fetch layer for NEAR's release authority
    *  (official compose repository, compose-manager releases, NEAR's on-chain
-   *  KMS registry, published dstack images). Public sources, no credential. */
+   *  KMS registry, published dstack images). Public sources, no credential.
+   *  Looked up directly, or through the release-collateral role where this process is
+   *  configured with one (the pool). */
   constructor(config: ContentPlaneConfig, releaseCollateral?: NearReleaseCollateralSource) {
     this.gatewayBaseUrl = config.providers.nearBaseUrl;
     this.endpointsUrl = config.providers.nearEndpointsUrl;
-    this.apiKey = config.providers.nearApiKey;
-    this.releaseCollateral = releaseCollateral ?? new NearReleaseCollateralSource(defaultNearReleaseSources());
+    this.transport = staticProviderTransport(config, "near-ai");
+    this.releaseCollateral = releaseCollateral ?? nearReleaseCollateralSourceFor(config);
   }
 
   private headers(requestId: string, e2eeHeaders?: Record<string, string>) {
-    if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "Provider API key is not configured");
-    }
+    // The transport attaches the credential. Asserting it here keeps the
+    // not-configured failure at the point in a dispatch where it always was.
+    this.transport.assertCredential();
     const allowedE2eeHeaders: Record<string, string> = {};
     if (e2eeHeaders) {
       const signingAlgo = e2eeHeaders["X-Signing-Algo"];
@@ -124,7 +138,6 @@ export class NearProviderAdapter implements ProviderAdapter {
     }
     return {
       "content-type": "application/json",
-      authorization: `Bearer ${this.apiKey}`,
       "x-request-id": requestId,
       ...allowedE2eeHeaders
     };
@@ -137,7 +150,7 @@ export class NearProviderAdapter implements ProviderAdapter {
     if (!this.endpointsCache || now - this.endpointsCache.at > ENDPOINTS_TTL_MS) {
       const byModel = new Map<string, string>();
       try {
-        const response = await nearFetch(this.endpointsUrl, { method: "GET", headers: { accept: "application/json" } }, signal, ATTESTATION_TIMEOUT_MS);
+        const response = await nearFetch(null, this.endpointsUrl, { method: "GET", headers: { accept: "application/json" } }, signal, ATTESTATION_TIMEOUT_MS);
         const data = (await parseJsonResponse(response)) as { endpoints?: Array<{ domain?: unknown; models?: unknown }> };
         for (const entry of data.endpoints ?? []) {
           if (typeof entry?.domain !== "string" || !Array.isArray(entry.models)) continue;
@@ -156,6 +169,8 @@ export class NearProviderAdapter implements ProviderAdapter {
 
   private async inferenceBase(externalModelId: string, signal?: AbortSignal): Promise<string> {
     const domain = await this.directDomain(externalModelId, signal);
+    // `domain` is provider output. The transport sends the credential to it only
+    // when it is one of the pinned enclave hosts, and refuses any other host.
     return domain ? `https://${domain}/v1` : this.gatewayBaseUrl;
   }
 
@@ -181,7 +196,7 @@ export class NearProviderAdapter implements ProviderAdapter {
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
     const requestBody = JSON.stringify(nearBody(request, false));
-    const response = await nearFetch(`${base}/chat/completions`, {
+    const response = await nearFetch(this.transport, `${base}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId, request.e2eeHeaders),
       body: requestBody
@@ -218,7 +233,7 @@ export class NearProviderAdapter implements ProviderAdapter {
       : await this.inferenceBase(request.model.externalModelId, request.signal);
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await nearFetch(`${base}/chat/completions`, {
+    const response = await nearFetch(this.transport, `${base}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId, request.e2eeHeaders),
       body: JSON.stringify(nearBody(request, true))
@@ -244,7 +259,7 @@ export class NearProviderAdapter implements ProviderAdapter {
     const base = await this.inferenceBase(request.model.externalModelId, request.signal);
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await nearFetch(`${base}/embeddings`, {
+    const response = await nearFetch(this.transport, `${base}/embeddings`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify({ ...request.body, model: request.model.externalModelId })
@@ -287,7 +302,7 @@ export class NearProviderAdapter implements ProviderAdapter {
       throw new ProviderError("attestation_unavailable", "The discovered endpoint does not match the pinned enclave", 503);
     }
     const url = `https://${domain}/v1/attestation/report?include_tls_fingerprint=true&signing_algo=${signingAlgorithm}&nonce=${encodeURIComponent(nonce)}`;
-    const response = await nearFetch(url, { method: "GET", headers: { accept: "application/json" } }, signal, ATTESTATION_TIMEOUT_MS);
+    const response = await nearFetch(null, url, { method: "GET", headers: { accept: "application/json" } }, signal, ATTESTATION_TIMEOUT_MS);
     const report = (await parseJsonResponse(response)) as Record<string, unknown>;
     // The live endpoint serializes tcb_info.app_compose as JSON. Preserve that
     // exact string: mr_config_id hashes the whole serialized document, not a
@@ -332,11 +347,11 @@ export class NearProviderAdapter implements ProviderAdapter {
     const url = domain
       ? `https://${domain}/v1/signature/${encodeURIComponent(providerRequestId)}?signing_algo=ecdsa`
       : `${this.gatewayBaseUrl}/signature/${encodeURIComponent(providerRequestId)}?model=${encodeURIComponent(externalModelId)}&signing_algo=ecdsa`;
-    const response = await nearFetch(url, {
+    // Both current direct and gateway signature endpoints require the worker's
+    // provider credential. It never crosses into the relay/public route.
+    const response = await nearFetch(this.transport, url, {
       method: "GET",
-      // Both current direct and gateway signature endpoints require the worker's
-      // provider credential. It never crosses into the relay/public route.
-      headers: { accept: "application/json", authorization: `Bearer ${this.apiKey}` }
+      headers: { accept: "application/json" }
     }, signal, ATTESTATION_TIMEOUT_MS);
     return parseJsonResponse(response);
   }

@@ -4,6 +4,7 @@ import { computeSourceHash } from "./hash.js";
 import { normalizeChutesCatalog, type RawChutesModel } from "./chutesNormalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
 import { backoffDelayMs, parseRetryAfterMs, type FetchOptions } from "./sync.js";
+import { staticProviderTransport } from "../transport.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -32,10 +33,10 @@ export function chutesCatalogUrl(baseUrl: string): string {
 }
 
 export async function fetchRawChutesModels(config: ContentPlaneConfig, opts: FetchOptions = {}): Promise<RawChutesModel[]> {
-  const key = config.providers.chutesApiKey;
+  const transport = staticProviderTransport(config, "chutes");
   // Fail closed: without the credential the provider stays un-synced (and thus
   // never callable), even though /v1/models is itself publicly readable.
-  if (!key) throw new Error("chutes_credential_missing");
+  if (!transport.hasCredential()) throw new Error("chutes_credential_missing");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
   const random = opts.random ?? Math.random;
@@ -44,8 +45,7 @@ export async function fetchRawChutesModels(config: ContentPlaneConfig, opts: Fet
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     let retryAfterMs: number | null = null;
     try {
-      const response = await fetch(chutesCatalogUrl(config.providers.chutesBaseUrl), {
-        headers: { authorization: `Bearer ${key}` },
+      const response = await transport.fetch(chutesCatalogUrl(config.providers.chutesBaseUrl), {
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (response.ok) {

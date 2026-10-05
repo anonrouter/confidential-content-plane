@@ -1,0 +1,510 @@
+{
+  "dstackImages": [
+    {
+      "computedBy": "dstack-mr @ Dstack-TEE/dstack 3c877847",
+      "image": "dstack-nvidia-0.5.11",
+      "isDev": false,
+      "measurementDocumentSha256": "71df80a6900f53c75fa804739a365b06a32caf7a14f1c89d16bcc350e437357e",
+      "measurements": [
+        {
+          "mrtd": "df4d77c857de652bd0fafa343a2026b51071ee03773d076d283abf1a7d36ff91ffa279ee4a617ac664f7e2a2c8d5891b",
+          "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+          "rtmr1": "ff61e68fa04516b1813d2d478397a97a58f9ccc402b6d96fb73f5e5104a4acf155913caec99a0c19afc16ae0f3a77726",
+          "rtmr2": "4d662c04766145dfe084fd014969b19c387afe9bb1d4f972c6968d28a7a8b4937c414603a2cf446105eddce67a86f9ce",
+          "shape": {
+            "cpu_count": 64,
+            "host_share_mode": "9p",
+            "hotplug_off": true,
+            "hugepages": false,
+            "memory_size": 2199023255552,
+            "num_gpus": 8,
+            "num_nvswitches": 4,
+            "ovmf_variant": "pre202505",
+            "pci_hole64_size": 1125899906842624,
+            "qemu_version": "9.2.1"
+          }
+        }
+      ],
+      "osImageHash": "a6eafc5f007f642d8ea90c7fa8881f1e6715720ccb531941a28218f4f26d7b02",
+      "prerelease": false,
+      "source": "https://github.com/Dstack-TEE/meta-dstack/releases/download/v0.5.11/dstack-nvidia-0.5.11.tar.gz (sha256sum.txt verified: 4 files; git_revision ce04e924e17e3cb9d38d258338cbe71e8c08d575)"
+    }
+  ],
+  "github": [
+    {
+      "v": 1,
+      "repository": "nearai/cvm-compose-files",
+      "fetchedAtMs": 1790874850999,
+      "defaultBranch": "main",
+      "defaultBranchHead": "0e55b0e7ddc212b085ffded94857af4a7b645611",
+      "tags": {
+        "gpu23-glm53-bench-r3": "d3d9e554cdadf8d3641486276c6ef417b208ec57",
+        "gpu23-glm53-bench-r4": "3ddf2bb3946bee9f3503f90d87c48207e0c5d571",
+        "gpu23-glm53-bench-r6": "e0485c0ee11dce2275c6df70db530f40f725b187",
+        "gpu23-glm53-bench-r7": "6c864c5ee8c610f53d6bc85d7fbf8d631a90d1a6",
+        "v0.0.412": "d1a72bf122962f1582d8ba9ae38f56c3dfdfb139",
+        "gpu03-glm53-flash-hicache-kernel-r3": "1f0543890e83a348409f2d859d3afd5e4a6caabe",
+        "gpu03-glm53-flash-hicache-kernel-r5": "a5c7dee0e61ebccfd9d464751a5ed7a54d6e656c",
+        "gpu03-glm53-flash-hicache-kernel-r6": "6da46ed6de87c4f1d87f69be2e25f0fbb961d032",
+        "gpu03-glm53-flash-hicache-kernel-r7": "72a7616d4424487eb56864df6390d9e78d9624ac",
+        "gpu03-glm53-flash-hicache-kernel-r8": "bd68b9191db2854694d49f859674fb6d2fc776d9",
+        "gpu03-glm53-flash-hicache-kernel-r9": "d0379076f97c2619bc0e93f815fc698c13be73a9",
+        "gpu03-glm53-flash-hicache-kernel-r10": "85f52ffb255417a47cb75d22fa7f6da3f2beae58",
+        "gpu03-glm53-flash-hicache-kernel-r12": "31cfffadf5e08c3b400f19cfb1e272fbf70e3df1",
+        "gpu03-glm53-flash-hicache-hostalloc-probe-r13": "2cc328eed23c7c18e49acc798e671db57ec64580",
+        "gpu03-glm53-flash-hicache-cuda-host-r15": "85cea5e8d6c2292afdccbcba893438618f04ce90",
+        "gpu03-glm53-flash-hicache-cuda-host-pooled-r16": "e56f3d2d736195d3c6425de2765ab2aece34104e",
+        "gpu03-glm53-flash-hicache-cuda-host-pooled-r17": "f87823ed3013b06797d5bc97955dbbb862277ee6",
+        "gpu03-glm53-flash-vllm-official-r18": "094a49651dbdbc6120bc2335c087607f77c6a9cf",
+        "gpu03-glm53-flash-vllm-nccl-r19": "00921657197842a557bc1d12fde98ef164a056b7",
+        "gpu03-glm53-flash-vllm-nccl-no-fi-autotune-r20": "c5c6e46191cb600a2497d755943ad9c6db5bcada",
+        "gpu03-glm53-flash-vllm-nccl-deepgemm-r21": "76e1d1d2103f7260e78f9592bce2bbf3204dd6cf",
+        "gpu03-glm53-flash-vllm-nccl-deep-gemm-r22": "0feb6d29eb28086c212962edc533e045d4d8a7ee",
+        "gpu03-glm53-flash-vllm-qualified-image-r23": "e87aed26be59d857cc370cbbf6039d32f9581fa2",
+        "gpu03-glm53-flash-vllm-nospec-r24": "46a9722826273856571096342dd70dd9ecd27705",
+        "gpu03-glm53-flash-vllm-eager-r25": "1a53fcd398e31b0af3f4f855bdb31b00338fddc8",
+        "gpu03-glm53-flash-vllm-deepgemm-moe-r26": "89908f652269b5bbaae2731a6bf69b68b37337a5",
+        "gpu03-glm53-flash-vllm-noprefix-r27": "217e2da883f4f45ce4429dfd57e4644af7d4caa0",
+        "gpu03-glm53-flash-vllm-customar-r28": "ddaccacd0b88dece6031d533c8b2af705f1584e6",
+        "gpu03-glm53-flash-vllm-native-sampler-r29": "651562ea04d924e34c1641c9de404123891c2ca2",
+        "gpu03-glm53-flash-vllm-native-sampler-r30": "38aeaaaea13d31a944a0e997f937843f7a3a17cc",
+        "gpu03-glm53-flash-vllm-cutlass-r31": "f7261c62751db08626cd1a850b6e88dda8eb2aed",
+        "gpu03-glm53-flash-vllm-cutlass-linear-r32": "a56875666c4c4bf8bfbaf47aaaa7070393e2bbb7",
+        "gpu03-glm53-flash-vllm-deepgemm-r33": "234c44d234338ba939d5fe21cf6f0ca1df3c3f13",
+        "gpu03-glm53-flash-vllm-island0-r34": "8ca96cf5da08da72b4c4b80e4b84a438ceb4eb4a",
+        "gpu03-glm53-flash-vllm-gpu31-control-r35": "2998acffb6f024fb85bb6ab69e288a775f907484",
+        "gpu03-glm53-flash-vllm-nccl-r36": "870cbc215f3d30fd2cc6ea09d17246a821f7b019",
+        "gpu03-glm53-flash-vllm-cutlass-linear-r37": "8bb674778eacc805459a1ff65c92b24550ddf782",
+        "gpu03-glm53-flash-vllm-no-fused-ar-rms-r38": "ce7c02304a9a5ebcd4f3ecd3660d88365d8d1e7e",
+        "gpu03-glm53-flash-vllm-native-sampler-r39": "5017cbace31a4823f3ced92af689b382932fb6b5",
+        "gpu03-glm53-flash-vllm-custom-ar-eager-r40": "cfea175361fa759adbab5e06974117aef8ea7deb",
+        "gpu03-glm53-flash-vllm-gpu0-3-control-r41": "93b30e759be0fc48a67f5f8f7a5bfe9df20b5295",
+        "gpu03-glm53-flash-vllm-newer-nospec-r42": "3a69c7eb85aa1dec95923668827db67f3c166ccd",
+        "gpu03-glm53-flash-vllm-newer-nospec-r43": "d75577a8c616044cf5f6b775660dfef0f48487cb",
+        "gpu03-glm53-flash-vllm-newer-pynccl-r44": "434c1a5fc3e614c7ee5387ff2e8caa936d5befa3",
+        "gpu03-glm53-flash-vllm-eager-unfused-r45": "854b246e0982355adf3f7725f91d4e0b82d3e5c3",
+        "gpu03-glm53-flash-vllm-deepgemm-moe-r46": "558f103154abaff0b6f087bbfa9eadce676ea803",
+        "gpu03-glm53-flash-vllm-fa-sparse-mla-r47": "240799623a0619bbb8ca5342df98d09f67fc8e22",
+        "gpu03-glm53-flash-vllm-cutlass-dense-r48": "5ce07ad7da0d5432d9c13aa2851aca7bcc2e9478",
+        "gpu03-glm53-flash-vllm-tp8-r49": "c3a5a0547c8f0b5c6cc38cae0eaef382897fe6e6",
+        "gpu03-glm53-flash-vllm-kv-offload-r50": "7e215e6ff45c20d2739f06a144ad88284f2dec4f",
+        "gpu03-glm53-flash-vllm-kv-offload-r51": "d649b079baddcc6e06bb643b706a2ce73f6cf5a7",
+        "gpu03-glm53-flash-prod-control-r52": "018dd378077e15fa14a3ed3e101c029c105588ae",
+        "v0.0.421": "a1182fd5017a5aa6fe61619ee256ca1b93db1c86",
+        "v0.0.409": "e14107901d202215ab44eb027eb4792047d5ec83",
+        "v0.0.422": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+        "v0.0.423": "065340e05635b885dfb238fe9f3601ad351d68a8",
+        "v0.0.428": "5ba5a5bb92b7b1bbbe72fe9b7a8fbaec729627a1",
+        "v0.0.443": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+        "v0.0.451": "b996e382492b0b19e801d70b8d357e2c9d8160d1",
+        "v0.0.454": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+        "v0.0.457": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+        "v0.0.459": "e7a3faba30c43b3a4081f03f93322754de60d63b",
+        "v0.0.461": "b177e78bc2e79664d76e9f59a64edfdf27cc1021"
+      },
+      "defaultBranchAncestors": [],
+      "files": [
+        {
+          "commit": "00921657197842a557bc1d12fde98ef164a056b7",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "4d1b4f73bd301ac043c22b930042686790490bd13fb9affb7da48920285e6eee"
+        },
+        {
+          "commit": "018dd378077e15fa14a3ed3e101c029c105588ae",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "f77b43ed8970ebb34b048206dad488652ea01f755e7daef1a4d0853e6c3efa8c"
+        },
+        {
+          "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-HiCache.yaml",
+          "sha256": "e207fecf556ac8790723c3edfc40bfd844cd9c491d54979622350e9f3d3b38ea"
+        },
+        {
+          "commit": "094a49651dbdbc6120bc2335c087607f77c6a9cf",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "4d0a1a6f2879147dde3827a53bb21851af12d4231f0435e70bb73fdb7c24b124"
+        },
+        {
+          "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "bcd313cf7117b82f0f850f9b93da06a4129a3073ae4a58c017a3723eb30a7255"
+        },
+        {
+          "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "b2d8b87cf185ff809f662ce276c2487da852e9903fe5fe0f0dbc3980af49f4ba"
+        },
+        {
+          "commit": "0feb6d29eb28086c212962edc533e045d4d8a7ee",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "603ff2193dc4a6d61c3f5cd962283a954f5d95521dc2f564ee293b27cd20c271"
+        },
+        {
+          "commit": "1a53fcd398e31b0af3f4f855bdb31b00338fddc8",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "6d001e2b250658ddd140361111eb93faa0cdae59e730bade792e3cc2adce69a4"
+        },
+        {
+          "commit": "1f0543890e83a348409f2d859d3afd5e4a6caabe",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "a224ffc84a6419dac26ad66f3a6dce3977be1ef91ffae7a223a56d3648b0fa00"
+        },
+        {
+          "commit": "217e2da883f4f45ce4429dfd57e4644af7d4caa0",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "8b623833dc002b74d94c5457c279ef7cef6bf42b30dd2d09879d471fce569d05"
+        },
+        {
+          "commit": "234c44d234338ba939d5fe21cf6f0ca1df3c3f13",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "a5077df239b9e20ca06ff488612b092efb08f1b04b394477fc8495ac34af2704"
+        },
+        {
+          "commit": "240799623a0619bbb8ca5342df98d09f67fc8e22",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "69165b2c007a4d4a10794728be90384fa41b6aa8e7f7acbbb47865eb08ca0fd6"
+        },
+        {
+          "commit": "2998acffb6f024fb85bb6ab69e288a775f907484",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "434913ff0a4366929dee38efe3d556ffdb50a259bcca84292deada6c8a815c00"
+        },
+        {
+          "commit": "2cc328eed23c7c18e49acc798e671db57ec64580",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "80dbd5fc325b65087e5154beecb9ec0c1007f20b282a462106f92a82c84cb123"
+        },
+        {
+          "commit": "31cfffadf5e08c3b400f19cfb1e272fbf70e3df1",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "d1f8d2b05e3281e450a33f34d3359bc30bc61098b62903ea26d0845325db02e2"
+        },
+        {
+          "commit": "38aeaaaea13d31a944a0e997f937843f7a3a17cc",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "4eb9f7eac64429d5d2c0be44d1089f956c6d70eeb08dc3f8506ac38e940a1b4f"
+        },
+        {
+          "commit": "3a69c7eb85aa1dec95923668827db67f3c166ccd",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "0715afe979aafaff2e3157cc75e8bdd4621e3d165d981301520d10cef66afdc6"
+        },
+        {
+          "commit": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+          "path": "prod/rotate-compose-manager-token.yaml",
+          "sha256": "0d1263e5169ebacdb1da157857aafff9a5bb5645aabbd921b3bd7e18d60a8ee2"
+        },
+        {
+          "commit": "3ddf2bb3946bee9f3503f90d87c48207e0c5d571",
+          "path": "experiments/GLM-5.3-gpu23-local-engine-bench.yaml",
+          "sha256": "9d5f74658a7a25cbe4110286f848767d2117a11dc1f5472b5a876edcf245a0c7"
+        },
+        {
+          "commit": "434c1a5fc3e614c7ee5387ff2e8caa936d5befa3",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "0d95194b320affd6c22b3a716eb76e9a2670ad998c1573be613eef07bb190631"
+        },
+        {
+          "commit": "46a9722826273856571096342dd70dd9ecd27705",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "97ecad06edeeae1414130a1e62b5a08bcb8f23dcf00eb874705deb59f27e0923"
+        },
+        {
+          "commit": "5017cbace31a4823f3ced92af689b382932fb6b5",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "dbb7df287e922f854d0b2c768715fa97d8f5dbf3d2e7f372da295d3f247b3f10"
+        },
+        {
+          "commit": "558f103154abaff0b6f087bbfa9eadce676ea803",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "f83314a37d6ad8d80fb16a68e4713dc51cc09e1aacde960b80881625166ef0f8"
+        },
+        {
+          "commit": "5ba5a5bb92b7b1bbbe72fe9b7a8fbaec729627a1",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-HiCache.yaml",
+          "sha256": "9fbc74afdb7020125399bf52b8c20863575fe8c474bd2bb8c7056b27cdbef63f"
+        },
+        {
+          "commit": "5ce07ad7da0d5432d9c13aa2851aca7bcc2e9478",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "51cf1f377421030e234da042552cee704bd49e20eb22b6ee3ed07da92600e03d"
+        },
+        {
+          "commit": "651562ea04d924e34c1641c9de404123891c2ca2",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "0158e8cfdf6ada338f1ee67d8d7d45f74c331a10e6fd32a65986a3aff91037e2"
+        },
+        {
+          "commit": "6c864c5ee8c610f53d6bc85d7fbf8d631a90d1a6",
+          "path": "experiments/GLM-5.3-gpu23-local-engine-bench.yaml",
+          "sha256": "a09005c18ed9778afd4fc93e3d70dbb410f435c2f33a7e8816ae4a90cad703eb"
+        },
+        {
+          "commit": "6da46ed6de87c4f1d87f69be2e25f0fbb961d032",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "c783beeb372557159a4d1c229752a2e89edb0bd8a6126affa8cf5e3c5e843230"
+        },
+        {
+          "commit": "72a7616d4424487eb56864df6390d9e78d9624ac",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "c783beeb372557159a4d1c229752a2e89edb0bd8a6126affa8cf5e3c5e843230"
+        },
+        {
+          "commit": "76e1d1d2103f7260e78f9592bce2bbf3204dd6cf",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "83704c4726138d094dfafb88f15bba7b2fcb58f300012a009a3df40fc0f4ff23"
+        },
+        {
+          "commit": "7e215e6ff45c20d2739f06a144ad88284f2dec4f",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "10a244616ff672237b175b1e59f415569eada2fdbacb2b049a69b5c7f7399467"
+        },
+        {
+          "commit": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "4247dec8b67eea29b93d687b6c975617964519e2585611baf194128c7088aa63"
+        },
+        {
+          "commit": "854b246e0982355adf3f7725f91d4e0b82d3e5c3",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "1b3624048648694bee0268256eed27e83b4e0d2462692f7dbdc2ff813c7ce4f3"
+        },
+        {
+          "commit": "85cea5e8d6c2292afdccbcba893438618f04ce90",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "c9b20839a11ddd06c2138f19d21be01a2af1775e014bd3da330b617bdca602fc"
+        },
+        {
+          "commit": "85f52ffb255417a47cb75d22fa7f6da3f2beae58",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "69102f4c684c2864beb56f6d572699165848dabed1b94ce19015c7c4f7d86f04"
+        },
+        {
+          "commit": "870cbc215f3d30fd2cc6ea09d17246a821f7b019",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "f600cda7ed3d12f929de7acbec9f55e4d62f614c05e838f3f27b86aa5b481ced"
+        },
+        {
+          "commit": "89908f652269b5bbaae2731a6bf69b68b37337a5",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "d8a2ce0597ff19d8b93a047fe32a581778abf434e9bcf84ca0345e1c5ebe622e"
+        },
+        {
+          "commit": "8bb674778eacc805459a1ff65c92b24550ddf782",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "02a021024308f0ca2ab6c7041ea53523d6fe42abb3b70aebacdc93c59ad3b203"
+        },
+        {
+          "commit": "8ca96cf5da08da72b4c4b80e4b84a438ceb4eb4a",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "d021637b365b1a8c625775ea5eeb486967722b1ba4e54076a4db07698dedbe05"
+        },
+        {
+          "commit": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-HiCache.yaml",
+          "sha256": "c3d1a5b6aad000fce81f08fdb22c24f5a5c6b17c44e8d6009f4dde1d7143eeee"
+        },
+        {
+          "commit": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "dac8e7bd277ba8f6dbf51201a859374f956e92d2546637e17c73608911e65bf4"
+        },
+        {
+          "commit": "93b30e759be0fc48a67f5f8f7a5bfe9df20b5295",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "546f7d31b08c44b38ab585fb13f7984e114fc59d942a094aff69561e82d3db0a"
+        },
+        {
+          "commit": "a1182fd5017a5aa6fe61619ee256ca1b93db1c86",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-HiCache.yaml",
+          "sha256": "223d989886b8b92e288b53ab827807fa20bc6e985e31db3241675fae637fa2e5"
+        },
+        {
+          "commit": "a56875666c4c4bf8bfbaf47aaaa7070393e2bbb7",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "458b50951bfb2c18247be0a9d4b1838eba211f462728e5587472d6a425dd233f"
+        },
+        {
+          "commit": "a5c7dee0e61ebccfd9d464751a5ed7a54d6e656c",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "fd2b0d062106701351700d89a9423dae489d7cdbae25eb1bca2183c293e7d6b1"
+        },
+        {
+          "commit": "b177e78bc2e79664d76e9f59a64edfdf27cc1021",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "dec66aa4f0d712d55dcb235e7421dcbb1c54d6caaec17ca3f07ecc84fbf60b55"
+        },
+        {
+          "commit": "b996e382492b0b19e801d70b8d357e2c9d8160d1",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "1528ba57ffeda148f400dd8b512f4f72ce1641068ca2d8bdcd4f69e73cd43386"
+        },
+        {
+          "commit": "bd68b9191db2854694d49f859674fb6d2fc776d9",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "f2168df3ef28735b7c90c674a24b34bd4a1a9c87a2be88a7197c547e0532c12a"
+        },
+        {
+          "commit": "c3a5a0547c8f0b5c6cc38cae0eaef382897fe6e6",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "9beb023d6882dbc4eb3104e56428a2a5042d2b9b64c1775bcfc560950620e39e"
+        },
+        {
+          "commit": "c5c6e46191cb600a2497d755943ad9c6db5bcada",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "31b1f00904a447bc672b3434d725f2815d0bc1683632afc8e4f05b4b305b7a02"
+        },
+        {
+          "commit": "ce7c02304a9a5ebcd4f3ecd3660d88365d8d1e7e",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "dbd5bdb1fe74d38632b9f5886f1b54d91e134283f58256f064d686367491f7fc"
+        },
+        {
+          "commit": "cfea175361fa759adbab5e06974117aef8ea7deb",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "ded3d1a6fe79d9bf668a30c19295e1d6b6e7613e5d536b3d4fa7820cf7f7cc6a"
+        },
+        {
+          "commit": "d0379076f97c2619bc0e93f815fc698c13be73a9",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "7c12e355b7f285ac2032a7e436827f44cdc848e144d6797862fa2e73e3a4602b"
+        },
+        {
+          "commit": "d1a72bf122962f1582d8ba9ae38f56c3dfdfb139",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "e063942a0d88eeff6d085beaceb43c0d4c2d2426bc81003aa9fb42839ad39eab"
+        },
+        {
+          "commit": "d3d9e554cdadf8d3641486276c6ef417b208ec57",
+          "path": "experiments/GLM-5.3-gpu23-local-engine-bench.yaml",
+          "sha256": "e778257b40b4f5056ce006d2e6a58997e11fd4ff31b8a3fd5777cc24be46fb0c"
+        },
+        {
+          "commit": "d649b079baddcc6e06bb643b706a2ce73f6cf5a7",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "4afd39283ef5f9df4db7f12aa41f32efe7391b9fff5a669349a918689db18e04"
+        },
+        {
+          "commit": "d75577a8c616044cf5f6b775660dfef0f48487cb",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "7a4f2c270ab5f04b27ddd86dd600ec19adda55450df9a1a770e8793f2b04cb3b"
+        },
+        {
+          "commit": "ddaccacd0b88dece6031d533c8b2af705f1584e6",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "64987b452cf5bb5d2342e489469b7a2deca1ac5fddd2dde3e593b8f2fe6198d0"
+        },
+        {
+          "commit": "e0485c0ee11dce2275c6df70db530f40f725b187",
+          "path": "experiments/GLM-5.3-gpu23-local-engine-bench.yaml",
+          "sha256": "c6d6f917f1fdb9d082741b7bd554ee4a9b23fc7619c092732426270de00f1458"
+        },
+        {
+          "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3"
+        },
+        {
+          "commit": "e56f3d2d736195d3c6425de2765ab2aece34104e",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "2b940307e83baceb8b5a7e85c422f9a2006461af103b8673fc60c1bbeaa62e65"
+        },
+        {
+          "commit": "e7a3faba30c43b3a4081f03f93322754de60d63b",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "dec66aa4f0d712d55dcb235e7421dcbb1c54d6caaec17ca3f07ecc84fbf60b55"
+        },
+        {
+          "commit": "e87aed26be59d857cc370cbbf6039d32f9581fa2",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "57de80ee1327d2829cdc6e37fb35f909d5db383a9b507a183ea41a64eb38c2e3"
+        },
+        {
+          "commit": "f7261c62751db08626cd1a850b6e88dda8eb2aed",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "7968dd9f51d4f2a9db2a245e258410186fd80651c318f2e7c6d8f1e406bf508a"
+        },
+        {
+          "commit": "f87823ed3013b06797d5bc97955dbbb862277ee6",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "e6b93ebc23824722e607719dea69046c20c696f750c5e750470cad395df2e391"
+        }
+      ]
+    }
+  ],
+  "githubReleases": [
+    {
+      "v": 1,
+      "repository": "nearai/compose-manager",
+      "fetchedAtMs": 1790874851009,
+      "images": [
+        {
+          "release": "prod-20260925-aa9de34",
+          "component": "compose-manager",
+          "digest": "sha256:bc44e44e619dc003b3b5bcf53420b759a0ea058d0b81cf0caffc063a9d733193"
+        },
+        {
+          "release": "prod-20260925-aa9de34",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:8af4d5cf983e1d974da9997aa71de56467b2dc7daf82e3005c8f00c4acebe015"
+        },
+        {
+          "release": "prod-20260702-8e07c35",
+          "component": "compose-manager",
+          "digest": "sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+        },
+        {
+          "release": "prod-20260702-8e07c35",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56"
+        },
+        {
+          "release": "prod-20260619-9a035b2",
+          "component": "compose-manager",
+          "digest": "sha256:b487f39160e9a53c3d98943a9c709d28e12babef75e0bb5a6cd5692abc8b2db6"
+        },
+        {
+          "release": "prod-20260619-9a035b2",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:78afb82330137c2fd90a9c8c6e452f8f178c15d863f87c079a11c13e92216e00"
+        },
+        {
+          "release": "prod-20260617-b4f3932",
+          "component": "compose-manager",
+          "digest": "sha256:94ddb89d580ffd7b351fcb51bd9d759d07f226f1a9c56ff9a7f5dbea69710de3"
+        },
+        {
+          "release": "prod-20260617-b4f3932",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:560fc82fe98b741c1e88ce227d95a6bff0753c54c2ee43250bcdc808e9481244"
+        },
+        {
+          "release": "prod-20260617-3e4a080",
+          "component": "compose-manager",
+          "digest": "sha256:53b598c46aac51edf0eb40919e3be96e7ae6d228250c662c2a885dfb0b37c9ef"
+        },
+        {
+          "release": "prod-20260617-3e4a080",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:e9c4b70bac422414ac022e1ecc15ac8e87ce8dce056f10778a2004ec71bad166"
+        }
+      ]
+    }
+  ],
+  "onchain": [
+    {
+      "v": 1,
+      "chainId": 8453,
+      "kms": "0x8fa1593fac104c1aa0c59eaa3553f7e3e162d637",
+      "rpc": "https://mainnet.base.org",
+      "blockNumber": 52042752,
+      "fetchedAtMs": 1790874851317,
+      "appId": "0x2c0a0c96cb6dbd659bf1446e2f3fce58172ff91b",
+      "appRegistered": true,
+      "composeHash": "55db164f4f8c6a837c2217c601c21bba4758f908536a6cd5b2978550205a9179",
+      "composeHashAllowed": true,
+      "osImageHash": "a6eafc5f007f642d8ea90c7fa8881f1e6715720ccb531941a28218f4f26d7b02",
+      "osImageAllowed": true
+    }
+  ]
+}

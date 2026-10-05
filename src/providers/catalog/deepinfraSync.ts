@@ -4,6 +4,7 @@ import { computeSourceHash } from "./hash.js";
 import { normalizeDeepInfraCatalog, type RawDeepInfraModel } from "./deepinfraNormalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
 import { backoffDelayMs, parseRetryAfterMs, type FetchOptions } from "./sync.js";
+import { staticProviderTransport } from "../transport.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -33,10 +34,10 @@ export function deepinfraCatalogUrl(baseUrl: string): string {
 }
 
 export async function fetchRawDeepInfraModels(config: ContentPlaneConfig, opts: FetchOptions = {}): Promise<RawDeepInfraModel[]> {
-  const key = config.providers.deepinfraApiKey;
+  const transport = staticProviderTransport(config, "deepinfra");
   // Fail closed: without the credential the provider stays un-synced (and thus
   // never callable), even though /models/list is itself publicly readable.
-  if (!key) throw new Error("deepinfra_credential_missing");
+  if (!transport.hasCredential()) throw new Error("deepinfra_credential_missing");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
   const random = opts.random ?? Math.random;
@@ -45,8 +46,7 @@ export async function fetchRawDeepInfraModels(config: ContentPlaneConfig, opts: 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     let retryAfterMs: number | null = null;
     try {
-      const response = await fetch(deepinfraCatalogUrl(config.providers.deepinfraBaseUrl), {
-        headers: { authorization: `Bearer ${key}` },
+      const response = await transport.fetch(deepinfraCatalogUrl(config.providers.deepinfraBaseUrl), {
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (response.ok) {

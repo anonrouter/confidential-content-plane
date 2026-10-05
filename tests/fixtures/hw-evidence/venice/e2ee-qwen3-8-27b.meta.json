@@ -1,0 +1,15 @@
+{
+  "provider": "venice",
+  "public_route": "qwen/qwen-3.8-27b-e2ee",
+  "upstream_model": "e2ee-qwen3-8-27b",
+  "url": "https://api.venice.ai/api/v1/tee/attestation?model=e2ee-qwen3-8-27b&nonce=bfa228a3ab55b3ba4e658031f89e7d4abf4048f1604553f3437ddab91f2b88da",
+  "method": "GET",
+  "unauthenticated": true,
+  "nonce": "bfa228a3ab55b3ba4e658031f89e7d4abf4048f1604553f3437ddab91f2b88da",
+  "captured_at": "2026-10-01T02:41:04Z",
+  "http_status": 200,
+  "content_type": "application/json; charset=utf-8",
+  "sha256_of_body": "0c510f7cbfbb840a755a8115fc709b03134df555813b4b7b8886e5f4af6436b7",
+  "body_bytes": 245378,
+  "notes": "Raw response body exactly as received; not edited. Captured provider-direct from the audit laptop with no credential."
+}

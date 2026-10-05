@@ -1,0 +1,247 @@
+{
+  "dstackImages": [
+    {
+      "computedBy": "dstack-mr @ Dstack-TEE/dstack 3c877847",
+      "image": "dstack-nvidia-0.5.11",
+      "isDev": false,
+      "measurementDocumentSha256": "71df80a6900f53c75fa804739a365b06a32caf7a14f1c89d16bcc350e437357e",
+      "measurements": [
+        {
+          "mrtd": "df4d77c857de652bd0fafa343a2026b51071ee03773d076d283abf1a7d36ff91ffa279ee4a617ac664f7e2a2c8d5891b",
+          "rtmr0": "bc122d143ab768565ba5c3774ff5f03a63c89a4df7c1f5ea38d3bd173409d14f8cbdcc36d40e703cccb996a9d9687590",
+          "rtmr1": "ff61e68fa04516b1813d2d478397a97a58f9ccc402b6d96fb73f5e5104a4acf155913caec99a0c19afc16ae0f3a77726",
+          "rtmr2": "4d662c04766145dfe084fd014969b19c387afe9bb1d4f972c6968d28a7a8b4937c414603a2cf446105eddce67a86f9ce",
+          "shape": {
+            "cpu_count": 64,
+            "host_share_mode": "9p",
+            "hotplug_off": true,
+            "hugepages": false,
+            "memory_size": 2199023255552,
+            "num_gpus": 8,
+            "num_nvswitches": 4,
+            "ovmf_variant": "pre202505",
+            "pci_hole64_size": 1125899906842624,
+            "qemu_version": "9.2.1"
+          }
+        }
+      ],
+      "osImageHash": "a6eafc5f007f642d8ea90c7fa8881f1e6715720ccb531941a28218f4f26d7b02",
+      "prerelease": false,
+      "source": "https://github.com/Dstack-TEE/meta-dstack/releases/download/v0.5.11/dstack-nvidia-0.5.11.tar.gz (sha256sum.txt verified: 4 files; git_revision ce04e924e17e3cb9d38d258338cbe71e8c08d575)"
+    }
+  ],
+  "github": [
+    {
+      "v": 1,
+      "repository": "nearai/cvm-compose-files",
+      "fetchedAtMs": 1790874539847,
+      "defaultBranch": "main",
+      "defaultBranchHead": "0e55b0e7ddc212b085ffded94857af4a7b645611",
+      "tags": {
+        "v0.0.380": "d36548db2486f91cc527792ea0c735068eede5de",
+        "v0.0.382": "3e3fa7cb0a5515bbd4a60ff39e4b440e94b2976e",
+        "v0.0.387": "13e82f9936a5e15257912ccd3e78e0901709b97e",
+        "v0.0.389": "0c34821339ca003c6ff49bda14f6fc3c5c73c6f0",
+        "v0.0.390": "340532b4463daf6de7d9f1e2b03077efbc333714",
+        "v0.0.391": "402f05423bf3649a72fd32a5673a29d9e69fb98d",
+        "v0.0.393": "1d7464b94aadd8cac7b30e70efc176251733e1f7",
+        "v0.0.394": "aea5fbfd284860bb15d57c4ec74cab124329e0c7",
+        "v0.0.404": "0eb5c6d9f0842af579e24e39d661ede0ed79e440",
+        "v0.0.408": "676532b98f9a01da5d43f98299af297b573d242d",
+        "v0.0.409": "e14107901d202215ab44eb027eb4792047d5ec83",
+        "v0.0.422": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+        "v0.0.423": "065340e05635b885dfb238fe9f3601ad351d68a8",
+        "v0.0.427": "7e8e1aba17ba2e358c29049925d59a4fe40f2ee5",
+        "v0.0.428": "5ba5a5bb92b7b1bbbe72fe9b7a8fbaec729627a1",
+        "v0.0.443": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+        "v0.0.451": "b996e382492b0b19e801d70b8d357e2c9d8160d1",
+        "v0.0.454": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+        "v0.0.457": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+        "v0.0.461": "b177e78bc2e79664d76e9f59a64edfdf27cc1021"
+      },
+      "defaultBranchAncestors": [],
+      "files": [
+        {
+          "commit": "065340e05635b885dfb238fe9f3601ad351d68a8",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "367d6c1324eb363e14fc76a7370b5af4019fb58272d8bdfb4de2cd14dc9283ad"
+        },
+        {
+          "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "bcd313cf7117b82f0f850f9b93da06a4129a3073ae4a58c017a3723eb30a7255"
+        },
+        {
+          "commit": "0a51138ef3ec104706c40a53dab0c3bcea75d7b3",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "b2d8b87cf185ff809f662ce276c2487da852e9903fe5fe0f0dbc3980af49f4ba"
+        },
+        {
+          "commit": "0c34821339ca003c6ff49bda14f6fc3c5c73c6f0",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+          "sha256": "30f4456e142f888be1a5b695916ce2a7f6031fb2777f4fe3e7e75ba9395fe635"
+        },
+        {
+          "commit": "0eb5c6d9f0842af579e24e39d661ede0ed79e440",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "a2d3f073aa2f01864bb8eac72ba1f4292ad8391aebdc28e29b84fe8cde48afab"
+        },
+        {
+          "commit": "13e82f9936a5e15257912ccd3e78e0901709b97e",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "455106d1155732dbe934363772c36ba812a12349648832a7b8383a70bf64e8df"
+        },
+        {
+          "commit": "1d7464b94aadd8cac7b30e70efc176251733e1f7",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+          "sha256": "710278fc1e6c8e79882467f4273cb436aa03918e0131ddd15a6358ae71edc54f"
+        },
+        {
+          "commit": "340532b4463daf6de7d9f1e2b03077efbc333714",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+          "sha256": "1072fbb41cab73f6113800dcce4813bf43fc87fa4f1a880831d389f061246cf7"
+        },
+        {
+          "commit": "3c2f033b2a44d08832ffec32417dc35a95cdbe2c",
+          "path": "prod/rotate-compose-manager-token.yaml",
+          "sha256": "0d1263e5169ebacdb1da157857aafff9a5bb5645aabbd921b3bd7e18d60a8ee2"
+        },
+        {
+          "commit": "3e3fa7cb0a5515bbd4a60ff39e4b440e94b2976e",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "a648cda7147efb69c4f4ec4e62376beb288826a5db81242ab09cb090efa7d99d"
+        },
+        {
+          "commit": "402f05423bf3649a72fd32a5673a29d9e69fb98d",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+          "sha256": "ee6a8d310cf6ca4a6c4d8272856a29056506b1e7ad9971c3d2ef6023ec8d4d2c"
+        },
+        {
+          "commit": "5ba5a5bb92b7b1bbbe72fe9b7a8fbaec729627a1",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "afe6a626b91b8c18d9b8addd22fc50aabfcc7824b488f635b72af96c5a324e5a"
+        },
+        {
+          "commit": "676532b98f9a01da5d43f98299af297b573d242d",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "e5d80ab6e1a1188fdf8cd3e7bc2f74da5d4767da15b0644acf07dad08a3b461b"
+        },
+        {
+          "commit": "7e8e1aba17ba2e358c29049925d59a4fe40f2ee5",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "0844864e1ba1b477cd0e57a1f98e01bbfef9f3dd535e3b8bbbacf2cac97a570f"
+        },
+        {
+          "commit": "81ea8f03871957a0ed9e13eb4d526b06e2d62fb8",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "4247dec8b67eea29b93d687b6c975617964519e2585611baf194128c7088aa63"
+        },
+        {
+          "commit": "8f97e8f22db8a32b915b7b59702fc09635a8ac24",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "dac8e7bd277ba8f6dbf51201a859374f956e92d2546637e17c73608911e65bf4"
+        },
+        {
+          "commit": "aea5fbfd284860bb15d57c4ec74cab124329e0c7",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-Canary.yaml",
+          "sha256": "5a5b72283a75c8bc363dfce1d460e4162b89e4040061fd5ff9cd6ff08481924d"
+        },
+        {
+          "commit": "b177e78bc2e79664d76e9f59a64edfdf27cc1021",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "dec66aa4f0d712d55dcb235e7421dcbb1c54d6caaec17ca3f07ecc84fbf60b55"
+        },
+        {
+          "commit": "b996e382492b0b19e801d70b8d357e2c9d8160d1",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4-W4AFP8.yaml",
+          "sha256": "1528ba57ffeda148f400dd8b512f4f72ce1641068ca2d8bdcd4f69e73cd43386"
+        },
+        {
+          "commit": "d36548db2486f91cc527792ea0c735068eede5de",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "d76413cd231a4e871a515e4fa829c6510a374fe335e77fae3ea5a6dccf783909"
+        },
+        {
+          "commit": "e14107901d202215ab44eb027eb4792047d5ec83",
+          "path": "prod/GLM-5.3-Flash-SGL-TP4.yaml",
+          "sha256": "2878b9c4c6db512a7538dc4e8981fd5acae72cdaace7794509f48161bcce08e3"
+        }
+      ]
+    }
+  ],
+  "githubReleases": [
+    {
+      "v": 1,
+      "repository": "nearai/compose-manager",
+      "fetchedAtMs": 1790874539887,
+      "images": [
+        {
+          "release": "prod-20260925-aa9de34",
+          "component": "compose-manager",
+          "digest": "sha256:bc44e44e619dc003b3b5bcf53420b759a0ea058d0b81cf0caffc063a9d733193"
+        },
+        {
+          "release": "prod-20260925-aa9de34",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:8af4d5cf983e1d974da9997aa71de56467b2dc7daf82e3005c8f00c4acebe015"
+        },
+        {
+          "release": "prod-20260702-8e07c35",
+          "component": "compose-manager",
+          "digest": "sha256:6e035c8fb99c1d31f41760d25af178683a658cca4afd73cd0d366fbb5bf884be"
+        },
+        {
+          "release": "prod-20260702-8e07c35",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56"
+        },
+        {
+          "release": "prod-20260619-9a035b2",
+          "component": "compose-manager",
+          "digest": "sha256:b487f39160e9a53c3d98943a9c709d28e12babef75e0bb5a6cd5692abc8b2db6"
+        },
+        {
+          "release": "prod-20260619-9a035b2",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:78afb82330137c2fd90a9c8c6e452f8f178c15d863f87c079a11c13e92216e00"
+        },
+        {
+          "release": "prod-20260617-b4f3932",
+          "component": "compose-manager",
+          "digest": "sha256:94ddb89d580ffd7b351fcb51bd9d759d07f226f1a9c56ff9a7f5dbea69710de3"
+        },
+        {
+          "release": "prod-20260617-b4f3932",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:560fc82fe98b741c1e88ce227d95a6bff0753c54c2ee43250bcdc808e9481244"
+        },
+        {
+          "release": "prod-20260617-3e4a080",
+          "component": "compose-manager",
+          "digest": "sha256:53b598c46aac51edf0eb40919e3be96e7ae6d228250c662c2a885dfb0b37c9ef"
+        },
+        {
+          "release": "prod-20260617-3e4a080",
+          "component": "compose-manager-launcher",
+          "digest": "sha256:e9c4b70bac422414ac022e1ecc15ac8e87ce8dce056f10778a2004ec71bad166"
+        }
+      ]
+    }
+  ],
+  "onchain": [
+    {
+      "v": 1,
+      "chainId": 8453,
+      "kms": "0x8fa1593fac104c1aa0c59eaa3553f7e3e162d637",
+      "rpc": "https://mainnet.base.org",
+      "blockNumber": 52042596,
+      "fetchedAtMs": 1790874540145,
+      "appId": "0x2c0a0c96cb6dbd659bf1446e2f3fce58172ff91b",
+      "appRegistered": true,
+      "composeHash": "c82b1a2eaf6996154a5f39ae621643f034b082d5e51edd3d2ba6009273881d86",
+      "composeHashAllowed": true,
+      "osImageHash": "a6eafc5f007f642d8ea90c7fa8881f1e6715720ccb531941a28218f4f26d7b02",
+      "osImageAllowed": true
+    }
+  ]
+}

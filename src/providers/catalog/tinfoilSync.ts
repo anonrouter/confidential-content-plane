@@ -5,6 +5,7 @@ import { computeSourceHash } from "./hash.js";
 import { normalizeTinfoilCatalog, type RawTinfoilModel } from "./tinfoilNormalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
 import { backoffDelayMs, parseRetryAfterMs, type FetchOptions } from "./sync.js";
+import { providerCredentialConfigured } from "../transport.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -37,10 +38,10 @@ export function tinfoilCatalogUrl(baseUrl: string): string {
 }
 
 export async function fetchRawTinfoilModels(config: ContentPlaneConfig, opts: TinfoilFetchOptions = {}): Promise<RawTinfoilModel[]> {
-  const key = config.providers.tinfoilApiKey;
   // Fail closed: without the credential the provider stays un-synced (and thus
-  // never callable), even though /v1/models is itself publicly readable.
-  if (!key) throw new Error("tinfoil_credential_missing");
+  // never callable), even though /v1/models is itself publicly readable. The
+  // request itself goes through the adapter's attested transport below.
+  if (!providerCredentialConfigured(config, "tinfoil")) throw new Error("tinfoil_credential_missing");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
   const random = opts.random ?? Math.random;

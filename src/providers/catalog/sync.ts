@@ -12,6 +12,8 @@ import type { ContentPlaneConfig } from "../../contentPlaneConfig.js";
 import { computeSourceHash } from "./hash.js";
 import { normalizeVeniceCatalog, type RawVeniceModel } from "./normalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
+import { veniceProviderTransport } from "../transport.js";
+import type { VeniceKeysetStore } from "../veniceKeyStore.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -64,14 +66,23 @@ export interface FetchOptions {
   log?: FastifyBaseLogger;
 }
 
+export interface VeniceFetchOptions extends FetchOptions {
+  /**
+   * The credential worker's live keyset. With it the catalog is fetched with the
+   * same key inference would use, so retiring the boot key does not strand
+   * catalog refresh. Without it (the dev monolith) the boot key is used.
+   */
+  veniceKeyStore?: VeniceKeysetStore;
+}
+
 /**
  * Fetch and decode the raw Venice model list. Retries network errors, HTTP 429,
  * and HTTP 5xx up to three times with exponential backoff + jitter (honoring
  * Retry-After); ordinary 4xx failures are NOT retried. Throws on final failure.
  */
-export async function fetchRawVeniceModels(config: ContentPlaneConfig, opts: FetchOptions = {}): Promise<RawVeniceModel[]> {
-  const key = config.providers.veniceInferenceKey;
-  if (!key) throw new Error("venice_credential_missing");
+export async function fetchRawVeniceModels(config: ContentPlaneConfig, opts: VeniceFetchOptions = {}): Promise<RawVeniceModel[]> {
+  const transport = veniceProviderTransport(config, opts.veniceKeyStore);
+  if (!transport.hasCredential()) throw new Error("venice_credential_missing");
   const url = `${config.providers.veniceBaseUrl}/models?type=all`;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
@@ -81,8 +92,7 @@ export async function fetchRawVeniceModels(config: ContentPlaneConfig, opts: Fet
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     let retryAfterMs: number | null = null;
     try {
-      const response = await fetch(url, {
-        headers: { authorization: `Bearer ${key}` },
+      const response = await transport.fetch(url, {
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (response.ok) {
@@ -122,7 +132,7 @@ function errorName(error: unknown): string {
  */
 export async function buildVeniceCatalogPayload(
   config: ContentPlaneConfig,
-  opts: FetchOptions = {}
+  opts: VeniceFetchOptions = {}
 ): Promise<NormalizedCatalogPayload | null> {
   try {
     const raw = await fetchRawVeniceModels(config, opts);
@@ -160,7 +170,8 @@ export interface CatalogSynchronizerDeps {
  * A single-flight, jittered catalog poller. `runOnce()` coalesces concurrent
  * callers onto one in-flight sync; `start()` runs once immediately then reschedules
  * every `intervalSeconds` ± jitter. Timers are unref'd so they never hold the
- * process open.
+ * process open. `syncNow()` is the on-demand path: the same build and delivery,
+ * coalesced too, but its failures reach the caller.
  */
 export function createCatalogSynchronizer(deps: CatalogSynchronizerDeps) {
   const jitterFraction = deps.jitterFraction ?? JITTER_FRACTION;
@@ -189,6 +200,53 @@ export function createCatalogSynchronizer(deps: CatalogSynchronizerDeps) {
         inFlight = null;
       });
     return inFlight;
+  }
+
+  // ON-DEMAND SYNC. Not gated by `enabled`, and a failed fetch or delivery
+  // rejects instead of being logged and dropped: the caller is waiting on the
+  // result.
+  //
+  // Concurrent callers coalesce, with one constraint. A caller needs a delivery
+  // that reads state AFTER its call: credential administration syncs straight
+  // after changing the keyset, and the key manifest is read during delivery.
+  // So a caller joins the run in flight only while that run is still building.
+  // Once it is delivering, later callers share ONE follow-up run that starts
+  // when it settles. However many callers arrive, at most one run is in flight
+  // and at most one is waiting.
+  let nowRun: Promise<void> | null = null;
+  let nowRunBuilding = false;
+  let nowFollowUp: Promise<void> | null = null;
+
+  function startNow(): Promise<void> {
+    nowRunBuilding = true;
+    const run = (async () => {
+      let payload: NormalizedCatalogPayload | null;
+      try {
+        payload = await deps.buildPayload();
+      } finally {
+        nowRunBuilding = false;
+      }
+      if (!payload) throw new Error("catalog_fetch_failed");
+      await deps.deliver(payload);
+    })().finally(() => {
+      if (nowRun === run) nowRun = null;
+    });
+    nowRun = run;
+    return run;
+  }
+
+  function syncNow(): Promise<void> {
+    if (!nowRun) return startNow();
+    if (nowRunBuilding) return nowRun;
+    if (nowFollowUp) return nowFollowUp;
+    // The run in flight has its own caller to report to; the follow-up starts
+    // whether it succeeded or not.
+    const followUp = nowRun.then(() => undefined, () => undefined).then(() => {
+      nowFollowUp = null;
+      return startNow();
+    });
+    nowFollowUp = followUp;
+    return followUp;
   }
 
   function nextDelayMs(): number {
@@ -220,7 +278,7 @@ export function createCatalogSynchronizer(deps: CatalogSynchronizerDeps) {
     timer = null;
   }
 
-  return { runOnce, start, stop };
+  return { runOnce, syncNow, start, stop };
 }
 
 declare module "fastify" {
@@ -229,7 +287,10 @@ declare module "fastify" {
      * Worker-only: on-demand catalog fetch + push to control. Unlike the
      * scheduled poller, failures propagate to the caller. Absent on roles
      * that do not run the synchronizer.
+     *
+     * `provider` names whose catalog to sync, and callers acting for a
+     * provider pass it. It may be omitted only where the process serves one.
      */
-    catalogSyncNow?: () => Promise<void>;
+    catalogSyncNow?: (provider?: string) => Promise<void>;
   }
 }

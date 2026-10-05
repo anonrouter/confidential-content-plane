@@ -88,6 +88,11 @@ export function veniceKeyManifest(keys: VeniceKey[]): VeniceKeyManifestEntry[] {
   return keys.map((entry) => ({ id: entry.id, label: entry.label, fingerprint: veniceKeyFingerprint(entry.key) }));
 }
 
+/** Descriptors of the boot keyset, for a process that holds it and has no overlay store. */
+export function bootVeniceKeyManifest(config: { providers: { veniceKeys: VeniceKey[] } }): VeniceKeyManifestEntry[] {
+  return veniceKeyManifest(config.providers.veniceKeys);
+}
+
 /**
  * Register the credential holder's current keyset descriptors. Upsert-only:
  * a key that disappears from the manifest keeps its row (its stale

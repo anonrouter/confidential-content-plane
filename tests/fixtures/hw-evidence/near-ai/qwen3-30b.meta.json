@@ -1,0 +1,14 @@
+{
+  "provider": "near-ai",
+  "endpoint": "qwen3-30b.completions.near.ai",
+  "url": "https://qwen3-30b.completions.near.ai/v1/attestation/report?include_tls_fingerprint=true&signing_algo=ecdsa&nonce=1abad53f94bafca28c11dda1b3231fa1bcb06409fefde85e1587608c2d7ba4a3",
+  "method": "GET",
+  "unauthenticated": true,
+  "nonce": "1abad53f94bafca28c11dda1b3231fa1bcb06409fefde85e1587608c2d7ba4a3",
+  "captured_at": "2026-10-01T16:50:12Z",
+  "http_status": 200,
+  "observed_tls_spki_sha256": "5f6ec5cd6b5c3eabba04025d647cae07a9114824b3035475f1261b7f7e38006d",
+  "notes": "Raw response body exactly as received; not edited. Captured provider-direct with no credential.",
+  "sha256_of_body": "94d9f5176f4e973e0b9b623aa5d05c96b85b2df0ca4166d4041ecba6ab94a9c6",
+  "body_bytes": 407369
+}

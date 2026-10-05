@@ -1,0 +1,14 @@
+{
+  "provider": "near-ai",
+  "endpoint": "glm-5-3-flash-long.completions.near.ai",
+  "url": "https://glm-5-3-flash-long.completions.near.ai/v1/attestation/report?include_tls_fingerprint=true&signing_algo=ecdsa&nonce=6baa5375646918819bf69157826215fb3c7ee13455b1474b297da25fef6fc28f",
+  "method": "GET",
+  "unauthenticated": true,
+  "nonce": "6baa5375646918819bf69157826215fb3c7ee13455b1474b297da25fef6fc28f",
+  "captured_at": "2026-10-01T16:56:44Z",
+  "http_status": 200,
+  "observed_tls_spki_sha256": "4066aed3031802c9de0197e0e849a18133e445f2bb085b036c2a18ab47796408",
+  "notes": "Raw response body exactly as received; not edited. Captured provider-direct with no credential.",
+  "sha256_of_body": "13b6af66a8d638e4e7c8b0ceaee798b2ffbb4cace963eb763858ee889e754ee8",
+  "body_bytes": 356571
+}

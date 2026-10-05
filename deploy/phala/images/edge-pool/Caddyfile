@@ -1,0 +1,588 @@
+# L7 routing behind dstack-ingress, inside the same measured trust domain.
+# dstack-ingress owns :443 and forwards plain HTTP here only after terminating
+# the client's TLS inside the TD. This image has no routable network.
+{
+	admin off
+	auto_https off
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:8080 {
+	# A CEILING ON EVERY REQUEST BODY, matching deploy/caddy/Caddyfile:165-166 and
+	# deploy/phala/Caddyfile.cvm:23-24. This edge had NO site-level limit at all --
+	# only 64KB blocks on the three credential routes -- so every other path,
+	# including chat completions, was bounded solely by the relay's own
+	# REQUEST_BODY_LIMIT_BYTES. That is a real limit, but it is enforced after the
+	# body has been accepted into the trust domain. The sibling edges both stop it
+	# here; this one silently did not.
+	request_body {
+		max_size 10MB
+	}
+
+	# Operator and internal surfaces do not exist on this origin. Defense in
+	# depth: the roles themselves also refuse these paths.
+	@internal path /internal /internal/* /readyz /healthz/crypto
+	handle @internal {
+		respond 404
+	}
+	@admin path /v1/admin /v1/admin/*
+	handle @admin {
+		respond 404
+	}
+
+	# THE COMPAT PREFLIGHT, which cannot be dispatched the way the real request
+	# is. This block is what makes a browser-based OpenAI client work at all,
+	# and it must stay ABOVE @preflight.
+	#
+	# @compat_static, far below, dispatches the REAL request on
+	# `Authorization: Bearer ar_*`. A CORS preflight carries no Authorization
+	# header at all -- the browser strips every credential from it -- so that
+	# matcher can never fire for an OPTIONS. Every compat preflight therefore
+	# fell through to @preflight and reached the ticket-only relay, which
+	# correctly refused an origin that is not on its allowlist: a 204 carrying
+	# Access-Control-Allow-Headers, -Methods, -Expose-Headers and Max-Age, and
+	# NO Access-Control-Allow-Origin. The browser then blocked the request
+	# before it was ever sent. Every browser-based client reports that as a
+	# network error with no status, no body and nothing in any server log,
+	# because nothing ever arrived. curl cannot see it: curl does not enforce
+	# CORS, so every curl probe of this path passed throughout.
+	#
+	# SO THE PREFLIGHT IS DISPATCHED ON THE ONE CREDENTIAL-SHAPED THING IT DOES
+	# CARRY. `Authorization` is not a CORS-safelisted request header, so a
+	# request bearing it MUST be preflighted and the browser MUST name it in
+	# Access-Control-Request-Headers. "Names authorization" is a consequence of
+	# the Fetch specification, not a guess about client behaviour: there is no
+	# conforming browser client that sends a bearer token whose preflight omits
+	# it. The names are byte-lowercased and sorted by the same specification,
+	# which is why the substring match below is safe.
+	#
+	# IT FAILS CLOSED TOWARD THE TICKET. A preflight naming x-anonrouter-ticket
+	# is excluded here -- INCLUDING one that names both credentials, which is
+	# the ambiguous case -- and reaches the relay, so the ticketed browser
+	# flow's preflight answer is byte-identical to what it was before this
+	# block existed, for every origin. The first-party UI names only
+	# content-type and x-anonrouter-ticket (site/lib/ticketed-chat.ts), so it is
+	# never routed here.
+	#
+	# ANSWERING A PREFLIGHT GRANTS NOTHING. No credential, no body and no
+	# content crosses on an OPTIONS; the response is a 204 with headers. The
+	# REAL request is still dispatched by @compat_static on the bearer token and
+	# is still authenticated by the bearer-only broker, which holds no database,
+	# no provider credential and no cookie parser, and refuses any request that
+	# arrives carrying a ticket.
+	@compat_static_preflight {
+		method OPTIONS
+		path /v1/chat/completions /v1/embeddings
+		header Access-Control-Request-Headers *authorization*
+		not header Access-Control-Request-Headers *x-anonrouter-ticket*
+	}
+	handle @compat_static_preflight {
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+
+	# MODEL DISCOVERY PREFLIGHTS THE WAY IT DISPATCHES, and it is the only route
+	# here where those two are not the same question.
+	#
+	# The block above pairs with @compat_static, and the pairing is exact: that
+	# matcher dispatches the REAL request on `Authorization: Bearer ar_*`, so its
+	# preflight is dispatched on the browser naming `authorization`. A miss on
+	# either goes to the relay, which serves chat and embeddings and answers a
+	# coherent 401 ticket_required.
+	#
+	# @compat_models does NOT select on a credential. It sends GET /v1/models to
+	# the broker whatever the caller presents, because the relay has no such
+	# route to fall through to. Leaving its preflight inside the matcher above
+	# left the two halves disagreeing: the REAL request always reached the
+	# broker's permissive policy, while the PREFLIGHT reached it only when the
+	# browser happened to name `authorization`. A page listing models with no key
+	# at all, or one whose only unsafe headers are the SDK's own
+	# `x-stainless-*`, had its preflight answered by the relay's strict
+	# CORS_ORIGIN allowlist -- no Access-Control-Allow-Origin for an origin
+	# nobody registered -- and the browser refused to send a request the edge
+	# would have served. That is the same invisible failure the block above
+	# exists to fix: no status, no body, nothing in any log, and curl cannot see
+	# it because curl does not enforce CORS.
+	#
+	# SO THE PREDICATE MATCHES @compat_models: method and path, no credential
+	# shape.
+	#
+	# THE ONE DELIBERATE ASYMMETRY IS THE TICKET, carried over unchanged from
+	# the matcher above. src/httpBase.ts reflects Access-Control-Request-Headers
+	# on the compat policy, and what makes reflection safe is that a preflight
+	# naming x-anonrouter-ticket never reaches it -- the browser's preflight
+	# cache stores one entry per allowed header NAME and does not consult Vary.
+	# An ambiguous preflight therefore continues to @preflight and the relay,
+	# byte-identical to before. Nothing is lost by it: there is no ticketed
+	# /v1/models request for such a preflight to be the permission for, so the
+	# shape that stays strict is the shape that never had a destination.
+	@compat_models_preflight {
+		method OPTIONS
+		path /v1/models
+		not header Access-Control-Request-Headers *x-anonrouter-ticket*
+	}
+	handle @compat_models_preflight {
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+
+	# CORS preflight must be ROUTED, not 404ed, or the browser reports a
+	# CORS failure for a request the relay never saw. @fastify/cors owns the
+	# allowlist, not this file.
+	# /v1/models IS IN THIS LIST, and its absence was a real browser blocker.
+	#
+	# A browser preflights any cross-origin GET carrying Authorization. That
+	# OPTIONS fell through to the catch-all 404 below, which carries no CORS
+	# headers at all, so Chrome reported "No 'Access-Control-Allow-Origin'
+	# header is present" and refused to send the GET. The model list never
+	# loaded, and nothing appeared in any backend log because the request never
+	# reached a backend -- exactly the failure the comment above describes.
+	#
+	# curl cannot catch this: it does not enforce CORS, so every curl check
+	# against this path passed while the browser could not read it.
+	@preflight {
+		method OPTIONS
+		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/models /v1/images/generations /v1/audio/speech
+	}
+	handle @preflight {
+		reverse_proxy relay:3000
+	}
+	@compat_preflight {
+		method OPTIONS
+		path /compat/v1/*
+	}
+	handle @compat_preflight {
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+	@attest_preflight {
+		method OPTIONS
+		path /v1/gateway/attestation
+	}
+	handle @attest_preflight {
+		reverse_proxy attest:3000
+	}
+
+	# Gateway attestation: isolated service, credential-free, no content.
+	@gateway_attestation {
+		method GET
+		path /v1/gateway/attestation
+	}
+	handle @gateway_attestation {
+		reverse_proxy attest:3000
+	}
+
+	# Public evidence generated by dstack-ingress. It contains certificates and
+	# attestation material, never application content or credentials.
+	@evidences path /evidences /evidences/*
+	handle @evidences {
+		root * /evidences
+		file_server browse
+	}
+
+	# The OpenAI-compatible broker, for stock clients holding an ar_ key.
+	# Cookie is stripped for the same reason as on @compat_static below.
+	@compat path /compat/v1/*
+	handle @compat {
+		uri strip_prefix /compat
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+
+	# Per-request receipt verification, served by the content tier because the
+	# exact request and response hashes it resolves never leave this trust
+	# domain. Authorized by possession of the 128-bit receipt id in the path;
+	# there is no listing route and no other way to reach a binding.
+	@receipt {
+		method GET
+		path /v1/tee/receipt/*
+	}
+	handle @receipt {
+		reverse_proxy relay:3000 {
+			header_up -Authorization
+			header_up -Cookie
+		}
+	}
+
+	# Provider-credential administration, routed to the POOLED credential
+	# worker for every pooled provider and to Bedrock's own worker for Bedrock.
+	#
+	# A DELIBERATE PUBLIC SURFACE. The launch flow requires an operator's
+	# verifying client to reach the attested workload DIRECTLY, over TLS that
+	# terminated inside this TD, so there is no other way in: routing this from
+	# outside is the design, not a concession to it.
+	#
+	# THE PUBLIC PATHS ARE THE XLARGE EDGE'S, UNCHANGED. What changed is behind
+	# them: 6 providers are one process now, and that process serves credential
+	# administration per provider, at /internal/credentials/<canonical name>/...
+	# So each public path is rewritten to its OWN provider's internal path, and
+	# the rewrite is a literal: `near` goes to `near-ai` because this file says
+	# so, not because of anything in the request.
+	#
+	# Every route is an EXACT match to an EXACT rewrite and an EXACT backend.
+	# There is no wildcard and no path-derived upstream or path, so a provider
+	# absent from this file has no route rather than a route to somebody else's
+	# credential store.
+	#
+	# Authorization is the capability signature the worker verifies; nothing here
+	# authenticates, because a client cannot be asked to authenticate to
+	# something it has not yet decided to trust.
+	#
+	# GENERATED by deploy/phala/gen-edge-pool.mjs. Do not hand-edit.
+
+	# --- venice ---------------------------------------------------------------
+	@cred_venice_identity {
+		method GET
+		path /v1/credentials/venice/identity
+	}
+	handle @cred_venice_identity {
+		rewrite * /internal/credentials/venice/identity
+		reverse_proxy pool-worker:3000
+	}
+	@cred_venice_secret {
+		method POST
+		path /v1/credentials/venice/secret
+	}
+	handle @cred_venice_secret {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/venice/secret
+		reverse_proxy pool-worker:3000
+	}
+	@cred_venice_revoke {
+		method POST
+		path /v1/credentials/venice/revoke
+	}
+	handle @cred_venice_revoke {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/venice/revoke
+		reverse_proxy pool-worker:3000
+	}
+
+	# --- fireworks ---------------------------------------------------------------
+	@cred_fireworks_identity {
+		method GET
+		path /v1/credentials/fireworks/identity
+	}
+	handle @cred_fireworks_identity {
+		rewrite * /internal/credentials/fireworks/identity
+		reverse_proxy pool-worker:3000
+	}
+	@cred_fireworks_secret {
+		method POST
+		path /v1/credentials/fireworks/secret
+	}
+	handle @cred_fireworks_secret {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/fireworks/secret
+		reverse_proxy pool-worker:3000
+	}
+	@cred_fireworks_revoke {
+		method POST
+		path /v1/credentials/fireworks/revoke
+	}
+	handle @cred_fireworks_revoke {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/fireworks/revoke
+		reverse_proxy pool-worker:3000
+	}
+
+	# --- deepinfra ---------------------------------------------------------------
+	@cred_deepinfra_identity {
+		method GET
+		path /v1/credentials/deepinfra/identity
+	}
+	handle @cred_deepinfra_identity {
+		rewrite * /internal/credentials/deepinfra/identity
+		reverse_proxy pool-worker:3000
+	}
+	@cred_deepinfra_secret {
+		method POST
+		path /v1/credentials/deepinfra/secret
+	}
+	handle @cred_deepinfra_secret {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/deepinfra/secret
+		reverse_proxy pool-worker:3000
+	}
+	@cred_deepinfra_revoke {
+		method POST
+		path /v1/credentials/deepinfra/revoke
+	}
+	handle @cred_deepinfra_revoke {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/deepinfra/revoke
+		reverse_proxy pool-worker:3000
+	}
+
+	# --- tinfoil ---------------------------------------------------------------
+	@cred_tinfoil_identity {
+		method GET
+		path /v1/credentials/tinfoil/identity
+	}
+	handle @cred_tinfoil_identity {
+		rewrite * /internal/credentials/tinfoil/identity
+		reverse_proxy pool-worker:3000
+	}
+	@cred_tinfoil_secret {
+		method POST
+		path /v1/credentials/tinfoil/secret
+	}
+	handle @cred_tinfoil_secret {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/tinfoil/secret
+		reverse_proxy pool-worker:3000
+	}
+	@cred_tinfoil_revoke {
+		method POST
+		path /v1/credentials/tinfoil/revoke
+	}
+	handle @cred_tinfoil_revoke {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/tinfoil/revoke
+		reverse_proxy pool-worker:3000
+	}
+
+	# --- near (canonical near-ai) ----------------------------------------
+	@cred_near_identity {
+		method GET
+		path /v1/credentials/near/identity
+	}
+	handle @cred_near_identity {
+		rewrite * /internal/credentials/near-ai/identity
+		reverse_proxy pool-worker:3000
+	}
+	@cred_near_secret {
+		method POST
+		path /v1/credentials/near/secret
+	}
+	handle @cred_near_secret {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/near-ai/secret
+		reverse_proxy pool-worker:3000
+	}
+	@cred_near_revoke {
+		method POST
+		path /v1/credentials/near/revoke
+	}
+	handle @cred_near_revoke {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/near-ai/revoke
+		reverse_proxy pool-worker:3000
+	}
+
+	# --- phala-ai ---------------------------------------------------------------
+	@cred_phala-ai_identity {
+		method GET
+		path /v1/credentials/phala-ai/identity
+	}
+	handle @cred_phala-ai_identity {
+		rewrite * /internal/credentials/phala-ai/identity
+		reverse_proxy pool-worker:3000
+	}
+	@cred_phala-ai_secret {
+		method POST
+		path /v1/credentials/phala-ai/secret
+	}
+	handle @cred_phala-ai_secret {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/phala-ai/secret
+		reverse_proxy pool-worker:3000
+	}
+	@cred_phala-ai_revoke {
+		method POST
+		path /v1/credentials/phala-ai/revoke
+	}
+	handle @cred_phala-ai_revoke {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/phala-ai/revoke
+		reverse_proxy pool-worker:3000
+	}
+
+	# --- bedrock ---------------------------------------------------------------
+	@cred_bedrock_identity {
+		method GET
+		path /v1/credentials/bedrock/identity
+	}
+	handle @cred_bedrock_identity {
+		rewrite * /internal/credentials/identity
+		reverse_proxy bedrock-worker:3000
+	}
+	@cred_bedrock_secret {
+		method POST
+		path /v1/credentials/bedrock/secret
+	}
+	handle @cred_bedrock_secret {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/secret
+		reverse_proxy bedrock-worker:3000
+	}
+	@cred_bedrock_revoke {
+		method POST
+		path /v1/credentials/bedrock/revoke
+	}
+	handle @cred_bedrock_revoke {
+		request_body {
+			max_size 64KB
+		}
+		rewrite * /internal/credentials/revoke
+		reverse_proxy bedrock-worker:3000
+	}
+
+	# Trailing-slash variants are not canonical routes; refuse rather than
+	# let a proxy normalize them into one.
+	@relay_noncanonical path /v1/chat/completions/* /v1/e2ee/chat/completions/* /v1/embeddings/* /v1/tee/attestation/* /v1/images/generations/* /v1/audio/speech/* /v1/credentials/*/*/*
+	handle @relay_noncanonical {
+		respond 404
+	}
+
+	# MODEL DISCOVERY BELONGS TO THE BROKER WHATEVER THE CALLER PRESENTS, and
+	# this is the one route where the Authorization-shaped matcher below was
+	# the wrong tool.
+	#
+	# `@compat_static` selects on `Bearer ar_*`. For the two INFERENCE paths that
+	# is exactly right: a caller without an ar_ key is a ticketed native caller,
+	# the relay serves those paths, and it answers 401 ticket_required. For
+	# /v1/models it is not, because the relay has NO GET /v1/models at all --
+	# the route belongs to the api/control role, which sits outside this trust
+	# domain. So every miss fell through @relay (which listed /v1/models) into a
+	# process that cannot serve it, and Fastify answered
+	# `404 Route GET:/v1/models not found`.
+	#
+	# MEASURED ON PRODUCTION 2026-09-18 against api.anonrouter.ai/v1/models:
+	#   Bearer ar_<invalid>  -> 401 {"error":{"code":"invalid_api_key"}}   (compat)
+	#   Bearer sk-<anything> -> 404 {"message":"Route GET:/v1/models ..."} (relay)
+	#   no Authorization     -> 404 {"message":"Route GET:/v1/models ..."} (relay)
+	#
+	# 404 IS THE WRONG ANSWER, NOT MERELY AN UGLY ONE. A stock OpenAI client
+	# raises NotFoundError for 404 and AuthenticationError for 401, so a customer
+	# whose key is missing, malformed, or copied from an OpenAI `sk-` account is
+	# told the ENDPOINT does not exist. The documented first step of the
+	# migration guide is exactly this call, so the failure lands on the customer's
+	# base URL rather than on their key.
+	#
+	# The broker already authenticates: it 401s a missing token and resolves a
+	# present one at control, so routing an unauthenticated GET here cannot
+	# enumerate anything. Cookie is stripped for the same reason as below.
+	#
+	# GET ONLY, and /v1/models is now absent from BOTH @compat_static and @relay,
+	# so POST /v1/models is refused at this edge with no upstream hop instead of
+	# reaching a process that would 404 it anyway.
+	@compat_models {
+		method GET
+		path /v1/models
+	}
+	handle @compat_models {
+		reverse_proxy compat:3000 {
+			header_up -Cookie
+		}
+	}
+
+	# Stock OpenAI clients use the ordinary /v1 base URL with an ar_ key.
+	# Ticket-authenticated native traffic falls through to the relay below.
+	@compat_static {
+		method POST GET
+		path /v1/chat/completions /v1/embeddings
+		header Authorization "Bearer ar_*"
+	}
+	handle @compat_static {
+		reverse_proxy compat:3000 {
+			# AUTHORIZATION IS PRESERVED HERE, and only here. Holding the
+			# caller's ar_ key is what this process is for.
+			#
+			# COOKIE IS NOT. The broker registers no cookie plugin and never
+			# reads one, and the browser will not attach one to a wildcard
+			# origin that never returns Access-Control-Allow-Credentials -- but
+			# a SIMPLE cross-origin request needs no preflight and no permission
+			# to carry ambient cookies, so "the browser will not send it" is not
+			# true of every request shape. A session cookie arriving here would
+			# be a second, stable identity landing in the one content-plane
+			# process that also holds the plaintext, which is the join this
+			# architecture bounds. The sibling edge already strips it on the
+			# equivalent handle (deploy/caddy/Caddyfile @compat); this one did
+			# not.
+			header_up -Cookie
+		}
+	}
+
+	# Both media surfaces are ticket-authenticated relay routes. The edge strips
+	# reusable credentials below, so only the single-use ticket and request body
+	# enter the attested content tier. Neither is a static-key compat route.
+	# /v1/models IS DELIBERATELY ABSENT from this list and used to be in it. The
+	# relay serves no such route, so its only effect was to turn every
+	# non-`ar_` model listing into a 404 from the wrong process. @compat_models
+	# above owns GET /v1/models outright.
+	@relay {
+		method POST GET
+		path /v1/chat/completions /v1/e2ee/chat/completions /v1/embeddings /v1/tee/attestation /v1/images/generations /v1/audio/speech
+	}
+	handle @relay {
+		reverse_proxy relay:3000 {
+			# Streaming completions are the reason. Both sibling edges set this
+			# (deploy/caddy/Caddyfile:245, Caddyfile.cvm:95) and this one did not,
+			# so it depended on Caddy's content-type sniffing to avoid buffering an
+			# SSE response. Explicit here, as it is everywhere else.
+			flush_interval -1
+			# REUSABLE CREDENTIALS ARE STRIPPED, AND THIS EDGE DID NOT DO IT.
+			#
+			# The relay authenticates the opaque single-use ticket and nothing
+			# else. That is the whole of the unlinkability property: the control
+			# plane knows the account and not the prompt, the relay knows the
+			# prompt and not the account, and neither can join them. A stable
+			# `ar_` key or a session cookie arriving here joins them at the one
+			# component the split exists to keep ignorant.
+			#
+			# Both sibling edges strip (deploy/caddy/Caddyfile on @relay, and the
+			# @receipt handle a few lines above in this very file). This handle
+			# did not, so any client that sent BOTH a ticket and an Authorization
+			# header handed the relay its account key -- and four of the seven
+			# paths here are not covered by the @compat_static matcher above, so
+			# they had no other route that would have taken the key away.
+			#
+			# Nothing legitimate needs them: ALLOW_INLINE_TICKET is false in
+			# production, the browser sends `credentials: "omit"`, and the compat
+			# broker builds relay headers from scratch.
+			header_up -Authorization
+			header_up -Cookie
+		}
+	}
+
+	handle /healthz {
+		reverse_proxy relay:3000
+	}
+
+	handle {
+		respond 404
+	}
+}

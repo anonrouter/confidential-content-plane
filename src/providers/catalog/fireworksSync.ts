@@ -4,6 +4,7 @@ import { computeSourceHash } from "./hash.js";
 import { normalizeFireworksCatalog, type RawFireworksModel } from "./fireworksNormalize.js";
 import { CATALOG_SCHEMA_VERSION, type NormalizedCatalogPayload } from "./normalized.js";
 import { backoffDelayMs, parseRetryAfterMs, type FetchOptions } from "./sync.js";
+import { staticProviderTransport } from "../transport.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
@@ -32,8 +33,8 @@ export function fireworksCatalogUrl(inferenceBaseUrl: string): string {
 }
 
 export async function fetchRawFireworksModels(config: ContentPlaneConfig, opts: FetchOptions = {}): Promise<RawFireworksModel[]> {
-  const key = config.providers.fireworksApiKey;
-  if (!key) throw new Error("fireworks_credential_missing");
+  const transport = staticProviderTransport(config, "fireworks");
+  if (!transport.hasCredential()) throw new Error("fireworks_credential_missing");
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = opts.maxRetries ?? MAX_RETRIES;
   const random = opts.random ?? Math.random;
@@ -42,8 +43,7 @@ export async function fetchRawFireworksModels(config: ContentPlaneConfig, opts: 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     let retryAfterMs: number | null = null;
     try {
-      const response = await fetch(fireworksCatalogUrl(config.providers.fireworksBaseUrl), {
-        headers: { authorization: `Bearer ${key}` },
+      const response = await transport.fetch(fireworksCatalogUrl(config.providers.fireworksBaseUrl), {
         signal: AbortSignal.timeout(timeoutMs)
       });
       if (response.ok) {

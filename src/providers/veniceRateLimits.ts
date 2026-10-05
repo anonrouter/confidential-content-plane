@@ -1,4 +1,6 @@
 import type { ContentPlaneConfig } from "../contentPlaneConfig.js";
+import { veniceProviderTransport } from "./transport.js";
+import type { VeniceKeysetStore } from "./veniceKeyStore.js";
 
 /**
  * Worker-side Venice rate-limit lookup.
@@ -22,12 +24,19 @@ import type { ContentPlaneConfig } from "../contentPlaneConfig.js";
  */
 export type VeniceRateLimits = Record<string, { rpm?: number; tpm?: number }>;
 
-/** Worker-side: fetch provider per-model rate limits (needs the Venice key). */
-export async function fetchVeniceRateLimits(config: ContentPlaneConfig): Promise<VeniceRateLimits | null> {
-  if (!config.providers.veniceInferenceKey) return null;
+/**
+ * Worker-side: fetch provider per-model rate limits (needs the Venice key).
+ * `keyStore` is the worker's live keyset, so the lookup uses the key inference
+ * would use rather than a boot key an operator may since have retired.
+ */
+export async function fetchVeniceRateLimits(
+  config: ContentPlaneConfig,
+  keyStore?: VeniceKeysetStore
+): Promise<VeniceRateLimits | null> {
+  const transport = veniceProviderTransport(config, keyStore);
+  if (!transport.hasCredential()) return null;
   try {
-    const response = await fetch(`${config.providers.veniceBaseUrl}/api_keys/rate_limits`, {
-      headers: { authorization: `Bearer ${config.providers.veniceInferenceKey}` },
+    const response = await transport.fetch(`${config.providers.veniceBaseUrl}/api_keys/rate_limits`, {
       signal: AbortSignal.timeout(5_000)
     });
     if (!response.ok) return null;

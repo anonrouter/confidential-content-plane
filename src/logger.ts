@@ -59,6 +59,10 @@ export const LOGGED_FIELD_ALLOWLIST: ReadonlySet<string> = new Set([
   "provider",
   "outcome",
 
+  // The release-collateral role's operation: one of the fixed names in
+  // src/releaseCollateral/contract.ts, taken from the route template, never a path.
+  "operation",
+
   // Health probing.
   "probed",
   "ok",
@@ -141,6 +145,7 @@ export const LOGGED_MESSAGE_ALLOWLIST: ReadonlySet<string> = new Set([
   "auto_top_up_setup_failed",
   "auto_top_up_worker_failed",
   "catalog_metadata_push_failed",
+  "catalog_sync_start_failed",
   "crypto_checkout_failed",
   "crypto_orders_quarantined_for_review",
   "crypto_orders_reconciled",
@@ -166,6 +171,9 @@ export const LOGGED_MESSAGE_ALLOWLIST: ReadonlySet<string> = new Set([
   "rejection_purge_failed",
   "rejection_rollup_coverage_capped",
   "rejection_rollup_flush_failed",
+  "release_collateral_lookup_failed",
+  "release_collateral_request_refused",
+  "release_collateral_rpc_failed",
   "request_complete",
   "request_error",
   "scaleway_webhook_processed",

@@ -4,7 +4,23 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseDotenv } from "dotenv";
 import { z } from "zod";
+import {
+  credentialBaseUrlPermitted,
+  credentialOrigins,
+  isCredentialOriginProvider,
+  PROVIDER_CREDENTIAL_ORIGINS,
+  PROVIDER_TRANSPORT_PROFILES
+} from "./providers/providerOrigins.js";
 import { parseVeniceKeyset } from "./providers/veniceKeys.js";
+import {
+  isPoolWorkerRole,
+  parsePoolProviders,
+  POOL_WORKER_ROLE,
+  POOLABLE_PROVIDERS,
+  workerMetadataTokenFor,
+  workerProviderForRole,
+  type PoolProviderName
+} from "./providers/workerProviders.js";
 
 function unique(values: string[]) {
   return [...new Set(values)];
@@ -107,7 +123,35 @@ const envSchema = z.object({
   // socket can derive every key the app uses and mint a quote over arbitrary
   // report data. Isolating it into a single-route process means the relay,
   // which is the component most exposed to hostile input, cannot do either.
-  RUNTIME_ROLE: z.enum(["api", "migrate", "control", "control-rpc", "metadata-api", "email-worker", "relay", "venice-worker", "fireworks-worker", "bedrock-worker", "deepinfra-worker", "chutes-worker", "tinfoil-worker", "near-worker", "phala-ai-worker", "compat", "gateway-attestation"]).default("api"),
+  // `pool-worker` serves SEVERAL bearer-key providers from one process: the
+  // ones POOL_PROVIDERS names. It holds each of their credentials, so it is
+  // named in every gate a provider worker is, and has fences of its own.
+  // `release-collateral` makes the release-authority lookups (GitHub, Base) for the
+  // pool, so the process holding provider keys and prompts never opens a
+  // session to those hosts. It holds no key, sees no prompt, and has no token
+  // but its own (src/releaseCollateral/contract.ts).
+  RUNTIME_ROLE: z.enum(["api", "migrate", "control", "control-rpc", "metadata-api", "email-worker", "relay", "venice-worker", "fireworks-worker", "bedrock-worker", "deepinfra-worker", "chutes-worker", "tinfoil-worker", "near-worker", "phala-ai-worker", "pool-worker", "compat", "gateway-attestation", "release-collateral"]).default("api"),
+  // The providers a pool-worker serves: canonical names, comma separated. A
+  // literal in the measured compose file, so which providers share a process is
+  // part of the deployment's identity. Required for pool-worker and refused on
+  // every other role (see parsePoolProviders for what the list may contain).
+  POOL_PROVIDERS: z.string().optional(),
+  // pool-worker only: the release-collateral role's origin. When set, every
+  // release-authority lookup the NEAR and Venice adapters make goes there
+  // instead of to GitHub and Base. Required for a production pool and refused on
+  // every other role, which keeps making its own lookups. No default: an unset
+  // value must mean "direct", never a hostname that happens to resolve.
+  RELEASE_COLLATERAL_RPC_URL: z.preprocess(
+    (value) => value === "" ? undefined : value,
+    z.string().url().optional()
+  ),
+  // Admits a caller to the release-collateral role and to nothing else. Held by that
+  // role and by the pool.
+  RELEASE_COLLATERAL_RPC_TOKEN: z.string().optional(),
+  RELEASE_COLLATERAL_RPC_TOKEN_FILE: z.string().optional(),
+  // The pool's deadline for one release-collateral call. Past it the lookup has failed
+  // and the authority check fails closed; it is never skipped.
+  RELEASE_COLLATERAL_RPC_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(20_000),
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default("0.0.0.0"),
   // A closed enum, not a free string. `trace`/`debug` were settable in
@@ -281,6 +325,13 @@ const envSchema = z.object({
   // them below the provider's own worst case would convert slow generations
   // into spurious failures with an open reservation.
   CONTROL_RPC_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(5_000),
+  // The worker's catalog and health pushes to control. Deliberately NOT
+  // CONTROL_RPC_TIMEOUT_MS: control applies a catalog synchronously inside that
+  // request, across a WAN, and a deadline sized for a per-request RPC would
+  // fail every sync until the freshness gate withdrew the provider's models.
+  // Generous by default, and capped below the sync interval so a hung push
+  // cannot run into the next one.
+  METADATA_PUSH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(240_000).default(60_000),
   // Generous on purpose: this bounds the worker's own upstream provider call,
   // which happens before the worker answers the relay.
   // Must exceed the provider deadline the adapters enforce (CHAT_TIMEOUT_MS,
@@ -525,6 +576,13 @@ const envSchema = z.object({
   // endpoint" to "the client verified THIS endpoint".
   CONTENT_TLS_SPKI_SHA256: z.string().regex(/^([0-9a-f]{64})?$/).default(""),
   CONSUMED_CAPABILITY_FILE: z.string().default("/var/lib/anonrouter-worker/consumed-capabilities.json"),
+  // pool-worker only. The directory holding ONE replay log per pooled provider,
+  // each under the filename that provider's own worker uses today
+  // (consumed-<compose key>.json), so the pool and the per-provider workers
+  // read the same records in either direction. The pool never reads
+  // CONSUMED_CAPABILITY_FILE: one file for every provider is the migration
+  // this avoids.
+  CONSUMED_CAPABILITY_DIR: z.string().default("/var/lib/anonrouter-worker"),
   // Control -> worker admin RPC base URL for operator key lifecycle actions.
   // Empty (the default) disables the feature: control then has no path to the
   // credential worker and the admin routes fail closed with a clear 503.
@@ -552,6 +610,13 @@ const envSchema = z.object({
    */
   PROVIDER_CAPABILITY_SIGNING_KEY: z.string().optional(),
   PROVIDER_CAPABILITY_SIGNING_KEY_ID: z.string().default("capability-v1"),
+  // Which origins a production provider worker's credential-bearing base URLs
+  // must be on (src/providers/providerOrigins.ts). `production` is the real
+  // pinned provider origins. `synthetic` is the preproduction manifest: the
+  // in-CVM mock and nothing else, so a real provider origin is refused. A
+  // literal in the measured compose file, so which one a deployment runs is
+  // part of its identity. There is deliberately no value that skips the check.
+  PROVIDER_TRANSPORT_PROFILE: z.enum(PROVIDER_TRANSPORT_PROFILES).default("production"),
   VENICE_BASE_URL: z.string().url().default("https://api.venice.ai/api/v1"),
   VENICE_DEFAULT_MODEL: z.string().default("llama-3.3-70b"),
   // Fireworks open-model Chat Completions. The adapter deliberately never uses
@@ -616,7 +681,7 @@ const envSchema = z.object({
   STRIPE_PURCHASES_ENABLED: optionalBooleanSwitch,
   STRIPE_AUTO_TOP_UP_ENABLED: optionalBooleanSwitch,
   APP_BASE_URL: z.string().url().default("http://localhost:3001"),
-  MINIMUM_CREDIT_PURCHASE_USD: z.coerce.number().int().positive().max(10_000).default(1),
+  MINIMUM_CREDIT_PURCHASE_USD: z.coerce.number().int().positive().max(10_000).default(5),
   MAXIMUM_CREDIT_PURCHASE_USD: z.coerce.number().int().positive().max(100_000).default(1_000),
   PROMOTION_MAX_CREDIT_CENTS: z.coerce.number().int().positive().max(1_000_000).default(50_000),
   PROMOTION_MAX_CAMPAIGN_CENTS: z.coerce.number().int().positive().max(1_000_000_000).default(5_000_000),
@@ -1245,6 +1310,111 @@ export const HTTP_EDGE_ROLES = new Set([
   "api", "control", "control-rpc", "metadata-api", "relay", "compat"
 ]);
 
+// Canonical provider name -> the variable holding its metadata token. Only for
+// naming the variable in a boot refusal; the values are read in loadConfig.
+const METADATA_TOKEN_VARIABLE: Readonly<Record<string, string>> = {
+  venice: "METADATA_RPC_TOKEN_VENICE",
+  fireworks: "METADATA_RPC_TOKEN_FIREWORKS",
+  "aws-bedrock": "METADATA_RPC_TOKEN_BEDROCK",
+  deepinfra: "METADATA_RPC_TOKEN_DEEPINFRA",
+  chutes: "METADATA_RPC_TOKEN_CHUTES",
+  tinfoil: "METADATA_RPC_TOKEN_TINFOIL",
+  "near-ai": "METADATA_RPC_TOKEN_NEAR",
+  "phala-ai": "METADATA_RPC_TOKEN_PHALA_AI"
+};
+
+/**
+ * Refused on a production pool-worker when explicitly set, on top of the
+ * content-tier list every content role is refused. Each is an authority the
+ * pool has no use for, and it already holds several providers' keys.
+ */
+const POOL_FORBIDDEN_ENVIRONMENT: readonly string[] = [
+  // Other roles' service tokens, and control's own material.
+  "RELAY_RPC_TOKEN",
+  "RELAY_RPC_TOKEN_FILE",
+  "COMPAT_RPC_TOKEN",
+  "COMPAT_RPC_TOKEN_FILE",
+  "METADATA_RPC_DEPLOYMENT_SCOPES",
+  "METADATA_RPC_DEPLOYMENT_SCOPES_FILE",
+  "PROVIDER_CAPABILITY_SIGNING_KEY",
+  // Bedrock and every AWS credential source beyond the static keys, which are
+  // refused for all non-Bedrock roles already.
+  "BEDROCK_BASE_URL",
+  "AWS_SESSION_TOKEN",
+  "AWS_PROFILE",
+  "AWS_CONFIG_FILE",
+  "AWS_SHARED_CREDENTIALS_FILE",
+  "AWS_WEB_IDENTITY_TOKEN_FILE",
+  "AWS_ROLE_ARN",
+  // The guest agent is the gateway-attestation service's alone.
+  "DSTACK_ENDPOINT",
+  // One replay file for every provider is what CONSUMED_CAPABILITY_DIR replaces.
+  "CONSUMED_CAPABILITY_FILE"
+];
+
+/**
+ * Refused on a production release-collateral role when explicitly set, on top of the
+ * content-tier list. The role makes public, keyless lookups for a caller it
+ * does not trust, so the only secret it may hold is the token that admits that
+ * caller. Provider credentials are refused by value in its own block below.
+ */
+const RELEASE_COLLATERAL_FORBIDDEN_ENVIRONMENT: readonly string[] = [
+  // Every other role's service token.
+  "WORKER_RPC_TOKEN",
+  "WORKER_RPC_TOKEN_FILE",
+  "RELAY_RPC_TOKEN",
+  "RELAY_RPC_TOKEN_FILE",
+  "COMPAT_RPC_TOKEN",
+  "COMPAT_RPC_TOKEN_FILE",
+  // Every metadata token, and control's scope map.
+  "METADATA_RPC_TOKEN",
+  "METADATA_RPC_TOKEN_FILE",
+  ...Object.values(METADATA_TOKEN_VARIABLE).flatMap((name) => [name, `${name}_FILE`]),
+  "METADATA_RPC_DEPLOYMENT_TOKEN",
+  "METADATA_RPC_DEPLOYMENT_TOKEN_FILE",
+  "METADATA_RPC_DEPLOYMENT_SCOPES",
+  "METADATA_RPC_DEPLOYMENT_SCOPES_FILE",
+  // The secret the content roles hash tokens and network fingerprints with.
+  "APP_SECRET",
+  "APP_SECRET_FILE",
+  "EMAIL_HASH_SECRET",
+  "EMAIL_HASH_SECRET_FILE",
+  // Bedrock and every AWS credential source beyond the static keys, which are
+  // refused for all non-Bedrock roles already.
+  "BEDROCK_BASE_URL",
+  "AWS_SESSION_TOKEN",
+  "AWS_PROFILE",
+  "AWS_CONFIG_FILE",
+  "AWS_SHARED_CREDENTIALS_FILE",
+  "AWS_WEB_IDENTITY_TOKEN_FILE",
+  "AWS_ROLE_ARN",
+  // The guest agent is the gateway-attestation service's alone.
+  "DSTACK_ENDPOINT",
+  "DSTACK_SIMULATOR_ENDPOINT",
+  // Credential administration terminates in a worker, never here.
+  "CREDENTIAL_ADMIN_MODE",
+  "CREDENTIAL_CAPABILITY_SIGNERS",
+  "CONTENT_TLS_SPKI_SHA256",
+  "CONSUMED_CAPABILITY_FILE",
+  "CONSUMED_CAPABILITY_DIR",
+  "VENICE_KEYSET_OVERLAY_FILE",
+  "PROVIDER_CREDENTIAL_ADMIN_MODE",
+  "PROVIDER_CAPABILITY_SIGNING_KEY"
+];
+
+/** A URL that is only a scheme, a host and an optional port. */
+function isBareHttpOrigin(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return (parsed.protocol === "http:" || parsed.protocol === "https:")
+    && !parsed.username && !parsed.password
+    && parsed.pathname === "/" && !parsed.search && !parsed.hash;
+}
+
 export function loadConfig() {
   const env = envSchema.parse(process.env);
   if (
@@ -1667,18 +1837,43 @@ export function loadConfig() {
   );
   // The metadata token THIS worker presents for its catalog push and dispatch
   // fence: its own per-provider token when configured, else the shared token.
-  const workerProviderName = env.RUNTIME_ROLE === "venice-worker" ? "venice"
-    : env.RUNTIME_ROLE === "fireworks-worker" ? "fireworks"
-      : env.RUNTIME_ROLE === "bedrock-worker" ? "aws-bedrock"
-        : env.RUNTIME_ROLE === "deepinfra-worker" ? "deepinfra"
-          : env.RUNTIME_ROLE === "chutes-worker" ? "chutes"
-            : env.RUNTIME_ROLE === "tinfoil-worker" ? "tinfoil"
-              : env.RUNTIME_ROLE === "near-worker" ? "near-ai"
-                : env.RUNTIME_ROLE === "phala-ai-worker" ? "phala-ai"
-                  : null;
-  const workerMetadataToken = deploymentMetadataToken
-    || (workerProviderName ? providerMetadataTokens[workerProviderName] : undefined)
-    || metadataRpcToken;
+  // workerMetadataTokenFor makes the selection, and each use site calls it with
+  // the provider it acts for. This is the same answer for the role's own
+  // provider, kept so the fences below can check its strength at boot.
+  const workerProviderName = workerProviderForRole(env.RUNTIME_ROLE);
+  // THE POOL. It serves the providers POOL_PROVIDERS names and has no provider
+  // of its own, so workerProviderName is null for it and everything below that
+  // is per provider runs over this list instead.
+  //
+  // The list is parsed in every environment: without it there is nothing to
+  // build. On any other role the variable is refused, not ignored. A list that
+  // is set where it means nothing is a deployment that believes it is pooling.
+  const isPoolWorker = isPoolWorkerRole(env.RUNTIME_ROLE);
+  if (!isPoolWorker && env.POOL_PROVIDERS !== undefined && env.POOL_PROVIDERS.trim() !== "") {
+    throw new Error(`POOL_PROVIDERS is only valid for RUNTIME_ROLE=${POOL_WORKER_ROLE}`);
+  }
+  const poolProviders: PoolProviderName[] = isPoolWorker ? parsePoolProviders(env.POOL_PROVIDERS) : [];
+  // THE RELEASE-COLLATERAL CLIENT is the pool's. A URL here switches a process's
+  // release-authority lookups from direct to delegated, so on any other role it
+  // is refused, not ignored: a worker that was handed one and kept going to
+  // GitHub itself would be a deployment that believes it is not.
+  const releaseCollateralRpcUrl = env.RELEASE_COLLATERAL_RPC_URL;
+  if (!isPoolWorker && releaseCollateralRpcUrl !== undefined) {
+    throw new Error(`RELEASE_COLLATERAL_RPC_URL is only valid for RUNTIME_ROLE=${POOL_WORKER_ROLE}`);
+  }
+  const releaseCollateralRpcToken = sensitiveValue({
+    key: "RELEASE_COLLATERAL_RPC_TOKEN",
+    direct: env.RELEASE_COLLATERAL_RPC_TOKEN,
+    file: env.RELEASE_COLLATERAL_RPC_TOKEN_FILE,
+    fallback: env.NODE_ENV === "production" ? undefined : "dev-only-release-collateral-rpc-token-change-me-32-bytes"
+  });
+  // The pool has no single metadata token. Each pooled provider presents its
+  // own, selected per call by workerMetadataTokenFor, which under this role
+  // has no deployment override and no shared fallback.
+  const workerMetadataToken = isPoolWorker ? "" : workerMetadataTokenFor(
+    { deploymentMetadataToken, providerMetadataTokens, metadataRpcToken },
+    workerProviderName
+  );
   const compatRpcToken = sensitiveValue({
     key: "COMPAT_RPC_TOKEN",
     direct: env.COMPAT_RPC_TOKEN,
@@ -1690,8 +1885,10 @@ export function loadConfig() {
     || env.RUNTIME_ROLE === "bedrock-worker" || env.RUNTIME_ROLE === "deepinfra-worker"
     || env.RUNTIME_ROLE === "chutes-worker" || env.RUNTIME_ROLE === "tinfoil-worker"
     || env.RUNTIME_ROLE === "near-worker" || env.RUNTIME_ROLE === "phala-ai-worker"
+    || env.RUNTIME_ROLE === "pool-worker"
     || env.RUNTIME_ROLE === "compat"
-    || env.RUNTIME_ROLE === "gateway-attestation";
+    || env.RUNTIME_ROLE === "gateway-attestation"
+    || env.RUNTIME_ROLE === "release-collateral";
   // The migrate role holds the schema-owner credential and is deliberately NOT
   // part of isSplitRole, so this check sits outside that block. Nothing else
   // stops it being scheduled into a CVM, and a confidential host is the last
@@ -1831,9 +2028,15 @@ export function loadConfig() {
     // the failure would be silent: a misconfigured CVM would simply connect.
     //
     // Asserted here rather than in compose so it holds wherever the image runs.
+    // The pool is named. Its role happens to end in "-worker", and a rename
+    // must not be what takes it out of this list. The release-collateral role is named
+    // because nothing else would put it here: it holds no content, but it runs
+    // in the same CVM and must be refused the same secrets.
     const contentTierRole = env.RUNTIME_ROLE === "relay"
       || env.RUNTIME_ROLE === "compat"
       || env.RUNTIME_ROLE === "gateway-attestation"
+      || env.RUNTIME_ROLE === "pool-worker"
+      || env.RUNTIME_ROLE === "release-collateral"
       || env.RUNTIME_ROLE.endsWith("-worker");
     if (contentTierRole) {
       // Read process.env, NOT the parsed env: several of these have zod
@@ -1859,7 +2062,15 @@ export function loadConfig() {
         "STRIPE_API_KEY",
         "STRIPE_API_KEY_FILE",
         "SMTP_PASSWORD",
-        "SMTP_PASSWORD_FILE"
+        "SMTP_PASSWORD_FILE",
+        // The pool aggregates several providers' keys, so it is additionally
+        // refused every other authority a content-plane process could be
+        // handed: another role's service token, control's deployment-scope map
+        // and capability signing key, an AWS credential source, a guest-agent
+        // endpoint, and the single replay file its per-provider files replace.
+        ...(isPoolWorker ? POOL_FORBIDDEN_ENVIRONMENT : []),
+        // The release-collateral role is refused every authority but its own token.
+        ...(env.RUNTIME_ROLE === "release-collateral" ? RELEASE_COLLATERAL_FORBIDDEN_ENVIRONMENT : [])
       ];
       for (const name of forbidden) {
         const value = process.env[name];
@@ -2010,15 +2221,208 @@ export function loadConfig() {
       if (env.PHALA_AI_API_KEY_FILE === undefined) problems.push("PHALA_AI_API_KEY_FILE (file-backed) is required");
       if (!phalaAiApiKey) problems.push("A Phala AI API credential is required");
     }
+    if (isPoolWorker) {
+      // THE POOL (PROVIDER_POOL_PLAN.md, W1b). Every invariant a single-provider
+      // worker has, held for each listed provider at once, plus the ones that
+      // only exist because several providers share this process.
+      if (!strong(workerRpcToken)) problems.push("WORKER_RPC_TOKEN must be a >= 32-byte non-placeholder value");
+      if (!process.env.CONTROL_METADATA_URL?.trim()) problems.push("CONTROL_METADATA_URL is required");
+
+      // METADATA TOKENS. One strong token per listed provider and no other
+      // token at all. The shared and deployment tokens are refused outright:
+      // either would be an authority that is no one provider's, and
+      // workerMetadataTokenFor ignores both under this role regardless.
+      if (metadataRpcToken) {
+        problems.push("METADATA_RPC_TOKEN must not be set on the pool worker: every pooled provider presents its own token and there is no shared fallback");
+      }
+      if (deploymentMetadataToken) {
+        problems.push("METADATA_RPC_DEPLOYMENT_TOKEN must not be set on the pool worker: it would override every pooled provider's own token");
+      }
+      for (const provider of poolProviders) {
+        if (!strong(providerMetadataTokens[provider] ?? "")) {
+          problems.push(`${METADATA_TOKEN_VARIABLE[provider]} must be a >= 32-byte non-placeholder value for pooled provider ${provider}`);
+        }
+      }
+      for (const provider of Object.keys(providerMetadataTokens)) {
+        if (!(poolProviders as string[]).includes(provider)) {
+          problems.push(`${METADATA_TOKEN_VARIABLE[provider]} must not be set on the pool worker: ${provider} is not in POOL_PROVIDERS`);
+        }
+      }
+      const pooledTokens = poolProviders.map((provider) => providerMetadataTokens[provider]).filter(Boolean);
+      if (new Set(pooledTokens).size !== pooledTokens.length) {
+        problems.push("metadata RPC tokens must be distinct across pooled providers");
+      }
+
+      // CREDENTIALS. File-backed for every listed provider, exactly as that
+      // provider's own worker requires, and none at all for an unlisted one:
+      // the pool holds the keys it serves and no others.
+      const poolCredentials: Record<PoolProviderName, { label: string; held: boolean; fileBacked: boolean; fileRequired: string; required: string }> = {
+        venice: {
+          label: "Venice",
+          held: veniceKeys.length > 0,
+          // The keyset in use must have come from a file. A direct keyset takes
+          // precedence over VENICE_INFERENCE_KEY_FILE, so the file variable
+          // being defined is not enough on its own.
+          fileBacked: env.VENICE_INFERENCE_KEYS_FILE !== undefined
+            || (!env.VENICE_INFERENCE_KEYS && env.VENICE_INFERENCE_KEY_FILE !== undefined),
+          fileRequired: "VENICE_INFERENCE_KEY_FILE or VENICE_INFERENCE_KEYS_FILE (file-backed) is required",
+          required: "A Venice inference credential is required"
+        },
+        fireworks: {
+          label: "Fireworks",
+          held: Boolean(fireworksApiKey),
+          fileBacked: env.FIREWORKS_API_KEY_FILE !== undefined,
+          fileRequired: "FIREWORKS_API_KEY_FILE (file-backed) is required",
+          required: "A Fireworks API credential is required"
+        },
+        deepinfra: {
+          label: "DeepInfra",
+          held: Boolean(deepinfraApiKey),
+          fileBacked: env.DEEPINFRA_API_KEY_FILE !== undefined,
+          fileRequired: "DEEPINFRA_API_KEY_FILE (file-backed) is required",
+          required: "A DeepInfra API credential is required"
+        },
+        tinfoil: {
+          label: "Tinfoil",
+          held: Boolean(tinfoilApiKey),
+          fileBacked: env.TINFOIL_API_KEY_FILE !== undefined,
+          fileRequired: "TINFOIL_API_KEY_FILE (file-backed) is required",
+          required: "A Tinfoil API credential is required"
+        },
+        "near-ai": {
+          label: "NEAR AI",
+          held: Boolean(nearApiKey),
+          fileBacked: env.NEAR_API_KEY_FILE !== undefined,
+          fileRequired: "NEAR_API_KEY_FILE (file-backed) is required",
+          required: "A NEAR AI API credential is required"
+        },
+        "phala-ai": {
+          label: "Phala AI",
+          held: Boolean(phalaAiApiKey),
+          fileBacked: env.PHALA_AI_API_KEY_FILE !== undefined,
+          fileRequired: "PHALA_AI_API_KEY_FILE (file-backed) is required",
+          required: "A Phala AI API credential is required"
+        },
+        chutes: {
+          label: "Chutes",
+          held: Boolean(chutesApiKey),
+          fileBacked: env.CHUTES_API_KEY_FILE !== undefined,
+          fileRequired: "CHUTES_API_KEY_FILE (file-backed) is required",
+          required: "A Chutes API credential is required"
+        }
+      };
+      for (const provider of POOLABLE_PROVIDERS) {
+        const credential = poolCredentials[provider];
+        if (poolProviders.includes(provider)) {
+          if (!credential.fileBacked) problems.push(credential.fileRequired);
+          if (!credential.held) problems.push(credential.required);
+        } else if (credential.held) {
+          problems.push(`the pool worker must not hold a ${credential.label} credential: ${provider} is not in POOL_PROVIDERS`);
+        }
+      }
+
+      // Bedrock never pools. Static AWS keys are refused for every role but
+      // the Bedrock worker further down; the settings that would point this
+      // process at Bedrock are refused here.
+      if (env.BEDROCK_ENABLED === true) problems.push("BEDROCK_ENABLED must not be true on the pool worker");
+      if (env.BEDROCK_AWS_PROFILE) problems.push("the pool worker must not select an AWS Bedrock credential profile");
+      // The pool reaches no guest agent, so it has no quote to bind.
+      if (env.GATEWAY_ATTESTATION_ENABLED) problems.push("GATEWAY_ATTESTATION_ENABLED must not be true on the pool worker");
+      // Capability mode only. In legacy mode the Venice key routes accept a
+      // secret from anything that holds WORKER_RPC_TOKEN, which the relay and
+      // every worker do. A process holding several providers' keys must not
+      // leave that door open.
+      if (env.CREDENTIAL_ADMIN_MODE !== "capability") {
+        problems.push("CREDENTIAL_ADMIN_MODE must be capability on the pool worker");
+      }
+      // RELEASE-AUTHORITY LOOKUPS LEAVE THROUGH THE RELEASE-COLLATERAL ROLE (W3). The
+      // NEAR and Venice adapters look up what a provider publishes on GitHub
+      // and Base. Done from here, every pooled key and prompt would sit in a
+      // process with sessions open to those hosts. So a production pool must be
+      // told where the release-collateral role is, and holds a token for it that is no
+      // other service's.
+      if (releaseCollateralRpcUrl === undefined) {
+        problems.push("RELEASE_COLLATERAL_RPC_URL is required on the pool worker");
+      } else if (!isBareHttpOrigin(releaseCollateralRpcUrl)) {
+        // Says what it must be, never what it was set to.
+        problems.push("RELEASE_COLLATERAL_RPC_URL must be an http(s) origin with no credentials, path, query or fragment");
+      }
+      if (!strong(releaseCollateralRpcToken)) {
+        problems.push("RELEASE_COLLATERAL_RPC_TOKEN must be a >= 32-byte non-placeholder value");
+      } else if ([workerRpcToken, ...Object.values(providerMetadataTokens)].includes(releaseCollateralRpcToken)) {
+        problems.push("RELEASE_COLLATERAL_RPC_TOKEN must be distinct from the pool's worker and metadata tokens");
+      }
+      // Chutes cannot pool yet. Its adapter fetches its own release collateral
+      // (GitHub and Chutes' measurement list) and the release-collateral role does not
+      // serve it, so a pooled Chutes would be the direct lookup the fence above
+      // exists to remove.
+      if (poolProviders.includes("chutes")) {
+        problems.push("POOL_PROVIDERS must not list chutes on a production pool: its release collateral is not served by the release-collateral role, so the pool would fetch it from GitHub and api.chutes.ai itself");
+      }
+    }
+    if (env.RUNTIME_ROLE === "release-collateral") {
+      // THE RELEASE-COLLATERAL ROLE (PROVIDER_POOL_PLAN.md, W3). It answers a caller it
+      // does not trust with public, keyless lookups, so it holds exactly one
+      // secret: the token that admits that caller. The other roles' tokens and
+      // settings are refused by name in the content-tier check above; provider
+      // credentials are refused here by value, whichever variable carried them.
+      if (!strong(releaseCollateralRpcToken)) problems.push("RELEASE_COLLATERAL_RPC_TOKEN must be a >= 32-byte non-placeholder value");
+      if (veniceKeys.length > 0) problems.push("the release-collateral service must not hold a Venice credential");
+      if (fireworksApiKey) problems.push("the release-collateral service must not hold a Fireworks credential");
+      if (deepinfraApiKey) problems.push("the release-collateral service must not hold a DeepInfra credential");
+      if (env.BEDROCK_ENABLED === true) problems.push("BEDROCK_ENABLED must not be true on the release-collateral service");
+      if (env.BEDROCK_AWS_PROFILE) problems.push("the release-collateral service must not select an AWS Bedrock credential profile");
+      // It reaches no guest agent, so it has no quote to bind.
+      if (env.GATEWAY_ATTESTATION_ENABLED) problems.push("GATEWAY_ATTESTATION_ENABLED must not be true on the release-collateral service");
+    }
+    // The release-collateral token admits a caller to the release-collateral role. Only that
+    // role and the pool hold it: on any other role it would be a way into a
+    // service that role has no business calling.
+    if (env.RUNTIME_ROLE !== "release-collateral" && !isPoolWorker) {
+      for (const name of ["RELEASE_COLLATERAL_RPC_TOKEN", "RELEASE_COLLATERAL_RPC_TOKEN_FILE"]) {
+        const value = process.env[name];
+        if (typeof value === "string" && value.trim().length > 0) {
+          problems.push(`${env.RUNTIME_ROLE} must not be given ${name}`);
+        }
+      }
+    }
+    // CREDENTIAL-BEARING ORIGINS (PROVIDER_POOL_PLAN.md, W2). The provider
+    // transport sends a worker's key to the origins of its configured base URLs
+    // and nowhere else, so what those URLs are decides where the key can go.
+    // Nothing checked them before: an override booted, and the key followed it
+    // to whatever host the worker could reach.
+    //
+    // Each worker checks ONLY the providers it serves: its own, or for the pool
+    // every listed one. It holds no other provider's key, so a peer's base URL
+    // carries nothing here. Bedrock is not in the table: it signs with SigV4
+    // and holds no bearer.
+    //
+    // The profile picks the list; nothing turns the check off. Under
+    // `synthetic` only the fixture origins are admitted, so a preproduction
+    // manifest cannot also be pointed at a real provider.
+    for (const servedProvider of isPoolWorker ? poolProviders : [workerProviderName]) {
+      if (!isCredentialOriginProvider(servedProvider)) continue;
+      const permitted = credentialOrigins(servedProvider, env.PROVIDER_TRANSPORT_PROFILE);
+      for (const variable of PROVIDER_CREDENTIAL_ORIGINS[servedProvider].baseUrlVariables) {
+        if (!credentialBaseUrlPermitted(servedProvider, env.PROVIDER_TRANSPORT_PROFILE, env[variable])) {
+          // Names the variable and what it must be, never what it was set to.
+          // The refused URL is operator input and this message is logged.
+          problems.push(`${variable} must be on ${permitted.join(" or ")} (PROVIDER_TRANSPORT_PROFILE=${env.PROVIDER_TRANSPORT_PROFILE})`);
+        }
+      }
+    }
     // Consolidated credential isolation for the confidential-compute providers:
     // each credential belongs to exactly one worker role; every OTHER split role
     // (control, relay, compat, and each peer worker) must hold none. This mirrors
     // the AWS static-key rejection below and keeps a single compromised worker
     // from ever reaching a peer provider's inference credential.
-    if (env.RUNTIME_ROLE !== "chutes-worker" && chutesApiKey) problems.push("only the Chutes worker may hold a Chutes credential");
-    if (env.RUNTIME_ROLE !== "tinfoil-worker" && tinfoilApiKey) problems.push("only the Tinfoil worker may hold a Tinfoil credential");
-    if (env.RUNTIME_ROLE !== "near-worker" && nearApiKey) problems.push("only the NEAR AI worker may hold a NEAR AI credential");
-    if (env.RUNTIME_ROLE !== "phala-ai-worker" && phalaAiApiKey) problems.push("only the Phala AI worker may hold a Phala AI credential");
+    //
+    // The pool is the one other holder, for the providers it lists. Its own
+    // block above has already refused a credential for an unlisted one.
+    if (env.RUNTIME_ROLE !== "chutes-worker" && !isPoolWorker && chutesApiKey) problems.push("only the Chutes worker may hold a Chutes credential");
+    if (env.RUNTIME_ROLE !== "tinfoil-worker" && !isPoolWorker && tinfoilApiKey) problems.push("only the Tinfoil worker may hold a Tinfoil credential");
+    if (env.RUNTIME_ROLE !== "near-worker" && !isPoolWorker && nearApiKey) problems.push("only the NEAR AI worker may hold a NEAR AI credential");
+    if (env.RUNTIME_ROLE !== "phala-ai-worker" && !isPoolWorker && phalaAiApiKey) problems.push("only the Phala AI worker may hold a Phala AI credential");
     // The Bedrock credential also has a static-access-key form (the AWS default
     // chain signs SigV4 with AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY). The bedrock
     // worker rejects it above (it uses IAM Roles Anywhere); every other split role
@@ -2323,6 +2727,7 @@ export function loadConfig() {
       catalogPriceMarginRatio: env.CATALOG_PRICE_MARGIN_RATIO,
       catalogAutoPromotionEnabled: env.CATALOG_AUTO_PROMOTION_ENABLED,
       mockBaseUrl: env.MOCK_PROVIDER_BASE_URL.replace(/\/$/, ""),
+      transportProfile: env.PROVIDER_TRANSPORT_PROFILE,
       veniceBaseUrl: env.VENICE_BASE_URL.replace(/\/$/, ""),
       veniceInferenceKey,
       veniceKeys,
@@ -2351,6 +2756,15 @@ export function loadConfig() {
     },
     internal: {
       role: env.RUNTIME_ROLE,
+      // The providers a pool-worker serves, in the order POOL_PROVIDERS lists
+      // them. Empty on every other role.
+      poolProviders,
+      // pool-worker only: where release-authority lookups are sent. Empty on
+      // every other role, which makes its own.
+      releaseCollateralRpcUrl: releaseCollateralRpcUrl?.replace(/\/$/, "") ?? "",
+      // The release-collateral role checks it; the pool presents it.
+      releaseCollateralRpcToken,
+      releaseCollateralRpcTimeoutMs: env.RELEASE_COLLATERAL_RPC_TIMEOUT_MS,
       controlRpcUrl: env.CONTROL_RPC_URL.replace(/\/$/, ""),
       workerRpcUrl: env.WORKER_RPC_URL.replace(/\/$/, ""),
       fireworksWorkerRpcUrl: env.FIREWORKS_WORKER_RPC_URL.replace(/\/$/, ""),
@@ -2378,16 +2792,25 @@ export function loadConfig() {
       // Per-provider metadata tokens keyed by provider name (AR-02). Only
       // configured providers appear; an empty map means single-token mode.
       providerMetadataTokens,
+      // The worker-side deployment-scoped token. Carried on its own so the
+      // per-provider selection (workerMetadataTokenFor) can apply the same
+      // precedence at each use that workerMetadataToken applies below.
+      deploymentMetadataToken,
       metadataDeploymentScopes,
       confidentialDeploymentId: env.CONFIDENTIAL_DEPLOYMENT_ID,
       credentialAdmin: {
         mode: env.CREDENTIAL_ADMIN_MODE,
         capabilitySigners: env.CREDENTIAL_CAPABILITY_SIGNERS,
         tlsSpkiSha256: env.CONTENT_TLS_SPKI_SHA256,
-        consumedCapabilityFile: env.CONSUMED_CAPABILITY_FILE
+        consumedCapabilityFile: env.CONSUMED_CAPABILITY_FILE,
+        // pool-worker only: one replay log per pooled provider lives here.
+        consumedCapabilityDir: env.CONSUMED_CAPABILITY_DIR
       },
       // The metadata token this worker role presents (per-provider when set,
-      // else the shared token). Irrelevant for non-worker roles.
+      // else the shared token). Irrelevant for non-worker roles. Worker code
+      // does not read this: it calls workerMetadataTokenFor with the provider
+      // it is acting for, which gives this value for the role's own provider.
+      // Empty for the pool, which has no single token.
       workerMetadataToken,
       compatRpcToken,
       // Only honored outside production; production relay/control fail closed.
@@ -2404,6 +2827,7 @@ export function loadConfig() {
       // listing an image model never implies it is callable; this flag does.
       imageGenerationEnabled: env.IMAGE_GENERATION_ENABLED,
       controlRpcTimeoutMs: env.CONTROL_RPC_TIMEOUT_MS,
+      metadataPushTimeoutMs: env.METADATA_PUSH_TIMEOUT_MS,
       workerRpcTimeoutMs: env.WORKER_RPC_TIMEOUT_MS,
       relayForwardTimeoutMs: env.RELAY_FORWARD_TIMEOUT_MS,
       gatewayAttestation: {

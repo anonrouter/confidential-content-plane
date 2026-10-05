@@ -4,6 +4,11 @@
 //                     auth, payment, admin, email, or provider credentials.
 //   provider worker : holds ONLY its own provider credential. NO db, redis,
 //                     account, auth, or payment access.
+//   pool worker     : a provider worker for SEVERAL providers at once. Holds
+//                     each listed provider's credential and nothing else.
+//   release-collateral : makes the pool's release-authority lookups (GitHub,
+//                     Base). NO provider credential, NO request content, and no
+//                     token but the one that admits its caller.
 //
 // The control-api role is built by buildServer(config) with RUNTIME_ROLE=control.
 
@@ -23,7 +28,13 @@ import { ContentReceiptStore } from "./inference/contentReceipts.js";
 import { ethersEthMessageRecoverer, VerifierRegistry } from "./providers/attestation/index.js";
 import { fetchVeniceRateLimits } from "./providers/veniceRateLimits.js";
 import { veniceKeyManifest } from "./providers/veniceKeys.js";
-import { VeniceKeysetStore } from "./providers/veniceKeyStore.js";
+import { configuredVeniceKeysetStore } from "./providers/veniceKeyStore.js";
+import {
+  isPoolWorkerRole,
+  workerMetadataTokenFor,
+  workerProvidersForRole,
+  type WorkerProviderName
+} from "./providers/workerProviders.js";
 import { buildVeniceCatalogPayload, createCatalogSynchronizer } from "./providers/catalog/sync.js";
 import { buildFireworksCatalogPayload } from "./providers/catalog/fireworksSync.js";
 import { buildBedrockCatalogPayload } from "./providers/catalog/bedrockSync.js";
@@ -39,6 +50,7 @@ import {
   type WorkerHealthCheck,
   type WorkerHealthTarget
 } from "./providers/health/workerMetadata.js";
+import { AppError } from "./security/errors.js";
 import { GatewayAttestationService } from "./gateway/service.js";
 import {
   registerGatewayAttestationIngressGuard,
@@ -52,9 +64,20 @@ import { registerImageRoutes } from "./routes/image.js";
 import { registerSpeechRoutes } from "./routes/speech.js";
 import { registerDisabledImageRoute, registerDisabledSpeechRoute } from "./routes/mediaDisabled.js";
 import { registerWorkerRpcRoutes } from "./routes/internal/worker.js";
-import { registerCredentialAdminRoutes } from "./routes/internal/credentialAdmin.js";
+import {
+  registerCredentialAdminRoutes,
+  registerPooledCredentialAdminRoutes
+} from "./routes/internal/credentialAdmin.js";
 import { registerRelayIngressGuard } from "./relay/ingress.js";
 import { CompatControlClient } from "./compat/controlClient.js";
+import { releaseCollateralClientFor } from "./releaseCollateral/client.js";
+import {
+  ReleaseCollateralAdmission,
+  releaseCollateralErrorHandler,
+  releaseCollateralSources,
+  registerReleaseCollateralRoutes,
+  type ReleaseCollateralSources
+} from "./releaseCollateral/server.js";
 import { compatErrorHandler, registerCompatIngressGuard, registerCompatRoutes } from "./compat/broker.js";
 
 /** The relay: only the chat route, talking to control + worker over RPC. */
@@ -244,172 +267,331 @@ export async function buildGatewayAttestationServer(
   return server;
 }
 
-/** A credential-isolated provider worker (Venice, Fireworks, or Bedrock). */
-export async function buildWorkerServer(config: AppConfig): Promise<FastifyInstance> {
+export interface ReleaseCollateralServerOptions extends Pick<BaseServerOptions, "observe"> {
+  /** The lookups. Tests pass stubbed upstreams; the role itself takes the real fetchers. */
+  sources?: ReleaseCollateralSources;
+  /** The role's bounds. Tests pass smaller ones and an injected clock. */
+  admission?: ReleaseCollateralAdmission;
+}
+
+/**
+ * The release-collateral role: the release-authority lookups a pooled worker must not
+ * make itself, behind a typed contract (src/releaseCollateral/contract.ts).
+ *
+ * A pooled worker holds several providers' keys and every pooled prompt. What
+ * it verifies a provider against is public (GitHub refs and files, a registry
+ * on Base), and fetching it from that process would give every one of those
+ * keys and prompts a session to github.com and a public RPC node. This process
+ * makes the requests instead, and is the only one whose egress reaches those
+ * hosts.
+ *
+ * It has no DB, no Valkey, no provider credential, no metadata token and no
+ * account identity, and it never receives request content. Its caller is not
+ * trusted: every rule about what may be asked is enforced here.
+ */
+export async function buildReleaseCollateralServer(
+  config: AppConfig,
+  options: ReleaseCollateralServerOptions = {}
+): Promise<FastifyInstance> {
+  const server = await createBaseServer(config, { observe: options.observe, errorHandler: releaseCollateralErrorHandler });
+  await registerReleaseCollateralRoutes(server, {
+    token: config.internal.releaseCollateralRpcToken,
+    sources: options.sources ?? releaseCollateralSources(),
+    admission: options.admission ?? new ReleaseCollateralAdmission()
+  });
+  return server;
+}
+
+// Health probes in flight at once. On a single-provider worker this bounds one
+// delivery, as it always has. On the pool it bounds the WHOLE PROCESS: six
+// providers each running four would be twenty-four billed requests and their
+// buffers in one heap.
+const HEALTH_PROBE_CONCURRENCY = 4;
+// On the pool, the most one provider's delivery may hold of that budget, so a
+// provider whose probes all hang cannot starve the others' out.
+const POOLED_PROVIDER_PROBE_CONCURRENCY = 2;
+
+/** At most `limit` tasks at once, first come first served. */
+function createGate(limit: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async function run<T>(task: () => Promise<T>): Promise<T> {
+    // A released slot is handed straight to the next waiter, so `active` only
+    // moves when nobody is waiting.
+    if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+    else active += 1;
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
+}
+
+/**
+ * A credential-isolated provider worker: one provider's (Venice, Fireworks,
+ * Bedrock, ...), or under the pool role every provider POOL_PROVIDERS lists.
+ */
+export async function buildWorkerServer(
+  config: AppConfig,
+  // `observe` only: it sees the bare instance before any route exists, which
+  // is how a route inventory is taken. The error handler is not the caller's.
+  options: Pick<BaseServerOptions, "observe"> = {}
+): Promise<FastifyInstance> {
   // The worker error handler serializes a sanitized provider block so the relay
   // can reconstruct the provider outcome (status/request-id/machine-code) for the
   // rejection ledger across the RPC boundary.
-  const server = await createBaseServer(config, { errorHandler: workerErrorHandler });
-  // Map this worker's role to its canonical provider name (the DB/registry key).
-  const providerLabel = config.internal.role === "fireworks-worker" ? "fireworks"
-    : config.internal.role === "bedrock-worker" ? "aws-bedrock"
-      : config.internal.role === "deepinfra-worker" ? "deepinfra"
-        : config.internal.role === "chutes-worker" ? "chutes"
-          : config.internal.role === "tinfoil-worker" ? "tinfoil"
-            : config.internal.role === "near-worker" ? "near-ai"
-              : config.internal.role === "phala-ai-worker" ? "phala-ai"
-                : "venice";
-  const isVeniceWorker = providerLabel === "venice";
-  // Fetch + normalize this worker's own catalog (each build fn fails closed
-  // without the provider credential and never clobbers last-known-good on error).
-  const buildCatalogPayload = () => {
-    switch (providerLabel) {
-      case "fireworks": return buildFireworksCatalogPayload(config, { log: server.log });
-      case "aws-bedrock": return buildBedrockCatalogPayload(config, { log: server.log });
-      case "deepinfra": return buildDeepInfraCatalogPayload(config, { log: server.log });
-      case "chutes": return buildChutesCatalogPayload(config, { log: server.log });
-      case "tinfoil": return buildTinfoilCatalogPayload(config, { log: server.log });
-      case "near-ai": return buildNearCatalogPayload(config, { log: server.log });
-      case "phala-ai": return buildPhalaAiCatalogPayload(config, { log: server.log });
-      default: return buildVeniceCatalogPayload(config, { log: server.log });
-    }
-  };
-  // Present this worker's own per-provider metadata token when configured, so
-  // control can bind both the dispatch fence and the catalog push to exactly one
-  // provider (AR-02). Falls back to the shared token in single-token deployments.
-  const workerMetadataToken = config.internal.workerMetadataToken;
-  const providerAttemptAcknowledger = new HttpProviderAttemptAcknowledger(
-    config.internal.controlMetadataUrl,
-    workerMetadataToken,
-    config.internal.confidentialDeploymentId
-  );
+  const server = await createBaseServer(config, { observe: options.observe, errorHandler: workerErrorHandler });
+  // The providers this process serves, by canonical name (the DB/registry key).
+  // Everything below acts for a provider NAMED from this list; nothing reads
+  // the role again, except to ask whether this is the pool.
+  const pooled = isPoolWorkerRole(config.internal.role);
+  const providers = workerProvidersForRole(config.internal.role, config.internal.poolProviders);
+  // Only the pool role serves a list. Any other role with more or fewer than
+  // one provider would be a pool that passed none of the pool's fences.
+  if (!pooled && providers.length !== 1) throw new Error("buildWorkerServer serves exactly one provider outside the pool");
   // Durable keyset overlay: boot keys plus operator add/remove actions on the
-  // worker's one writable mount. Dispatch and the manifest push both read the
-  // live effective keyset, so lifecycle changes apply without a restart.
-  const veniceKeyStore = isVeniceWorker
-    ? new VeniceKeysetStore(config.providers.veniceKeys, config.providers.veniceKeysetOverlayFile)
-    : undefined;
+  // worker's one writable mount. Dispatch, the catalog and rate-limit fetches,
+  // and the manifest push all read the live effective keyset, so lifecycle
+  // changes apply without a restart.
+  //
+  // ONE store per process, and only where Venice is served. Every Venice
+  // consumer below is handed this same instance; no other provider's wiring
+  // sees it.
+  const veniceKeyStore = providers.includes("venice") ? configuredVeniceKeysetStore(config) : undefined;
   if (veniceKeyStore) server.decorate("veniceKeyStore", veniceKeyStore);
-  server.decorate(
-    "workerClient",
-    new InProcessWorkerClient(
-      config,
-      (attempt, signal) => providerAttemptAcknowledger.authorizeDispatch(attempt, signal),
-      (dispatchToken, providerName, externalModelId, signal) =>
-        providerAttemptAcknowledger.authorizeAttestation(dispatchToken, providerName, externalModelId, signal),
-      veniceKeyStore
-    )
-  );
-  await registerWorkerRpcRoutes(server);
-  // Provider-credential administration that terminates HERE, in the attested
-  // workload, rather than in a control plane that would then be holding the
-  // secret. Registers only in capability mode.
-  await registerCredentialAdminRoutes(server);
 
-  // Scoped worker → control metadata push: the credential-bearing worker fetches
-  // + normalizes the Venice catalog into a versioned, sanitized payload and pushes
-  // ONLY that (plus rate limits) to control, which has no Venice key. Never content
-  // or identity. Resilient fetch, single-flight, jittered interval; CATALOG_SYNC_
-  // ENABLED gates which worker polls when the service is scaled.
-  const deliverHealthChecks = async (targets: WorkerHealthTarget[]) => {
-    if (targets.length === 0 || !server.workerClient.probe) return;
-    const checks: WorkerHealthCheck[] = [];
-    let cursor = 0;
-    const probe = async () => {
-      while (cursor < targets.length) {
-        const target = targets[cursor++];
-        const result = await server.workerClient.probe!({
+  // Where a release-collateral role is configured (the pool), a lookup it could not
+  // answer leaves an authority check failing closed with nothing else to show
+  // for it. One line here, naming the operation and a fixed code, never what
+  // was asked.
+  releaseCollateralClientFor(config)?.observeFailures((operation, code) => {
+    server.log.warn({ operation, error_type: code }, "release_collateral_rpc_failed");
+  });
+
+  const probeGate = pooled ? createGate(HEALTH_PROBE_CONCURRENCY) : null;
+  // Set when the pool is closing, so no provider starts another probe.
+  let closing = false;
+
+  // Everything ONE provider needs to talk to control: its metadata token, its
+  // fence acknowledger, its catalog and health pushes, its synchronizer. Built
+  // once per served provider. Nothing in here is shared between providers but
+  // the probe gate.
+  const wireProvider = (providerLabel: WorkerProviderName) => {
+    // Venice's keyset store, for the Venice wiring only. Another provider's
+    // catalog push must never carry the Venice key manifest.
+    const keyStore = providerLabel === "venice" ? veniceKeyStore : undefined;
+    // Fetch + normalize this provider's own catalog (each build fn fails closed
+    // without the provider credential and never clobbers last-known-good on error).
+    const buildCatalogPayload = () => {
+      switch (providerLabel) {
+        case "fireworks": return buildFireworksCatalogPayload(config, { log: server.log });
+        case "aws-bedrock": return buildBedrockCatalogPayload(config, { log: server.log });
+        case "deepinfra": return buildDeepInfraCatalogPayload(config, { log: server.log });
+        case "chutes": return buildChutesCatalogPayload(config, { log: server.log });
+        case "tinfoil": return buildTinfoilCatalogPayload(config, { log: server.log });
+        case "near-ai": return buildNearCatalogPayload(config, { log: server.log });
+        case "phala-ai": return buildPhalaAiCatalogPayload(config, { log: server.log });
+        default: return buildVeniceCatalogPayload(config, { log: server.log, veniceKeyStore: keyStore });
+      }
+    };
+    // Present this PROVIDER's metadata token: its own per-provider token when
+    // configured, so control can bind the dispatch fence, the catalog push and the
+    // health push to exactly one provider (AR-02). Falls back to the shared token
+    // in single-token deployments; on the pool there is no fallback, and a
+    // provider with no token of its own fails here, at boot. The fences and the
+    // pushes below are all built on this one selection.
+    const workerMetadataToken = workerMetadataTokenFor(config.internal, providerLabel);
+    const acknowledger = new HttpProviderAttemptAcknowledger(
+      config.internal.controlMetadataUrl,
+      workerMetadataToken,
+      config.internal.confidentialDeploymentId
+    );
+    // The catalog and health pushes, bounded by their own deadline. Without one,
+    // a control plane that stops answering holds the sync open, and boot and
+    // every on-demand caller with it. It is not the control RPC deadline: control
+    // applies the catalog inside this request, which takes far longer than a
+    // per-request RPC. What a failure means stays with each caller.
+    const pushMetadata = (body: unknown) => fetch(`${config.internal.controlMetadataUrl}/internal/control/catalog`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${workerMetadataToken}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(config.internal.metadataPushTimeoutMs)
+    });
+
+    // Scoped worker → control metadata push: the credential-bearing worker fetches
+    // + normalizes the provider catalog into a versioned, sanitized payload and pushes
+    // ONLY that (plus rate limits) to control, which has no provider key. Never content
+    // or identity. Resilient fetch, single-flight, jittered interval; CATALOG_SYNC_
+    // ENABLED gates which worker polls when the service is scaled.
+    const deliverHealthChecks = async (targets: WorkerHealthTarget[]) => {
+      if (targets.length === 0 || !server.workerClient.probe) return;
+      const checks: WorkerHealthCheck[] = [];
+      let cursor = 0;
+      const probeOne = async (target: WorkerHealthTarget) => {
+        if (closing) return null;
+        return server.workerClient.probe!({
           requestId: `probe_${newId()}`,
           providerName: providerLabel,
           externalModelId: target.externalModelId
         }, AbortSignal.timeout(25_000));
-        checks.push({
-          externalModelId: target.externalModelId,
-          ok: result.ok,
-          latencyMs: result.latencyMs,
-          ...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
-          ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode })
-        });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, probe));
+      };
+      const probe = async () => {
+        while (cursor < targets.length) {
+          const target = targets[cursor++]!;
+          // The probe's own deadline starts when it does, not while it waits
+          // for a slot.
+          const result = await (probeGate ? probeGate(() => probeOne(target)) : probeOne(target));
+          if (!result) return;
+          checks.push({
+            externalModelId: target.externalModelId,
+            ok: result.ok,
+            latencyMs: result.latencyMs,
+            ...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
+            ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode })
+          });
+        }
+      };
+      const workers = pooled ? POOLED_PROVIDER_PROBE_CONCURRENCY : HEALTH_PROBE_CONCURRENCY;
+      await Promise.all(Array.from({ length: Math.min(workers, targets.length) }, probe));
+      // A pass cut short by shutdown is not a health report.
+      if (closing) return;
 
-    const response = await fetch(`${config.internal.controlMetadataUrl}/internal/control/catalog`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${workerMetadataToken}` },
-      body: JSON.stringify({
+      const response = await pushMetadata({
         deploymentId: config.internal.confidentialDeploymentId,
         provider: providerLabel,
         healthChecks: checks
-      })
-    });
-    if (!response.ok) {
-      server.log.warn({ provider: providerLabel, status_code: response.status }, "model_health_metadata_push_failed");
-      return;
-    }
-    const acknowledgement = await response.json().catch(() => ({})) as { accepted?: unknown };
-    if (acknowledgement.accepted !== checks.length) {
-      server.log.warn(
-        { provider: providerLabel, attempted: checks.length, accepted: acknowledgement.accepted },
-        "model_health_metadata_push_incomplete"
-      );
-    }
-  };
+      });
+      if (!response.ok) {
+        server.log.warn({ provider: providerLabel, status_code: response.status }, "model_health_metadata_push_failed");
+        return;
+      }
+      const acknowledgement = await response.json().catch(() => ({})) as { accepted?: unknown };
+      if (acknowledgement.accepted !== checks.length) {
+        server.log.warn(
+          { provider: providerLabel, attempted: checks.length, accepted: acknowledgement.accepted },
+          "model_health_metadata_push_incomplete"
+        );
+      }
+    };
 
-  const deliverCatalog = async (payload: NormalizedCatalogPayload) => {
-    const rateLimits = isVeniceWorker ? await fetchVeniceRateLimits(config) : null;
-    const response = await fetch(`${config.internal.controlMetadataUrl}/internal/control/catalog`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${workerMetadataToken}` },
-      body: JSON.stringify({
+    const deliverCatalog = async (payload: NormalizedCatalogPayload) => {
+      const rateLimits = providerLabel === "venice" ? await fetchVeniceRateLimits(config, keyStore) : null;
+      const response = await pushMetadata({
         deploymentId: config.internal.confidentialDeploymentId,
         payload,
         rateLimits: rateLimits ?? undefined,
         // Content-free keyset descriptors (id/label/fingerprint) so control
         // can offer per-key routing controls without ever holding a secret.
         // Read from the overlay store so operator-added keys are included.
-        veniceKeys: veniceKeyStore ? veniceKeyManifest(veniceKeyStore.effectiveKeys()) : undefined
-      })
+        veniceKeys: keyStore ? veniceKeyManifest(keyStore.effectiveKeys()) : undefined
+      });
+      if (!response.ok) {
+        server.log.warn({ status_code: response.status }, "catalog_metadata_push_failed");
+        throw new Error(`catalog_metadata_push_failed_${response.status}`);
+      }
+      const raw = await response.json().catch(() => ({}));
+      const parsed = workerHealthTargetsResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        server.log.warn({ provider: providerLabel }, "model_health_targets_invalid");
+        return;
+      }
+      // A health failure is not a catalog failure. Catalog freshness must keep
+      // advancing even when a model refuses a probe; the bounded outcome is sent
+      // back separately and the admission/quarantine policy decides what it means.
+      await deliverHealthChecks(parsed.data.health_probe_targets).catch((error) => {
+        server.log.warn(
+          { provider: providerLabel, error_type: error instanceof Error ? error.name : "health_probe_error" },
+          "model_health_metadata_push_failed"
+        );
+      });
+    };
+    const synchronizer = createCatalogSynchronizer({
+      buildPayload: buildCatalogPayload,
+      deliver: deliverCatalog,
+      intervalSeconds: config.internal.catalogSyncIntervalSeconds,
+      enabled: config.internal.catalogSyncEnabled,
+      log: server.log,
+      provider: providerLabel
     });
-    if (!response.ok) {
-      server.log.warn({ status_code: response.status }, "catalog_metadata_push_failed");
-      throw new Error(`catalog_metadata_push_failed_${response.status}`);
-    }
-    const raw = await response.json().catch(() => ({}));
-    const parsed = workerHealthTargetsResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      server.log.warn({ provider: providerLabel }, "model_health_targets_invalid");
-      return;
-    }
-    // A health failure is not a catalog failure. Catalog freshness must keep
-    // advancing even when a model refuses a probe; the bounded outcome is sent
-    // back separately and the admission/quarantine policy decides what it means.
-    await deliverHealthChecks(parsed.data.health_probe_targets).catch((error) => {
-      server.log.warn(
-        { provider: providerLabel, error_type: error instanceof Error ? error.name : "health_probe_error" },
-        "model_health_metadata_push_failed"
-      );
-    });
+    return { provider: providerLabel, acknowledger, synchronizer };
   };
-  const synchronizer = createCatalogSynchronizer({
-    buildPayload: buildCatalogPayload,
-    deliver: deliverCatalog,
-    intervalSeconds: config.internal.catalogSyncIntervalSeconds,
-    enabled: config.internal.catalogSyncEnabled,
-    log: server.log,
-    provider: providerLabel
-  });
+
+  const wired = new Map(providers.map((provider) => [provider as string, wireProvider(provider)] as const));
+  const only = pooled ? undefined : wired.get(providers[0]!)!;
+
+  // THE FENCES SELECT BY PROVIDER. An attempt is acknowledged to control under
+  // the metadata token of the provider it is FOR, so on the pool the
+  // acknowledger is looked up by the provider the attempt names. One that names
+  // a provider this process does not serve has no acknowledger: it is refused
+  // here, the adapter's fence call fails, and no provider request is made.
+  //
+  // A single-provider worker has one acknowledger and uses it whatever the
+  // attempt names, as it always has: dev and test harnesses send the mock
+  // provider through the Venice worker, and in production the route has
+  // already refused any provider but the worker's own.
+  const acknowledgerFor = (providerName: string) => {
+    const lane = only ?? wired.get(providerName);
+    if (!lane) throw new AppError(503, "provider_attempt_fence_failed", "Provider dispatch authorization failed");
+    return lane.acknowledger;
+  };
+  server.decorate(
+    "workerClient",
+    new InProcessWorkerClient(
+      config,
+      async (attempt, signal) => acknowledgerFor(attempt.providerName).authorizeDispatch(attempt, signal),
+      async (dispatchToken, providerName, externalModelId, signal) =>
+        acknowledgerFor(providerName).authorizeAttestation(dispatchToken, providerName, externalModelId, signal),
+      veniceKeyStore
+    )
+  );
+  await registerWorkerRpcRoutes(server, providers);
+  // Provider-credential administration that terminates HERE, in the attested
+  // workload, rather than in a control plane that would then be holding the
+  // secret. Registers only in capability mode. The pool mounts one route set
+  // per provider under that provider's name; a single-provider worker keeps
+  // its un-namespaced paths.
+  if (pooled) await registerPooledCredentialAdminRoutes(server, config.internal.poolProviders);
+  else await registerCredentialAdminRoutes(server, only!.provider);
+
   // On-demand refresh for the control-plane admin RPC: same build + push path as
   // the scheduled poller, but failures propagate to the caller instead of being
-  // swallowed by the timer loop.
-  server.decorate("catalogSyncNow", async () => {
-    const payload = await buildCatalogPayload();
-    if (!payload) throw new Error("catalog_fetch_failed");
-    await deliverCatalog(payload);
+  // swallowed by the timer loop. Concurrent callers share a run (syncNow).
+  server.decorate("catalogSyncNow", async (provider?: string) => {
+    // Each synchronizer is one provider's. A caller naming a provider this
+    // process does not serve must get a failure, not another provider's catalog
+    // under its name. Only a single-provider worker has a provider to default
+    // to; on the pool a caller that names none gets the same failure.
+    const lane = provider === undefined ? only : wired.get(provider);
+    if (!lane) throw new Error("catalog_sync_unavailable");
+    await lane.synchronizer.syncNow();
   });
   if (config.env !== "test") {
-    await synchronizer.start();
-    server.addHook("onClose", async () => synchronizer.stop());
+    if (only) {
+      await only.synchronizer.start();
+      server.addHook("onClose", async () => only.synchronizer.stop());
+    } else {
+      // THE POOL DOES NOT WAIT. A single-provider worker boots behind its first
+      // sync; six providers in a row would put every one of them behind the
+      // slowest, and a provider that never answers would keep the rest from
+      // ever serving. Each provider's poller starts on its own, and each one's
+      // failures stay its own: start() logs and swallows a failed sync, and
+      // the catch below is for anything it did not.
+      server.addHook("onClose", async () => {
+        closing = true;
+        for (const lane of wired.values()) lane.synchronizer.stop();
+      });
+      for (const lane of wired.values()) {
+        void lane.synchronizer.start().catch((error) => {
+          server.log.warn(
+            { provider: lane.provider, error_type: error instanceof Error ? error.name : "sync_error" },
+            "catalog_sync_start_failed"
+          );
+        });
+      }
+    }
   }
   return server;
 }

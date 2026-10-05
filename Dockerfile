@@ -87,6 +87,26 @@ COPY --from=build /opt/anonrouter-router-model /opt/anonrouter-router-model
 # was checked rather than assumed: an earlier version of the base pinned
 # ca-certificates from `bookworm main` and shipped 142.
 
+# THE WORKERS' STATE DIRECTORY, owned by the account they run as.
+#
+# Every bearer-key worker, and the pool worker, mounts the `credential-state`
+# named volume at /var/lib/anonrouter-worker and writes its replay log and the
+# Venice keyset overlay there as `node`. Up to v1.0.25 the path did not exist
+# in this image, so Docker created the mount point, and with it a fresh
+# volume, owned by root; every capability-gated credential write then failed
+# closed with 503 capability_replay_log_unavailable (POOL_CVM_TEST_RESULTS.md
+# in the private repository, finding 2). Docker initialises an EMPTY named volume
+# from the image's directory at the mount path, ownership and mode included,
+# so a fresh volume now starts out node's, 0700. A volume that already exists
+# keeps what it has: the pooled compose runs a one-shot credential-state-init
+# for that, and the per-provider compose has none.
+#
+# Done with node because the runtime base has no mkdir, chown or chmod. 1000
+# is the base's own `node` account (its assemble.sh writes /etc/passwd), and
+# the step re-reads /etc/passwd and the result, so a base whose account
+# differs fails this build instead of shipping a directory nobody can write.
+RUN ["/usr/local/bin/node","-e","const fs = require('fs'); const node = fs.readFileSync('/etc/passwd', 'utf8').split(String.fromCharCode(10)) .map((line) => line.split(':')).find((fields) => fields[0] === 'node'); if (!node || node[2] !== '1000' || node[3] !== '1000') throw new Error('node is not 1000:1000 in the runtime base'); fs.mkdirSync('/var/lib', { recursive: true, mode: 0o755 }); fs.mkdirSync('/var/lib/anonrouter-worker', { mode: 0o700 }); fs.chownSync('/var/lib/anonrouter-worker', 1000, 1000); fs.chmodSync('/var/lib/anonrouter-worker', 0o700); const made = fs.statSync('/var/lib/anonrouter-worker'); if (made.uid !== 1000 || made.gid !== 1000 || (made.mode & 0o7777) !== 0o700) throw new Error('state directory is not node-owned 0700');"]
+
 # IAM Roles Anywhere credential helper. Only the Bedrock worker invokes it;
 # other roles have neither the workload certificate nor an AWS config. The
 # binary is versioned and integrity-pinned exactly as in the private build.

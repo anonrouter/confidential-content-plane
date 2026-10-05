@@ -4,6 +4,7 @@ import { ProviderError } from "../security/errors.js";
 import { parseJsonResponse, requireStreamBody } from "./http.js";
 import { normalizeEmbeddingResponse } from "./embeddings.js";
 import type { EmbeddingProviderRequest, EmbeddingProviderResult } from "./embeddings.js";
+import { staticProviderTransport, type ProviderTransport } from "./transport.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
 import type { ChutesReleaseCollateral } from "./attestation/authority/chutes.js";
 import { ChutesPublicationFetcher } from "./attestation/authority/chutesFetcher.js";
@@ -20,11 +21,25 @@ import type {
 const CHAT_TIMEOUT_MS = 10 * 60_000;
 const ATTESTATION_TIMEOUT_MS = 15_000;
 
-async function chutesFetch(url: string, init: RequestInit, cancellation?: AbortSignal, timeoutMs = CHAT_TIMEOUT_MS): Promise<Response> {
+/**
+ * `transport` decides whether the request carries the credential. Chutes serves
+ * authenticated and public endpoints from the same hosts, so each call site
+ * says which it is: a transport attaches the key, `null` sends a keyless
+ * request that has no access to one.
+ */
+async function chutesFetch(
+  transport: ProviderTransport | null,
+  url: string,
+  init: RequestInit,
+  cancellation?: AbortSignal,
+  timeoutMs = CHAT_TIMEOUT_MS
+): Promise<Response> {
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = cancellation ? AbortSignal.any([cancellation, timeout]) : timeout;
   try {
-    return await fetch(url, { ...init, signal });
+    return transport
+      ? await transport.fetch(url, { ...init, signal })
+      : await fetch(url, { ...init, signal });
   } catch (error) {
     if (cancellation?.aborted) throw cancellation.reason ?? error;
     if (timeout.aborted || (error instanceof DOMException && error.name === "TimeoutError")) {
@@ -70,7 +85,7 @@ export class ChutesProviderAdapter implements ProviderAdapter {
   readonly name = "chutes";
   private readonly baseUrl: string;
   private readonly attestationBaseUrl: string;
-  private readonly apiKey: string;
+  private readonly transport: ProviderTransport;
   private readonly releaseCollateral: ChutesPublicationFetcher;
 
   /** `releaseCollateral`: the fetch layer for Chutes' release authority
@@ -78,23 +93,23 @@ export class ChutesProviderAdapter implements ProviderAdapter {
   constructor(config: ContentPlaneConfig, releaseCollateral?: ChutesPublicationFetcher) {
     this.baseUrl = config.providers.chutesBaseUrl;
     this.attestationBaseUrl = config.providers.chutesAttestationBaseUrl;
-    this.apiKey = config.providers.chutesApiKey;
+    this.transport = staticProviderTransport(config, "chutes");
     this.releaseCollateral = releaseCollateral ?? new ChutesPublicationFetcher();
   }
 
   private headers(requestId: string) {
-    if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "Chutes API key is not configured");
-    }
+    // The transport attaches the credential. Asserting it here keeps the
+    // not-configured failure at the point in a dispatch where it always was.
+    this.transport.assertCredential();
     return {
       "content-type": "application/json",
-      authorization: `Bearer ${this.apiKey}`,
       "x-request-id": requestId
     };
   }
 
   private async resolveConfidentialChuteId(externalModelId: string, signal?: AbortSignal): Promise<string> {
     const modelsResponse = await chutesFetch(
+      null,
       `${this.baseUrl}/models`,
       { method: "GET", headers: { accept: "application/json" } },
       signal,
@@ -115,7 +130,7 @@ export class ChutesProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await chutesFetch(`${this.baseUrl}/chat/completions`, {
+    const response = await chutesFetch(this.transport, `${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify(chutesBody(request, false))
@@ -132,7 +147,7 @@ export class ChutesProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await chutesFetch(`${this.baseUrl}/chat/completions`, {
+    const response = await chutesFetch(this.transport, `${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify(chutesBody(request, true))
@@ -182,17 +197,14 @@ export class ChutesProviderAdapter implements ProviderAdapter {
     if (request.ciphertext.byteLength < 1_116) {
       throw new ProviderError("invalid_e2ee_ciphertext", "Chutes E2EE ciphertext is too short", 400);
     }
-    if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "Chutes API key is not configured");
-    }
+    this.transport.assertCredential();
     const chuteId = await this.resolveConfidentialChuteId(request.model.externalModelId, request.signal);
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await chutesFetch(`${this.attestationBaseUrl}/e2e/invoke`, {
+    const response = await chutesFetch(this.transport, `${this.attestationBaseUrl}/e2e/invoke`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${this.apiKey}`,
         "content-type": "application/octet-stream",
         "x-chute-id": chuteId,
         "x-instance-id": instanceId,
@@ -223,7 +235,7 @@ export class ChutesProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const response = await chutesFetch(`${this.baseUrl}/embeddings`, {
+    const response = await chutesFetch(this.transport, `${this.baseUrl}/embeddings`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify({ ...request.body, model: request.model.externalModelId })
@@ -245,17 +257,10 @@ export class ChutesProviderAdapter implements ProviderAdapter {
       throw new ProviderError("invalid_nonce", "Attestation nonce must be 32-128 hex characters", 400);
     }
     const chuteId = await this.resolveConfidentialChuteId(externalModelId, signal);
-    if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "Chutes API key is not configured");
-    }
+    this.transport.assertCredential();
     const url = `${this.attestationBaseUrl}/chutes/${encodeURIComponent(chuteId)}/evidence?nonce=${encodeURIComponent(nonce)}`;
-    // Modern Chutes evidence binds SHA256(nonce + per-instance ML-KEM public
-    // key), so the credential-isolated worker must obtain the exact key set from
-    // the authenticated discovery endpoint. The public relay never receives the
-    // credential; only public keys are attached to the raw evidence.
-    const authHeaders = { accept: "application/json", authorization: `Bearer ${this.apiKey}` };
     // Evidence is public. Never attach the inference credential to this URL.
-    const response = await chutesFetch(url, { method: "GET", headers: { accept: "application/json" } }, signal, ATTESTATION_TIMEOUT_MS);
+    const response = await chutesFetch(null, url, { method: "GET", headers: { accept: "application/json" } }, signal, ATTESTATION_TIMEOUT_MS);
     const raw = (await parseJsonResponse(response)) as Record<string, unknown>;
     const evidenceInstanceIds = new Set(
       (Array.isArray(raw.evidence) ? raw.evidence : [])
@@ -268,9 +273,13 @@ export class ChutesProviderAdapter implements ProviderAdapter {
     // bounded union until every evidence instance has a key; incomplete discovery
     // is returned as-is and the pure verifier rejects it.
     for (let attempt = 0; attempt < 12 && Object.keys(e2ePubkeys).length < evidenceInstanceIds.size; attempt += 1) {
-      const instancesResponse = await chutesFetch(`${this.attestationBaseUrl}/e2e/instances/${encodeURIComponent(chuteId)}`, {
+      // Modern Chutes evidence binds SHA256(nonce + per-instance ML-KEM public
+      // key), so the credential-isolated worker must obtain the exact key set
+      // from the authenticated discovery endpoint. The public relay never
+      // receives the credential; only public keys are attached to the raw evidence.
+      const instancesResponse = await chutesFetch(this.transport, `${this.attestationBaseUrl}/e2e/instances/${encodeURIComponent(chuteId)}`, {
         method: "GET",
-        headers: authHeaders
+        headers: { accept: "application/json" }
       }, signal, ATTESTATION_TIMEOUT_MS);
       const discovered = (await parseJsonResponse(instancesResponse)) as {
         instances?: Array<{ instance_id?: unknown; e2e_pubkey?: unknown; nonces?: unknown }>;

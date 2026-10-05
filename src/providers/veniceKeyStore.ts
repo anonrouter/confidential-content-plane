@@ -13,6 +13,8 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
+import type { FastifyInstance } from "fastify";
+import type { ContentPlaneConfig } from "../contentPlaneConfig.js";
 import { KEY_ID_PATTERN, type VeniceKey } from "./veniceKeys.js";
 
 interface KeysetOverlay {
@@ -156,6 +158,30 @@ export class VeniceKeysetStore {
     this.persist();
     return true;
   }
+}
+
+/** The store over this process's configured boot keyset and overlay file. */
+export function configuredVeniceKeysetStore(config: ContentPlaneConfig): VeniceKeysetStore {
+  return new VeniceKeysetStore(config.providers.veniceKeys, config.providers.veniceKeysetOverlayFile);
+}
+
+/**
+ * The credential store a provider's installs and revokes act on, or undefined
+ * when that provider has none. Only Venice has one.
+ *
+ * Asked BY PROVIDER on purpose. "Whatever store this process has" is the same
+ * answer only while a process serves one provider. Where a Venice store shares
+ * a process with another provider, that answer would let the other provider's
+ * capability write its secret into the Venice keyset, or revoke a Venice key.
+ */
+export function providerCredentialStore(
+  server: Pick<FastifyInstance, "veniceKeyStore">,
+  provider: string
+): VeniceKeysetStore | undefined {
+  // Decided before the decoration is read, so a provider without a store never
+  // reaches Venice's.
+  if (provider !== "venice") return undefined;
+  return server.veniceKeyStore;
 }
 
 declare module "fastify" {

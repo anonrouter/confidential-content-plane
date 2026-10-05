@@ -9,6 +9,7 @@ import { ProviderError } from "../security/errors.js";
 import { parseJsonResponse, requireStreamBody } from "./http.js";
 import { normalizeEmbeddingResponse } from "./embeddings.js";
 import type { EmbeddingProviderRequest, EmbeddingProviderResult } from "./embeddings.js";
+import { staticProviderTransport, type ProviderTransport } from "./transport.js";
 import { openAiUsageToInternal, proxyOpenAiSse, type SseParseResult } from "./sse.js";
 import type { TinfoilVerificationDocument } from "./attestation/tinfoil.js";
 import type {
@@ -201,7 +202,7 @@ interface VerifiedTinfoilTransport {
 export class TinfoilProviderAdapter implements ProviderAdapter {
   readonly name = "tinfoil";
   private readonly baseUrl: string;
-  private readonly apiKey: string;
+  private readonly transport: ProviderTransport;
   private readonly configRepo: string;
   private readonly dependencies: TinfoilProviderDependencies;
   private verifiedTransportPromise: Promise<VerifiedTinfoilTransport | null> | null = null;
@@ -209,18 +210,17 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
 
   constructor(config: ContentPlaneConfig, dependencies: TinfoilProviderDependencies = {}) {
     this.baseUrl = config.providers.tinfoilBaseUrl;
-    this.apiKey = config.providers.tinfoilApiKey;
+    this.transport = staticProviderTransport(config, "tinfoil");
     this.configRepo = config.providers.tinfoilConfigRepo;
     this.dependencies = dependencies;
   }
 
   private headers(requestId: string) {
-    if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "Tinfoil API key is not configured");
-    }
+    // The transport attaches the credential. Asserting it here keeps the
+    // not-configured failure at the point in a dispatch where it always was.
+    this.transport.assertCredential();
     return {
       "content-type": "application/json",
-      authorization: `Bearer ${this.apiKey}`,
       "x-request-id": requestId
     };
   }
@@ -229,7 +229,7 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const { response } = await this.requestThroughAttestedTls(`${this.baseUrl}/chat/completions`, {
+    const { response } = await this.requestThroughAttestedTls("credential", `${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify(tinfoilBody(request, false))
@@ -246,7 +246,7 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const { response } = await this.requestThroughAttestedTls(`${this.baseUrl}/chat/completions`, {
+    const { response } = await this.requestThroughAttestedTls("credential", `${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify(tinfoilBody(request, true))
@@ -269,7 +269,7 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
     request.signal?.throwIfAborted();
     await request.onProviderAttempt?.();
     request.signal?.throwIfAborted();
-    const { response } = await this.requestThroughAttestedTls(`${this.baseUrl}/embeddings`, {
+    const { response } = await this.requestThroughAttestedTls("credential", `${this.baseUrl}/embeddings`, {
       method: "POST",
       headers: this.headers(request.requestId),
       body: JSON.stringify({ ...request.body, model: request.model.externalModelId })
@@ -283,21 +283,19 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
    * inference. The catalog carries no prompt, but it does carry the provider
    * credential and must not get a weaker network path. */
   async fetchModels(timeoutMs: number): Promise<Response> {
-    if (!this.apiKey) {
-      throw new ProviderError("provider_not_configured", "Tinfoil API key is not configured");
-    }
+    this.transport.assertCredential();
     const url = new URL(this.baseUrl);
     url.pathname = `${url.pathname.replace(/\/$/, "")}/models`;
     url.search = "";
-    return (await this.requestThroughAttestedTls(url.toString(), {
-      method: "GET",
-      headers: { authorization: `Bearer ${this.apiKey}` }
+    return (await this.requestThroughAttestedTls("credential", url.toString(), {
+      method: "GET"
     }, undefined, timeoutMs)).response;
   }
 
   async fetchAttestation(_externalModelId: string): Promise<TinfoilVerificationDocument> {
     try {
       const { response, verified } = await this.requestThroughAttestedTls(
+        "keyless",
         TINFOIL_ENCLAVE_ORIGIN,
         { method: "HEAD" },
         undefined,
@@ -325,7 +323,14 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
     }
   }
 
+  /**
+   * `mode` says whether the request carries the credential. Either way the
+   * bytes leave only through the SPKI-pinned agent: "credential" has the
+   * provider transport attach the bearer and hand the request to that agent,
+   * "keyless" uses the agent directly and has no access to a key.
+   */
   private async requestThroughAttestedTls(
+    mode: "credential" | "keyless",
     url: string,
     init: RequestInit,
     cancellation?: AbortSignal,
@@ -333,15 +338,19 @@ export class TinfoilProviderAdapter implements ProviderAdapter {
     allowRotationRetry = true
   ): Promise<{ response: Response; verified: VerifiedTinfoilTransport }> {
     const verified = await this.requireVerifiedTransport();
+    const pinned = verified.transport.fetch;
+    const secureFetch: typeof fetch = mode === "keyless"
+      ? pinned
+      : (input, authenticated) => this.transport.fetch(String(input), authenticated, { via: pinned });
     try {
-      const response = await tinfoilFetch(verified.transport.fetch, url, init, cancellation, timeoutMs);
+      const response = await tinfoilFetch(secureFetch, url, init, cancellation, timeoutMs);
       return { response, verified };
     } catch (error) {
       if (allowRotationRetry && error instanceof TinfoilTlsPinError) {
         // A certificate-key rotation fails before the request is sent. Refresh
         // the official evidence once, rebuild the private pinned agent, and retry.
         this.invalidateVerifiedTransport();
-        return this.requestThroughAttestedTls(url, init, cancellation, timeoutMs, false);
+        return this.requestThroughAttestedTls(mode, url, init, cancellation, timeoutMs, false);
       }
       throw error;
     }

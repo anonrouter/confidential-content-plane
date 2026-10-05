@@ -24,11 +24,18 @@ source here or follow a reference to pinned upstream source. Which applies:
 | `relay` | full request and response bodies, transiently | here |
 | classifier (in-process on the relay) | the truncated latest user turn | here |
 | `compat` broker | full bodies **and** the caller's static `ar_` key | here |
-| `<provider>-worker` | full bodies plus one provider credential | here |
+| `<provider>-worker` | full bodies plus that provider's credential set (xl topology) | here |
+| `pool-worker` | all pooled prompts and credentials for several providers | here |
+| `release-collateral` | public release evidence; no prompts or provider keys | here |
 | `edge` (in-CVM L7 router) | full bodies, after TLS terminates in-TD | here (configuration); its base image is caddyserver/caddy-docker (Apache-2.0); binding not established, AnonRouter FROM-scratch replacement available; see Build provenance |
 | `<provider>-egress` | ciphertext only (SNI passthrough) | here (configuration) |
 | `gateway-attestation` | **no content at all** | here |
 | `dstack-ingress` | ciphertext, then the plaintext stream in transit | Dstack-TEE/dstack-examples (Apache-2.0); reproducibly rebuilt by AnonRouter CI |
+
+The pooled worker holds several providers' credentials. The provider transport
+binds each key to its provider's pinned origin and refuses redirects. This guards
+against mistakes in honest code; it is not process isolation. A compromised pool
+can read all pooled keys and prompts. The xl topology retains separate workers.
 
 The `relay`, `compat`, `worker` and `gateway-attestation` roles are all the
 same first-party image, selected by `RUNTIME_ROLE`. Its **base image** is

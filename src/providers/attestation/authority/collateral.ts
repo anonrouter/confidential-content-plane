@@ -1,8 +1,9 @@
 // Release-authority collateral: how the fetch layer hands publication data to
 // the pure verifiers, and how it travels with the evidence.
 //
-// The worker (the only process with provider egress) fetches the provider's
-// evidence AND this collateral, then returns the evidence document with the
+// The worker fetches the provider's evidence and obtains this collateral (by
+// its own lookups, or on a pooled worker from the release-collateral role,
+// which makes them for it), then returns the evidence document with the
 // collateral attached under one namespaced key. That key is AnonRouter's, not
 // the provider's: it is never read as provider evidence, and every byte of it
 // that can be is re-checked against TD-signed values (file hashes against the
@@ -17,7 +18,7 @@ import type { ChutesReleaseCollateral } from "./chutes.js";
 import type { DstackImageMeasurements } from "./dstackImage.js";
 import { DSTACK_IMAGE_MEASUREMENTS } from "./dstackImages.generated.js";
 import { DstackOnchainFetcher, type DstackOnchainAuthorization } from "./dstackOnchain.js";
-import type { GithubPublication } from "./github.js";
+import type { GithubPublication, PublicationClaim } from "./github.js";
 import { GithubPublicationFetcher } from "./githubFetcher.js";
 import { GithubReleasesFetcher, type GithubReleaseImages } from "./githubReleases.js";
 import {
@@ -122,13 +123,37 @@ function onchainSubject(document: unknown): { appId: string; composeHash: string
   }
 }
 
+// What NearReleaseCollateralSource asks of each source, and nothing more. The
+// fetchers satisfy these by making the requests themselves. So does the
+// release-collateral RPC client (src/releaseCollateral/client.ts), which asks the
+// credential-free release-collateral role to make them instead: a process holding
+// provider keys and prompts then never opens a session to GitHub or Base.
+
+/** One repository's publication record for the claims a log makes. */
+export interface PublicationSource {
+  collect(claims: PublicationClaim[], signal?: AbortSignal): Promise<GithubPublication>;
+}
+
+/** The image digests one repository's production releases published. */
+export interface ReleaseImagesSource {
+  collect(signal?: AbortSignal): Promise<GithubReleaseImages>;
+}
+
+/** What one on-chain KMS registry says about an (app, compose, image). */
+export interface OnchainAuthorizationSource {
+  authorize(
+    subject: { appId: string; composeHash: string; osImageHash: string },
+    signal?: AbortSignal
+  ): Promise<DstackOnchainAuthorization>;
+}
+
 export interface NearReleaseSources {
   /** nearai/cvm-compose-files. */
-  composeRepository: GithubPublicationFetcher;
+  composeRepository: PublicationSource;
   /** nearai/compose-manager releases. */
-  composeManagerReleases: GithubReleasesFetcher;
+  composeManagerReleases: ReleaseImagesSource;
   /** NEAR's dstack KMS on Base. */
-  onchain: DstackOnchainFetcher;
+  onchain: OnchainAuthorizationSource;
   images?: readonly DstackImageMeasurements[];
 }
 
