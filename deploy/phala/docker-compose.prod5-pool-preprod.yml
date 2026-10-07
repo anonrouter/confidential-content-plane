@@ -5,42 +5,7 @@
 #
 # This compose is NOT deployable as it stands.
 #
-# 3 image(s) below have NEVER BEEN PUBLISHED. Each is rendered with a token
-# in place of its digest, which no registry resolves and no digest check
-# accepts. There is no image to pull.
-#
-#   ghcr.io/anonrouter/anonrouter-edge-ingress-pool
-#     built from deploy/phala/images/edge-pool but never published. Commit
-#     deploy/phala/images/edge-pool, then build and publish it with
-#     `deploy/phala/build-image-crane.sh deploy/phala/images/edge-pool
-#     ghcr.io/anonrouter/anonrouter-edge-ingress-pool rev-<sha>` from that
-#     committed tree. Replace PENDING_PUBLISH with the published digest and
-#     record the commit as sourceCommit in POOL_MEASURED_IMAGES, in the SAME
-#     change, and regenerate the pool composes with `node
-#     deploy/phala/gen-prod5-pool-compose.mjs`.
-#
-#   ghcr.io/anonrouter/anonrouter-pool-egress
-#     built from deploy/phala/images/pool-egress but never published. Commit
-#     deploy/phala/images/pool-egress, then build and publish it with
-#     `deploy/phala/build-image-crane.sh deploy/phala/images/pool-egress
-#     ghcr.io/anonrouter/anonrouter-pool-egress rev-<sha>` from that committed
-#     tree. Replace PENDING_PUBLISH with the published digest and record the
-#     commit as sourceCommit in POOL_MEASURED_IMAGES, in the SAME change, and
-#     regenerate the pool composes with `node
-#     deploy/phala/gen-prod5-pool-compose.mjs`.
-#
-#   ghcr.io/anonrouter/anonrouter-release-collateral-egress
-#     built from deploy/phala/images/release-collateral-egress but never
-#     published. Commit deploy/phala/images/release-collateral-egress, then
-#     build and publish it with `deploy/phala/build-image-crane.sh
-#     deploy/phala/images/release-collateral-egress
-#     ghcr.io/anonrouter/anonrouter-release-collateral-egress rev-<sha>` from
-#     that committed tree. Replace PENDING_PUBLISH with the published digest and
-#     record the commit as sourceCommit in POOL_MEASURED_IMAGES, in the SAME
-#     change, and regenerate the pool composes with `node
-#     deploy/phala/gen-prod5-pool-compose.mjs`.
-#
-# 1 image(s) pinned below were built from source this tree has moved
+# 2 image(s) pinned below were built from source this tree has moved
 # past. Deploying one would ship the previous behaviour under a new release id,
 # and every measurement would agree, because the measurement is of the compose
 # and the compose is what was reviewed.
@@ -54,15 +19,11 @@
 # judgement and not the evidence for it.
 #
 #   ghcr.io/anonrouter/confidential-content-plane
-#     32 declared input(s) moved since 56096d0 (scripts/export-content-plane.ts,
-#     src/config.ts, src/contentPlane.ts, src/logger.ts,
-#     src/providers/attestation/authority/collateral.ts,
-#     src/providers/attestation/authority/dstackOnchain.ts,
-#     src/providers/catalog/chutesSync.ts,
-#     src/providers/catalog/deepinfraSync.ts, …); Re-export with `npx tsx
-#     scripts/export-content-plane.ts <dir>`, publish and sign the image from
-#     the public repository, then move resolvedDigest, tag and sourceCommit
-#     together in this contract and repin the digest in
+#     3 declared input(s) moved since e9998e9 (scripts/export-content-plane.ts,
+#     src/contentPlane.ts, src/operations/serviceLifecycle.ts); Re-export with
+#     `npx tsx scripts/export-content-plane.ts <dir>`, publish and sign the
+#     image from the public repository, then move resolvedDigest, tag and
+#     sourceCommit together in this contract and repin the digest in
 #     gen-prod5-xl-compose.mjs, in the SAME change, and regenerate the composes.
 #     Do NOT narrow the input set to make this pass: the closure is derived from
 #     src/contentPlane.ts, so narrowing it means describing an image that is not
@@ -71,6 +32,20 @@
 #     rebuilt image is for the pool only, give POOL_MEASURED_IMAGES its own
 #     entry (digest and sourceCommit) and leave the xl entry at the digest the
 #     retained per-provider compose pins. Then regenerate with `node
+#     deploy/phala/gen-prod5-pool-compose.mjs`.
+#
+#   ghcr.io/anonrouter/anonrouter-dstack-ingress
+#     1 declared input(s) moved since 9c47e63
+#     (deploy/phala/images/ingress-delegated/Dockerfile); Rebuild with
+#     `deploy/phala/build-image-crane.sh deploy/phala/images/ingress-delegated
+#     ghcr.io/anonrouter/anonrouter-dstack-ingress rev-<sha>`, then move
+#     resolvedDigest and sourceCommit together in this contract and repin the
+#     digest in gen-prod5-xl-compose.mjs, in the SAME change, and regenerate the
+#     composes. FOR THE POOL TOPOLOGY: the pool generator reads its digests from
+#     this contract, so there is nothing to repin in it. If the rebuilt image is
+#     for the pool only, give POOL_MEASURED_IMAGES its own entry (digest and
+#     sourceCommit) and leave the xl entry at the digest the retained
+#     per-provider compose pins. Then regenerate with `node
 #     deploy/phala/gen-prod5-pool-compose.mjs`.
 #
 # deploy/phala/production-preflight.sh FAILS while this block is present. Clear
@@ -270,7 +245,7 @@ services:
     # /v1/credentials/<slug>/... path to that provider's OWN namespaced path on
     # the pool, one exact match at a time, with no wildcard backend and nothing
     # taken from the request. Bedrock's routes still go to Bedrock's worker.
-    image: ghcr.io/anonrouter/anonrouter-edge-ingress-pool@PENDING-PUBLISH-see-REBUILD-REQUIRED
+    image: ghcr.io/anonrouter/anonrouter-edge-ingress-pool@sha256:df06302f38c72a2147f8e4b97de232cf3bbc6416ca1f7a5f8e0c6091c00d61ee
     platform: linux/amd64
     volumes:
       - evidences:/evidences:ro
@@ -305,7 +280,7 @@ services:
   # ---------------------------------------------------------------------------
   relay:
     <<: *hardened
-    image: ghcr.io/anonrouter/confidential-content-plane@sha256:8b29ae96bb38850430d74501351156addba345bef72e6da29e1394e35ded7569
+    image: ghcr.io/anonrouter/confidential-content-plane@sha256:536e7fcb8be62ce027a764098f07237c1fdb282be9a71dc62334d75bcf08ce8d
     platform: linux/amd64
     environment:
       NODE_ENV: production
@@ -385,7 +360,7 @@ services:
   # ---------------------------------------------------------------------------
   compat:
     <<: *hardened
-    image: ghcr.io/anonrouter/confidential-content-plane@sha256:8b29ae96bb38850430d74501351156addba345bef72e6da29e1394e35ded7569
+    image: ghcr.io/anonrouter/confidential-content-plane@sha256:536e7fcb8be62ce027a764098f07237c1fdb282be9a71dc62334d75bcf08ce8d
     platform: linux/amd64
     environment:
       NODE_ENV: production
@@ -428,7 +403,7 @@ services:
   # ---------------------------------------------------------------------------
   attest:
     <<: *hardened
-    image: ghcr.io/anonrouter/confidential-content-plane@sha256:8b29ae96bb38850430d74501351156addba345bef72e6da29e1394e35ded7569
+    image: ghcr.io/anonrouter/confidential-content-plane@sha256:536e7fcb8be62ce027a764098f07237c1fdb282be9a71dc62334d75bcf08ce8d
     platform: linux/amd64
     environment:
       NODE_ENV: production
@@ -558,7 +533,7 @@ services:
   # ---------------------------------------------------------------------------
   credential-state-init:
     <<: *hardened
-    image: ghcr.io/anonrouter/confidential-content-plane@sha256:8b29ae96bb38850430d74501351156addba345bef72e6da29e1394e35ded7569
+    image: ghcr.io/anonrouter/confidential-content-plane@sha256:536e7fcb8be62ce027a764098f07237c1fdb282be9a71dc62334d75bcf08ce8d
     platform: linux/amd64
     # A one-shot. Compose starts it again on every `up`, which is every boot.
     restart: "no"
@@ -639,7 +614,7 @@ services:
   # ---------------------------------------------------------------------------
   pool-worker:
     <<: *hardened
-    image: ghcr.io/anonrouter/confidential-content-plane@sha256:8b29ae96bb38850430d74501351156addba345bef72e6da29e1394e35ded7569
+    image: ghcr.io/anonrouter/confidential-content-plane@sha256:536e7fcb8be62ce027a764098f07237c1fdb282be9a71dc62334d75bcf08ce8d
     platform: linux/amd64
     environment:
       NODE_ENV: production
@@ -790,7 +765,7 @@ services:
   # ---------------------------------------------------------------------------
   bedrock-worker:
     <<: *hardened
-    image: ghcr.io/anonrouter/confidential-content-plane@sha256:8b29ae96bb38850430d74501351156addba345bef72e6da29e1394e35ded7569
+    image: ghcr.io/anonrouter/confidential-content-plane@sha256:536e7fcb8be62ce027a764098f07237c1fdb282be9a71dc62334d75bcf08ce8d
     platform: linux/amd64
     environment:
       NODE_ENV: production
@@ -871,7 +846,7 @@ services:
   # ---------------------------------------------------------------------------
   release-collateral:
     <<: *hardened
-    image: ghcr.io/anonrouter/confidential-content-plane@sha256:8b29ae96bb38850430d74501351156addba345bef72e6da29e1394e35ded7569
+    image: ghcr.io/anonrouter/confidential-content-plane@sha256:536e7fcb8be62ce027a764098f07237c1fdb282be9a71dc62334d75bcf08ce8d
     platform: linux/amd64
     environment:
       NODE_ENV: production
@@ -904,7 +879,7 @@ services:
 
   pool-egress:
     <<: *hardened
-    image: ghcr.io/anonrouter/anonrouter-pool-egress@PENDING-PUBLISH-see-REBUILD-REQUIRED
+    image: ghcr.io/anonrouter/anonrouter-pool-egress@sha256:ed9bc042e224c1aafc031bf3697f87ee0a388878e97f991d7d613ad65bf4a7dc
     platform: linux/amd64
     cap_add:
       - NET_BIND_SERVICE
@@ -958,7 +933,7 @@ services:
 
   release-collateral-egress:
     <<: *hardened
-    image: ghcr.io/anonrouter/anonrouter-release-collateral-egress@PENDING-PUBLISH-see-REBUILD-REQUIRED
+    image: ghcr.io/anonrouter/anonrouter-release-collateral-egress@sha256:22aa331178e530f62da3ed1aa4718449a9012376bf464f573d032274f7f01247
     platform: linux/amd64
     cap_add:
       - NET_BIND_SERVICE

@@ -34,6 +34,7 @@
 // reachable from this file contains no control-plane source at all.
 
 import { loadConfig } from "./config.js";
+import { installServiceLifecycle, installServiceShutdown } from "./operations/serviceLifecycle.js";
 
 const config = loadConfig();
 const role = config.internal.role;
@@ -74,6 +75,11 @@ async function buildForRole() {
 }
 
 const server = await buildForRole();
+// SIGTERM must drain admitted requests rather than interrupt a stream. This
+// entry point, not index.ts, is what the exported content image actually runs.
+// Routing withdrawal and the gateway-cache wait remain release-controller gates.
+const lifecycle = installServiceLifecycle(server);
+installServiceShutdown(server, lifecycle);
 
 try {
   await server.listen({

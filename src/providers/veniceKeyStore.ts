@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { ContentPlaneConfig } from "../contentPlaneConfig.js";
 import { KEY_ID_PATTERN, type VeniceKey } from "./veniceKeys.js";
+import { AppError } from "../security/errors.js";
 
 interface KeysetOverlay {
   added: VeniceKey[];
@@ -26,40 +27,41 @@ function emptyOverlay(): KeysetOverlay {
   return { added: [], removedIds: [] };
 }
 
-/**
- * Parse a persisted overlay defensively: a corrupt or hand-edited file must
- * never crash the worker or smuggle malformed entries into the keyset. Invalid
- * entries are dropped rather than failing the whole overlay.
- */
-function sanitizeOverlay(parsed: unknown): KeysetOverlay {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return emptyOverlay();
-  const candidate = parsed as { added?: unknown; removedIds?: unknown };
+/** Refuse ambiguous revocation state without including file contents in errors. */
+function unavailable(): AppError {
+  return new AppError(503, "provider_key_state_unavailable", "Provider credential state is unavailable");
+}
+
+function parseOverlay(parsed: unknown): KeysetOverlay {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw unavailable();
+  const candidate = parsed as Record<string, unknown>;
+  if (Object.keys(candidate).some(key => !["added", "removedIds"].includes(key)) ||
+      !Array.isArray(candidate.added) || !Array.isArray(candidate.removedIds)) throw unavailable();
   const added: VeniceKey[] = [];
   const seen = new Set<string>();
-  if (Array.isArray(candidate.added)) {
-    for (const entry of candidate.added) {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-      const key = entry as { id?: unknown; label?: unknown; key?: unknown };
-      if (typeof key.id !== "string" || !KEY_ID_PATTERN.test(key.id) || seen.has(key.id)) continue;
-      if (typeof key.key !== "string" || key.key.trim().length === 0) continue;
-      seen.add(key.id);
-      added.push({
-        id: key.id,
-        label: typeof key.label === "string" && key.label.trim().length > 0 ? key.label.trim() : null,
-        key: key.key.trim()
-      });
-    }
+  for (const entry of candidate.added) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw unavailable();
+    const key = entry as Record<string, unknown>;
+    if (Object.keys(key).some(field => !["id", "label", "key"].includes(field)) ||
+        typeof key.id !== "string" || !KEY_ID_PATTERN.test(key.id) || seen.has(key.id) ||
+        typeof key.key !== "string" || !key.key.trim() ||
+        (key.label !== undefined && key.label !== null && typeof key.label !== "string")) throw unavailable();
+    seen.add(key.id);
+    added.push({ id: key.id, label: typeof key.label === "string" ? key.label.trim() || null : null, key: key.key.trim() });
   }
-  const removedIds = Array.isArray(candidate.removedIds)
-    ? [...new Set(candidate.removedIds.filter((id): id is string => typeof id === "string" && KEY_ID_PATTERN.test(id)))]
-    : [];
+  const removedIds: string[] = [];
+  for (const id of candidate.removedIds) {
+    if (typeof id !== "string" || !KEY_ID_PATTERN.test(id) || seen.has(id) || removedIds.includes(id)) throw unavailable();
+    removedIds.push(id);
+  }
   return { added, removedIds };
 }
 
 export class VeniceKeysetStore {
   private overlay: KeysetOverlay = emptyOverlay();
-  private loadedStat: { mtimeMs: number; size: number } | null = null;
+  private loadedStat: { mtimeMs: number; ctimeMs: number; size: number; ino: number } | null = null;
   private loaded = false;
+  private observedOverlay = false;
 
   constructor(
     private readonly bootKeys: VeniceKey[],
@@ -68,36 +70,41 @@ export class VeniceKeysetStore {
 
   /** Re-read the overlay when the file appeared, changed, or vanished. */
   private refresh(): void {
-    let stat: { mtimeMs: number; size: number };
+    let stat: { mtimeMs: number; ctimeMs: number; size: number; ino: number };
     try {
       const fileStat = statSync(this.overlayPath);
-      stat = { mtimeMs: fileStat.mtimeMs, size: fileStat.size };
-    } catch {
+      stat = { mtimeMs: fileStat.mtimeMs, ctimeMs: fileStat.ctimeMs, size: fileStat.size, ino: fileStat.ino };
+    } catch (error) {
+      // Initial boot without an overlay remains supported. Once an overlay
+      // exists, losing it cannot undo its removals or rotations. A fresh process
+      // on a missing volume still needs the separate startup reconciliation gate.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || this.observedOverlay) throw unavailable();
       this.overlay = emptyOverlay();
       this.loadedStat = null;
       this.loaded = true;
       return;
     }
-    if (this.loaded && this.loadedStat && this.loadedStat.mtimeMs === stat.mtimeMs && this.loadedStat.size === stat.size) {
+    this.observedOverlay = true;
+    if (this.loaded && this.loadedStat && this.loadedStat.mtimeMs === stat.mtimeMs && this.loadedStat.size === stat.size && this.loadedStat.ctimeMs === stat.ctimeMs && this.loadedStat.ino === stat.ino) {
       return;
     }
     try {
-      this.overlay = sanitizeOverlay(JSON.parse(readFileSync(this.overlayPath, "utf8")));
+      this.overlay = parseOverlay(JSON.parse(readFileSync(this.overlayPath, "utf8")));
     } catch {
-      // A torn or corrupt overlay must not take inference down: fall back to
-      // the boot keyset until the next successful write repairs the file.
-      this.overlay = emptyOverlay();
+      // A corrupt overlay can hide a revocation. Never revive a boot key or
+      // overwrite that evidence through an ordinary credential mutation.
+      throw unavailable();
     }
     this.loadedStat = stat;
     this.loaded = true;
   }
 
-  private persist(): void {
+  private persist(overlay: KeysetOverlay): void {
     const directory = dirname(this.overlayPath);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temp = join(directory, `.venice-keyset-overlay.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
     try {
-      writeFileSync(temp, `${JSON.stringify(this.overlay)}\n`, { mode: 0o600 });
+      writeFileSync(temp, `${JSON.stringify(overlay)}\n`, { mode: 0o600 });
       renameSync(temp, this.overlayPath);
     } catch (error) {
       rmSync(temp, { force: true });
@@ -105,8 +112,10 @@ export class VeniceKeysetStore {
     }
     chmodSync(this.overlayPath, 0o600);
     const fileStat = statSync(this.overlayPath);
-    this.loadedStat = { mtimeMs: fileStat.mtimeMs, size: fileStat.size };
+    this.overlay = overlay;
+    this.loadedStat = { mtimeMs: fileStat.mtimeMs, ctimeMs: fileStat.ctimeMs, size: fileStat.size, ino: fileStat.ino };
     this.loaded = true;
+    this.observedOverlay = true;
   }
 
   /** (boot keys - removedIds) + added; an added entry wins its id. */
@@ -131,11 +140,11 @@ export class VeniceKeysetStore {
   /** Add (or replace) an operator-supplied key and persist the overlay. */
   addKey(entry: VeniceKey): void {
     this.refresh();
-    this.overlay = {
+    const overlay = {
       added: [...this.overlay.added.filter((existing) => existing.id !== entry.id), entry],
       removedIds: this.overlay.removedIds.filter((id) => id !== entry.id)
     };
-    this.persist();
+    this.persist(overlay);
   }
 
   /** True when removing this id would leave the effective keyset empty. */
@@ -149,13 +158,13 @@ export class VeniceKeysetStore {
     this.refresh();
     const known = this.effectiveKeys().some((entry) => entry.id === id);
     if (!known) return false;
-    this.overlay = {
+    const overlay = {
       added: this.overlay.added.filter((entry) => entry.id !== id),
       removedIds: this.bootKeys.some((entry) => entry.id === id)
         ? [...new Set([...this.overlay.removedIds, id])]
         : this.overlay.removedIds
     };
-    this.persist();
+    this.persist(overlay);
     return true;
   }
 }

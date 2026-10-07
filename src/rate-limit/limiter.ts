@@ -162,7 +162,22 @@ end
 
 redis.call('ZADD', key, expires_at_ms, lease_id)
 expire_with_latest_lease()
+if KEYS[2] then
+  redis.call('HSET', KEYS[2], lease_id, key)
+  local association_ttl = math.max(1, expires_at_ms - now_ms, redis.call('PTTL', KEYS[2]))
+  redis.call('PEXPIRE', KEYS[2], association_ttl)
+end
 return 1
+`;
+
+const requestConcurrencyReleaseScript = `
+-- request_concurrency_release
+local leases = redis.call('HGETALL', KEYS[1])
+for i = 1, #leases, 2 do
+  redis.call('ZREM', leases[i + 1], leases[i])
+end
+redis.call('DEL', KEYS[1])
+return #leases / 2
 `;
 
 const concurrencyReleaseScript = `
@@ -325,14 +340,15 @@ export class RateLimiter {
     });
   }
 
-  async acquireConcurrency(key: string, limit: number, ttlSeconds = 120, absoluteMaxSeconds = 11 * 60) {
+  async acquireConcurrency(key: string, limit: number, ttlSeconds = 120, absoluteMaxSeconds = 11 * 60, requestId?: string) {
     const redisKey = `conc:${key}`;
     const leaseId = randomUUID();
     const absoluteDeadlineMs = Date.now() + Math.max(ttlSeconds, absoluteMaxSeconds) * 1_000;
     const acquired = Number(await this.redis.eval(
       concurrencyAcquireScript,
-      1,
+      requestId ? 2 : 1,
       redisKey,
+      ...(requestId ? [`conc-request:${requestId}`] : []),
       leaseId,
       Date.now(),
       absoluteDeadlineMs,
@@ -353,6 +369,11 @@ export class RateLimiter {
       released = true;
       await this.redis.eval(concurrencyReleaseScript, 1, redisKey, leaseId, Date.now());
     };
+  }
+
+  /** Request ownership lives in Valkey, so any control slot can finish it. */
+  async releaseRequestConcurrency(requestId: string) {
+    await this.redis.eval(requestConcurrencyReleaseScript, 1, `conc-request:${requestId}`);
   }
 
   async checkProviderKillSwitch(providerName: string, modelId: string) {

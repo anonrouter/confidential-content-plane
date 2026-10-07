@@ -50,6 +50,14 @@ describe("the content-plane entry point exists and refuses non-content roles", (
     expect(source).toContain("./roles.js");
   });
 
+  it("installs graceful termination on the actual content-image entry point", () => {
+    const source = readFileSync(entry, "utf8");
+    expect(source).toContain('from "./operations/serviceLifecycle.js"');
+    expect(source).toContain("installServiceLifecycle(server)");
+    expect(source).toContain("installServiceShutdown(server, lifecycle)");
+    expect(source.indexOf("installServiceShutdown(server, lifecycle)")).toBeLessThan(source.indexOf("await server.listen"));
+  });
+
   it("fails closed on an unrecognized role rather than defaulting to the monolith", () => {
     const source = readFileSync(entry, "utf8");
     expect(source).toMatch(/is not a content-plane role/);

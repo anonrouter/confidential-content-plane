@@ -4,8 +4,8 @@
     "src/contentPlane.ts"
   ],
   "note": "Candidate export for owner review. NOT published. The source set is the compile-time module closure of the content-plane entry point, so it cannot disagree with what the image actually runs. `files` is every file in the export except this manifest, which cannot contain its own hash; it therefore includes the generated build inputs.",
-  "runtimeClosureFiles": 142,
-  "compileClosureFiles": 150,
+  "runtimeClosureFiles": 143,
+  "compileClosureFiles": 151,
   "controlPlaneLeakage": [],
   "excludedTestSuites": [],
   "monorepoOnlySuites": [
@@ -38,13 +38,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 255,
+  "copiedSourceFiles": 262,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 263,
+  "fileCount": 270,
   "files": [
     {
       "path": ".dockerignore",
@@ -113,13 +113,13 @@
     },
     {
       "path": "deploy/phala/docker-compose.prod5-pool-preprod.yml",
-      "sha256": "b232a59e322f18fc0ad4c2aecedc432e2d5651222475048317f45c172e7bcf90",
-      "bytes": 52416
+      "sha256": "cd01bdb45f16d76fdde647801022c7dce750cfffebde3ff11203428a5037f84a",
+      "bytes": 51152
     },
     {
       "path": "deploy/phala/docker-compose.prod5-pool.yml",
-      "sha256": "71005364682416656f88744ac98fb67bbb2c25eb2e0b0dc7a7201b68c0c817ce",
-      "bytes": 48487
+      "sha256": "a2d128f4b27535988242e7bba6928d11af71c062ad7b36d00383693ed0009bf6",
+      "bytes": 47223
     },
     {
       "path": "deploy/phala/docker-compose.prod5-xl.yml",
@@ -160,6 +160,21 @@
       "path": "deploy/phala/images/egress/haproxy.cfg",
       "sha256": "2f6e84231960e3071176d46f1a377f5569d0e8122335762bf7238cb4fe662fb1",
       "bytes": 3625
+    },
+    {
+      "path": "deploy/phala/images/ingress-delegated/Dockerfile",
+      "sha256": "256e3db7eddc40d24f124328055b152f85d33ceaa528410b1d08ec191479461d",
+      "bytes": 5400
+    },
+    {
+      "path": "deploy/phala/images/ingress-delegated/README.md",
+      "sha256": "d82ad10074fef8829b018dede2117b8b5c1888925c08582ac183e3edf5f8c444",
+      "bytes": 1585
+    },
+    {
+      "path": "deploy/phala/images/ingress-delegated/route53_challenge_cname.py",
+      "sha256": "e8acdf85202d3ac2b46423f1b87ed8748e778be0f8c903036a06e3728a2f366b",
+      "bytes": 1408
     },
     {
       "path": "deploy/phala/images/pool-egress/haproxy.cfg",
@@ -338,8 +353,8 @@
     },
     {
       "path": "src/contentPlane.ts",
-      "sha256": "019c53dbf486d15ee36bfe0148e06b9a9dea2ed51eb3656dfa76497c00e37b20",
-      "bytes": 3589
+      "sha256": "770ed383dbd060ba960b2c28d3643ea415ec0c9df2aee532297e3a578f917ad2",
+      "bytes": 4022
     },
     {
       "path": "src/contentPlaneConfig.ts",
@@ -525,6 +540,11 @@
       "path": "src/observability/valkey.ts",
       "sha256": "13f8b225e644eba5fc34500d53e126570736e2ba34a383735061250de9915e9e",
       "bytes": 4827
+    },
+    {
+      "path": "src/operations/serviceLifecycle.ts",
+      "sha256": "d556392bf09130e4be8e34dda93b5e0b971b162979689c26da3b0118df8fcac5",
+      "bytes": 2663
     },
     {
       "path": "src/privacy/tiers.ts",
@@ -928,8 +948,8 @@
     },
     {
       "path": "src/providers/veniceKeyStore.ts",
-      "sha256": "74159d0e0108eaa8cb2f61e1308566ca236d3878221c6027a27f8ddfcc14f55c",
-      "bytes": 7346
+      "sha256": "29b29a865f801d860b221d5f0b002f866e2351d623b29e7b932a7725d8674de2",
+      "bytes": 8375
     },
     {
       "path": "src/providers/veniceKeys.ts",
@@ -948,8 +968,8 @@
     },
     {
       "path": "src/rate-limit/limiter.ts",
-      "sha256": "9e7058e26679883c8d90525220c921f740164699be91c9bf62104ab67912b84f",
-      "bytes": 33849
+      "sha256": "a90c98e7f8e875bce865ce0180e4614ff10382ba911ed59894c17990017add92",
+      "bytes": 34626
     },
     {
       "path": "src/rate-limit/plans.ts",
@@ -1097,6 +1117,11 @@
       "bytes": 1944
     },
     {
+      "path": "tests/fixtures/content-drain-process.ts",
+      "sha256": "c3746ae10203d035d055683069df8bdf8294442ffaa1f64e7f6d369fa414c99e",
+      "bytes": 3499
+    },
+    {
       "path": "tests/fixtures/hw-evidence/chutes/qwen3-32b.evidence.json",
       "sha256": "235a0dbae21aa7340512979ada8fb15e27da7273d6b3eaadc5632b5aa272dd58",
       "bytes": 94324
@@ -1223,13 +1248,18 @@
     },
     {
       "path": "tests/unit/content-plane-closure.test.ts",
-      "sha256": "1213cc96cafc13213bcf1b88b73d06ef7c966457baff94ef1e64a1c6d8d1d38b",
-      "bytes": 9191
+      "sha256": "b5aad99cfe7f6f069cf284c1c2f01865358afa5168038d44e98f41679a81a93d",
+      "bytes": 9670
     },
     {
       "path": "tests/unit/content-plane-config-boundary.test.ts",
       "sha256": "0970b3c5bf7080d5971934d62a61efa5b5912f5a3f734d1905f6f41427c5068e",
       "bytes": 8303
+    },
+    {
+      "path": "tests/unit/content-service-drain.test.ts",
+      "sha256": "cc11d558709085df7d37699404021445e8e47b45963ed1306eb47402a27588b9",
+      "bytes": 3887
     },
     {
       "path": "tests/unit/credential-capability.test.ts",
@@ -1330,6 +1360,11 @@
       "path": "tests/unit/rpc-boundary-contract.test.ts",
       "sha256": "758d71c2a5de1e3e71379345d56bd81d492635af10b428c4b40a7167afc0bfe0",
       "bytes": 15369
+    },
+    {
+      "path": "tests/unit/service-lifecycle.test.ts",
+      "sha256": "d0b3f1aeb82853adcef993b959784dca2ad6c79e5c80c45a9a8323f3a1a715d4",
+      "bytes": 1929
     },
     {
       "path": "tests/unit/third-party-provenance.test.ts",
