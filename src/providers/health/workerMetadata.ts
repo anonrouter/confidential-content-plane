@@ -8,6 +8,11 @@ import { z } from "zod";
  * identity, credential, or raw error message is accepted by this schema.
  */
 export const WORKER_HEALTH_TARGET_LIMIT = 32;
+export const WORKER_HEALTH_LEASE_TTL_MS = 30 * 60 * 1000;
+export const workerHealthLeaseSchema = z.object({
+  leaseId: z.string().regex(/^[0-9a-f]{32}$/),
+  ttlMs: z.number().int().positive().max(WORKER_HEALTH_LEASE_TTL_MS)
+}).strict();
 
 const providerNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const externalModelIdSchema = z.string().min(1).max(256);
@@ -22,7 +27,10 @@ export const workerHealthTargetsResponseSchema = z
   .object({
     // Default preserves rolling compatibility: a new worker talking to the
     // previous control release simply has no targets until control is upgraded.
-    health_probe_targets: z.array(workerHealthTargetSchema).max(WORKER_HEALTH_TARGET_LIMIT).default([])
+    health_probe_targets: z.array(workerHealthTargetSchema).max(WORKER_HEALTH_TARGET_LIMIT)
+      .refine(items => new Set(items.map(item => item.externalModelId)).size === items.length, "Probe targets must be unique")
+      .default([]),
+    health_probe_lease: workerHealthLeaseSchema.optional()
   })
   .passthrough();
 
@@ -50,6 +58,7 @@ export const workerHealthReportSchema = z
   .object({
     deploymentId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional().default("primary"),
     provider: providerNameSchema,
+    healthProbeLeaseId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
     healthChecks: z.array(workerHealthCheckSchema).min(1).max(WORKER_HEALTH_TARGET_LIMIT)
   })
   .strict()

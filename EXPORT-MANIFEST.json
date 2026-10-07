@@ -4,10 +4,18 @@
     "src/contentPlane.ts"
   ],
   "note": "Candidate export for owner review. NOT published. The source set is the compile-time module closure of the content-plane entry point, so it cannot disagree with what the image actually runs. `files` is every file in the export except this manifest, which cannot contain its own hash; it therefore includes the generated build inputs.",
-  "runtimeClosureFiles": 143,
-  "compileClosureFiles": 151,
+  "runtimeClosureFiles": 144,
+  "compileClosureFiles": 152,
   "controlPlaneLeakage": [],
-  "excludedTestSuites": [],
+  "excludedTestSuites": [
+    {
+      "suite": "tests/unit/credential-admin-provider-binding.test.ts",
+      "leaked": [
+        "src/appConfig.ts",
+        "src/db/config.ts"
+      ]
+    }
+  ],
   "monorepoOnlySuites": [
     {
       "suite": "tests/unit/prod5-pool-topology.test.ts",
@@ -38,13 +46,13 @@
       "reason": "asserts against a GCP KMS RPC-surface fixture belonging to the stopped GCP workstream"
     }
   ],
-  "copiedSourceFiles": 262,
+  "copiedSourceFiles": 269,
   "generatedFiles": 8,
   "thirdPartyRecordedGaps": [
     "caddy-edge-base",
     "node-base-image"
   ],
-  "fileCount": 270,
+  "fileCount": 277,
   "files": [
     {
       "path": ".dockerignore",
@@ -70,6 +78,11 @@
       "path": ".github/workflows/finalize.yml",
       "sha256": "72317871694ca678bf735d87884fb5f9bf6f8e4e7849dbc4545fed17fa5b7bb6",
       "bytes": 13013
+    },
+    {
+      "path": ".github/workflows/ingress-continuity-release.yml",
+      "sha256": "23c8b6c1b537323ad9bbae61ecbfd3f9e503ca5fc3bb6da7878f07736ed4b6ac",
+      "bytes": 22014
     },
     {
       "path": ".github/workflows/release.yml",
@@ -168,8 +181,8 @@
     },
     {
       "path": "deploy/phala/images/ingress-delegated/README.md",
-      "sha256": "d82ad10074fef8829b018dede2117b8b5c1888925c08582ac183e3edf5f8c444",
-      "bytes": 1585
+      "sha256": "614e8c755731eb093bbf934eb95a6bb0165c0f3e44a501fa115b9b79fff633c3",
+      "bytes": 2658
     },
     {
       "path": "deploy/phala/images/ingress-delegated/route53_challenge_cname.py",
@@ -368,8 +381,8 @@
     },
     {
       "path": "src/credentials/consumedCapabilities.ts",
-      "sha256": "a380ec114f06061289ca58402cf6137b6b92eacb419263cd799596a359c637b1",
-      "bytes": 5251
+      "sha256": "3710b35d2647f9c39f6c18dca0e670d8018fa6627a81deab7006e69baa7c21db",
+      "bytes": 6426
     },
     {
       "path": "src/db/localSafety.ts",
@@ -852,9 +865,14 @@
       "bytes": 4831
     },
     {
+      "path": "src/providers/health/probeLeaseBudget.ts",
+      "sha256": "0c25ed70e250afaa9b7401e3869dfb4a0edcd572b2b776a5651b3f8cd7d28343",
+      "bytes": 892
+    },
+    {
       "path": "src/providers/health/workerMetadata.ts",
-      "sha256": "da00c95528efa5dc0770f55bf74a880728ba731e1284636f414f99f90a32385c",
-      "bytes": 2709
+      "sha256": "2f1be4669fd53dfc1de713e754ee520e1616ff2ed4c835e49abce6cecd984cd6",
+      "bytes": 3211
     },
     {
       "path": "src/providers/http.ts",
@@ -998,8 +1016,8 @@
     },
     {
       "path": "src/roles.ts",
-      "sha256": "a027a1df49b3beee055af4442745ebf2ede0d7c2d1e7d26d052e13073bb717c4",
-      "bytes": 31087
+      "sha256": "8a107d34fa1d11f4f483c3714b5c9ae81ecd70ac943608eb522e1e34956d2822",
+      "bytes": 31579
     },
     {
       "path": "src/routes/chat.ts",
@@ -1038,8 +1056,8 @@
     },
     {
       "path": "src/routes/internal/credentialAdmin.ts",
-      "sha256": "c222a4825f1c1ba3cb0bde4f5195dfb2d14e9ce494ad67e5c5f7a6147f80a234",
-      "bytes": 24684
+      "sha256": "8dbcfef88ee89a31fd20a06d8fe0b3bf613ff9c278022dd5603997eb80c6a444",
+      "bytes": 24928
     },
     {
       "path": "src/routes/internal/rpcSchemas.ts",
@@ -1247,6 +1265,11 @@
       "bytes": 7103
     },
     {
+      "path": "tests/unit/consumed-capability-state.test.ts",
+      "sha256": "66e4846add9eeb629e9c2e4537c4757233baa9c6913213c424f33e07f4b4c227",
+      "bytes": 4428
+    },
+    {
       "path": "tests/unit/content-plane-closure.test.ts",
       "sha256": "b5aad99cfe7f6f069cf284c1c2f01865358afa5168038d44e98f41679a81a93d",
       "bytes": 9670
@@ -1260,6 +1283,11 @@
       "path": "tests/unit/content-service-drain.test.ts",
       "sha256": "cc11d558709085df7d37699404021445e8e47b45963ed1306eb47402a27588b9",
       "bytes": 3887
+    },
+    {
+      "path": "tests/unit/credential-candidate-validation.test.ts",
+      "sha256": "94921c486b0c3c9bc0fedfc40e34b7ad570712c219a872f338269783000b8cd0",
+      "bytes": 9685
     },
     {
       "path": "tests/unit/credential-capability.test.ts",
@@ -1313,13 +1341,18 @@
     },
     {
       "path": "tests/unit/pool-worker-server.test.ts",
-      "sha256": "b31cf93f4a0267dbb033bd99184b54572509b96177c2a14fded7530d1def5a54",
-      "bytes": 62029
+      "sha256": "fe69c2ff9d93fbf8822fd7772ceedda407dda1790b80d2bf8978783ac5100a1b",
+      "bytes": 63428
     },
     {
       "path": "tests/unit/privacy-tiers.test.ts",
       "sha256": "4b997637ae8c85f17f053e5bd2045c4408dec0e79f0ce81794923a8e3ca7b230",
       "bytes": 1579
+    },
+    {
+      "path": "tests/unit/probe-lease-budget.test.ts",
+      "sha256": "29c1ffe6eef32a488b819cf085106ac106e6fded182162b3cf9179ca67d27071",
+      "bytes": 1598
     },
     {
       "path": "tests/unit/provider-transport.test.ts",
@@ -1385,6 +1418,16 @@
       "path": "tests/unit/tinfoil-secure-transport.test.ts",
       "sha256": "e67d28809b008a38af5cb0d26956884c09de625b25f6b80ad8987b82a8bc9e5e",
       "bytes": 15840
+    },
+    {
+      "path": "tests/unit/venice-keys.test.ts",
+      "sha256": "a7b39314707e7b17d0db8736bdc37b731c7cc54f8614ecbb6d49a7a90d15a734",
+      "bytes": 17101
+    },
+    {
+      "path": "tests/unit/worker-health-metadata.test.ts",
+      "sha256": "fc07aefd920991bdb40e88afc943eea76d97c29a4dc67ad6e6ee98df58471076",
+      "bytes": 3161
     },
     {
       "path": "tsconfig.json",

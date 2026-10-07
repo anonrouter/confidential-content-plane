@@ -23,3 +23,20 @@ base, and real ACME renewal/key reuse and Phala gateway routing/drain still need
 independent acceptance. Starting a production spare while an old ingress can
 still rewrite serving records remains unsafe. Never invoke the helper as part
 of a local source review or ordinary export.
+
+## Continuity patch release candidate
+
+The exported `ingress-continuity-release.yml` workflow builds this directory
+under `delegated-ingress-v*` tags in `anonrouter/confidential-content-plane`.
+It uses the established registry `ghcr.io/anonrouter/anonrouter-dstack-ingress`,
+full-SHA action pins, the exported boundary tests, a single linux/amd64 manifest,
+registry read-back verification, and detached keyless signature, provenance and
+SBOM. It runs the actual image with no network/credentials to check that routing
+writers are removed and certificate naming/key reuse are present before signing.
+
+This is a local workflow candidate. Publication/tagging and acceptance of the
+actual source commit, workflow identity/SHA, signature, provenance and image
+digest are still required. Neither this workflow nor the ordinary app workflow
+deploys a CVM, edits DNS, sends inference or updates a signed gateway policy.
+The upstream base retains its separately verified escrow/rebuild chain; a new
+overlay signature is evidence for this overlay, not a replacement for that chain.

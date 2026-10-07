@@ -18,7 +18,7 @@ import {
   REVOKE_ACTIONS,
   parseCapabilitySigners
 } from "../../credentials/capabilityConfig.js";
-import { ConsumedCapabilityLog } from "../../credentials/consumedCapabilities.js";
+import { ConsumedCapabilityLog, ConsumedCapabilityLogError } from "../../credentials/consumedCapabilities.js";
 import { veniceKeyFingerprint, KEY_ID_PATTERN } from "../../providers/veniceKeys.js";
 import { providerCredentialStore } from "../../providers/veniceKeyStore.js";
 import { veniceProviderTransport } from "../../providers/transport.js";
@@ -250,6 +250,9 @@ async function registerProviderCredentialAdminRoutes(
         isConsumed: (id) => consumed.wasConsumed(id)
       });
     } catch (error) {
+      if (error instanceof ConsumedCapabilityLogError) {
+        throw new AppError(503, "capability_replay_log_unavailable", "The replay record could not be read; refusing the operation");
+      }
       if (error instanceof CapabilityError) {
         // The message is the peer verifier's, which names the field that failed
         // and never the value. Mapped to a stable code so a client can branch.
@@ -264,8 +267,8 @@ async function registerProviderCredentialAdminRoutes(
 
     // The verifier above already REFUSED a capability the log knows about. This
     // is the COMMIT: it records the id, and the boolean it returns closes the
-    // window between that read and this write. Two calls that raced would both
-    // pass the verifier's check and only one can win here.
+    // window between that read and this write within this process. Providers
+    // and slots have separate single-writer journals; this is not a file lock.
     let firstUse: boolean;
     try {
       firstUse = consumed.consume(capability.capabilityId, capability.expiresAt).firstUse;

@@ -13,6 +13,8 @@
 // The control-api role is built by buildServer(config) with RUNTIME_ROLE=control.
 
 import type { FastifyInstance } from "fastify";
+import { performance } from "node:perf_hooks";
+import { workerProbeLeaseBudget } from "./providers/health/probeLeaseBudget.js";
 import type { AppConfig } from "./config.js";
 import { createBaseServer, workerErrorHandler, type BaseServerOptions } from "./httpBase.js";
 import { HttpControlClient } from "./inference/controlClient.js";
@@ -416,7 +418,7 @@ export async function buildWorkerServer(
     // per-request RPC. What a failure means stays with each caller.
     const pushMetadata = (body: unknown) => fetch(`${config.internal.controlMetadataUrl}/internal/control/catalog`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${workerMetadataToken}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${workerMetadataToken}`, "x-anonrouter-probe-lease": "1" },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(config.internal.metadataPushTimeoutMs)
     });
@@ -426,12 +428,12 @@ export async function buildWorkerServer(
     // ONLY that (plus rate limits) to control, which has no provider key. Never content
     // or identity. Resilient fetch, single-flight, jittered interval; CATALOG_SYNC_
     // ENABLED gates which worker polls when the service is scaled.
-    const deliverHealthChecks = async (targets: WorkerHealthTarget[]) => {
+    const deliverHealthChecks = async (targets: WorkerHealthTarget[], lease: NonNullable<ReturnType<typeof workerProbeLeaseBudget>>) => {
       if (targets.length === 0 || !server.workerClient.probe) return;
       const checks: WorkerHealthCheck[] = [];
       let cursor = 0;
       const probeOne = async (target: WorkerHealthTarget) => {
-        if (closing) return null;
+        if (closing || !lease.permitsProbe()) return null;
         return server.workerClient.probe!({
           requestId: `probe_${newId()}`,
           providerName: providerLabel,
@@ -457,11 +459,12 @@ export async function buildWorkerServer(
       const workers = pooled ? POOLED_PROVIDER_PROBE_CONCURRENCY : HEALTH_PROBE_CONCURRENCY;
       await Promise.all(Array.from({ length: Math.min(workers, targets.length) }, probe));
       // A pass cut short by shutdown is not a health report.
-      if (closing) return;
+      if (closing || checks.length === 0) return;
 
       const response = await pushMetadata({
         deploymentId: config.internal.confidentialDeploymentId,
         provider: providerLabel,
+        healthProbeLeaseId: lease.leaseId,
         healthChecks: checks
       });
       if (!response.ok) {
@@ -479,6 +482,7 @@ export async function buildWorkerServer(
 
     const deliverCatalog = async (payload: NormalizedCatalogPayload) => {
       const rateLimits = providerLabel === "venice" ? await fetchVeniceRateLimits(config, keyStore) : null;
+      const requestStartedAt = performance.now();
       const response = await pushMetadata({
         deploymentId: config.internal.confidentialDeploymentId,
         payload,
@@ -501,7 +505,9 @@ export async function buildWorkerServer(
       // A health failure is not a catalog failure. Catalog freshness must keep
       // advancing even when a model refuses a probe; the bounded outcome is sent
       // back separately and the admission/quarantine policy decides what it means.
-      await deliverHealthChecks(parsed.data.health_probe_targets).catch((error) => {
+      const lease = workerProbeLeaseBudget(parsed.data.health_probe_lease, requestStartedAt);
+      if (!lease) return;
+      await deliverHealthChecks(parsed.data.health_probe_targets, lease).catch((error) => {
         server.log.warn(
           { provider: providerLabel, error_type: error instanceof Error ? error.name : "health_probe_error" },
           "model_health_metadata_push_failed"

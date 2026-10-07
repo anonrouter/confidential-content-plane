@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 
@@ -36,16 +36,22 @@ const CAPABILITY_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{2,63}$/;
 const RETENTION_GRACE_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 10_000;
 
-function sanitize(parsed: unknown): ConsumedEntry[] {
-  if (!Array.isArray(parsed)) return [];
+export class ConsumedCapabilityLogError extends Error {
+  constructor() { super("consumed capability log is unreadable or unavailable"); }
+}
+
+function parseState(parsed: unknown): ConsumedEntry[] {
+  if (!Array.isArray(parsed) || parsed.length > MAX_ENTRIES) throw new ConsumedCapabilityLogError();
   const entries: ConsumedEntry[] = [];
   const seen = new Set<string>();
   for (const raw of parsed) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new ConsumedCapabilityLogError();
     const entry = raw as Record<string, unknown>;
-    if (typeof entry.capabilityId !== "string" || !CAPABILITY_ID_PATTERN.test(entry.capabilityId)) continue;
-    if (seen.has(entry.capabilityId)) continue;
-    if (typeof entry.consumedAtMs !== "number" || typeof entry.expiresAtMs !== "number") continue;
+    if (Object.keys(entry).sort().join(",") !== "capabilityId,consumedAtMs,expiresAtMs") throw new ConsumedCapabilityLogError();
+    if (typeof entry.capabilityId !== "string" || !CAPABILITY_ID_PATTERN.test(entry.capabilityId)) throw new ConsumedCapabilityLogError();
+    if (seen.has(entry.capabilityId)) throw new ConsumedCapabilityLogError();
+    if (typeof entry.consumedAtMs !== "number" || !Number.isSafeInteger(entry.consumedAtMs) || entry.consumedAtMs < 0
+      || typeof entry.expiresAtMs !== "number" || !Number.isSafeInteger(entry.expiresAtMs) || entry.expiresAtMs < 0) throw new ConsumedCapabilityLogError();
     seen.add(entry.capabilityId);
     entries.push({
       capabilityId: entry.capabilityId,
@@ -57,7 +63,7 @@ function sanitize(parsed: unknown): ConsumedEntry[] {
 }
 
 export class ConsumedCapabilityLog {
-  private entries: ConsumedEntry[] | null = null;
+  private observedPersistedState = false;
 
   constructor(
     private readonly path: string,
@@ -67,10 +73,9 @@ export class ConsumedCapabilityLog {
   /**
    * Record a capability as used, or report that it already was.
    *
-   * Read-then-write under a single call, and the file is the only source of
-   * truth, so two workers sharing the mount cannot both see "unused". Within one
-   * process the call is synchronous end to end, so there is no interleaving
-   * point between the check and the write.
+   * Synchronous within one process. Each provider/slot must have one writer and
+   * its own mount; atomic rename is not a cross-process lock. A missing/stale
+   * mount on a fresh process still needs separate authoritative startup admission.
    */
   consume(capabilityId: string, expiresAtSeconds: number): { firstUse: boolean } {
     const entries = this.load();
@@ -78,9 +83,13 @@ export class ConsumedCapabilityLog {
       return { firstUse: false };
     }
     const now = this.now();
+    if (typeof capabilityId !== "string" || !CAPABILITY_ID_PATTERN.test(capabilityId) || !Number.isSafeInteger(expiresAtSeconds)
+      || expiresAtSeconds < 0 || !Number.isSafeInteger(expiresAtSeconds * 1000)
+      || !Number.isSafeInteger(now) || now < 0) throw new ConsumedCapabilityLogError();
     const retained = entries
-      .filter((entry) => entry.expiresAtMs + RETENTION_GRACE_MS > now)
-      .slice(-(MAX_ENTRIES - 1));
+      .filter((entry) => entry.expiresAtMs + RETENTION_GRACE_MS > now);
+    // Never evict a still-retained id to make space: that would admit a replay.
+    if (retained.length >= MAX_ENTRIES) throw new ConsumedCapabilityLogError();
     retained.push({ capabilityId, consumedAtMs: now, expiresAtMs: expiresAtSeconds * 1000 });
     this.persist(retained);
     return { firstUse: true };
@@ -96,21 +105,22 @@ export class ConsumedCapabilityLog {
     // same volume, may have consumed a capability since we last looked. Caching
     // here would be caching exactly the thing that must not be stale.
     try {
-      statSync(this.path);
-    } catch {
-      this.entries = [];
-      return this.entries;
+      const info = lstatSync(this.path);
+      if (!info.isFile()) throw new ConsumedCapabilityLogError();
+      this.observedPersistedState = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && !this.observedPersistedState) return [];
+      throw new ConsumedCapabilityLogError();
     }
     try {
-      this.entries = sanitize(JSON.parse(readFileSync(this.path, "utf8")));
+      return parseState(JSON.parse(readFileSync(this.path, "utf8")));
     } catch {
       // A corrupt log must FAIL CLOSED for replay purposes, but an empty list is
       // the opposite of that. There is no honest recovery: treat an unreadable
       // log as unusable and refuse the operation rather than silently allowing a
       // replay. The caller turns the throw into a 503.
-      throw new Error("consumed capability log is unreadable");
+      throw new ConsumedCapabilityLogError();
     }
-    return this.entries;
   }
 
   private persist(entries: ConsumedEntry[]): void {
@@ -120,11 +130,11 @@ export class ConsumedCapabilityLog {
     try {
       writeFileSync(temp, `${JSON.stringify(entries)}\n`, { mode: 0o600 });
       renameSync(temp, this.path);
+      this.observedPersistedState = true;
     } catch (error) {
       rmSync(temp, { force: true });
       throw error;
     }
     chmodSync(this.path, 0o600);
-    this.entries = entries;
   }
 }

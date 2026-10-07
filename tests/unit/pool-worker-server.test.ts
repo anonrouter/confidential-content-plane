@@ -87,6 +87,7 @@ interface Call {
   /** The pooled provider whose metadata token or API key the request carried. */
   bearerOf: string | null;
   body: Record<string, unknown> | null;
+  probeLeaseOptIn?: string | null;
 }
 
 type CatalogBehaviour = "ok" | "fail" | (() => Promise<Response>);
@@ -96,6 +97,7 @@ interface Recorder {
   dispatch: "allow" | "deny";
   attestation: "allow" | "deny";
   healthTargets: Partial<Record<Planned, string[]>>;
+  leaseMode: "valid" | "missing" | "malformed" | "expired";
   catalog: Partial<Record<Planned, CatalogBehaviour>>;
   /** How long a provider chat takes, so concurrency is observable. */
   chatDelayMs: number;
@@ -105,7 +107,7 @@ interface Recorder {
 }
 
 const recorder: Recorder = {
-  calls: [], dispatch: "allow", attestation: "allow", healthTargets: {}, catalog: {},
+  calls: [], dispatch: "allow", attestation: "allow", healthTargets: {}, leaseMode: "valid", catalog: {},
   chatDelayMs: 0, inFlight: {}, maxInFlight: {}, maxInFlightTotal: 0
 };
 
@@ -114,6 +116,7 @@ function resetRecorder() {
   recorder.dispatch = "allow";
   recorder.attestation = "allow";
   recorder.healthTargets = {};
+  recorder.leaseMode = "valid";
   recorder.catalog = {};
   recorder.chatDelayMs = 0;
   recorder.inFlight = {};
@@ -141,7 +144,11 @@ async function respond(call: Call): Promise<Response> {
     if (call.kind === "catalog") {
       const provider = (call.body?.payload as { provider?: Planned } | undefined)?.provider;
       const targets = (provider ? recorder.healthTargets[provider] : undefined) ?? [];
-      return json({ health_probe_targets: targets.map((externalModelId) => ({ externalModelId })) });
+      return json({ health_probe_targets: targets.map((externalModelId) => ({ externalModelId })),
+        ...(recorder.leaseMode === "missing" ? {} : { health_probe_lease: {
+          leaseId: recorder.leaseMode === "malformed" ? "invalid" : "11".repeat(16),
+          ttlMs: recorder.leaseMode === "expired" ? 1 : 1_800_000
+        } }) });
     }
     if (call.kind === "health") return json({ accepted: (call.body?.healthChecks as unknown[]).length });
     if (call.kind === "dispatch-attempt") return recorder.dispatch === "allow" ? json({}) : json({ error: "denied" }, 403);
@@ -186,7 +193,7 @@ function installRecorder() {
       const kind = parsed.pathname === "/internal/control/catalog"
         ? (body && "healthChecks" in body ? "health" : "catalog")
         : parsed.pathname.replace("/internal/control/", "");
-      call = { url, to: "control", kind, authorization, bearerOf: bearerOf(authorization), body };
+      call = { url, to: "control", kind, authorization, bearerOf: bearerOf(authorization), body, probeLeaseOptIn: new Headers(init?.headers).get("x-anonrouter-probe-lease") };
     } else if (url.startsWith(DISCOVERY_URL)) {
       call = { url, to: "discovery", kind: "near-endpoints", authorization, bearerOf: bearerOf(authorization), body };
     } else if (parsed.origin === MOCK_ORIGIN) {
@@ -574,6 +581,7 @@ describe("each provider's metadata calls present that provider's token and no ot
     recorder.healthTargets = { [provider]: ["probe-model"] };
     await server.catalogSyncNow!(provider);
     recorder.healthTargets = {};
+  recorder.leaseMode = "valid";
 
     // 3: an inference dispatch is fenced before the provider is called.
     await server.inject({ method: "POST", url: `/internal/${provider}/chat`, headers: AUTH, payload: chatBody(provider) });
@@ -1140,6 +1148,16 @@ describe("startup and failure containment (S6)", () => {
 });
 
 describe("health probes share one budget across the pool (S6)", () => {
+  it.each(["missing", "malformed", "expired"] as const)("does not dispatch paid probes with a %s grant, including on-demand sync", async mode => {
+    const server = await buildPool(["venice", "fireworks"], { stateDir: newStateDir(), sync: false });
+    recorder.healthTargets = { venice: ["model-v"], fireworks: ["model-f"] };
+    recorder.leaseMode = mode;
+    await Promise.all([server.catalogSyncNow!("venice"), server.catalogSyncNow!("fireworks")]);
+    expect(controlCalls().filter(call => call.kind === "catalog")).toHaveLength(2);
+    expect(controlCalls().filter(call => call.kind === "catalog").every(call => call.probeLeaseOptIn === "1")).toBe(true);
+    expect(providerCalls().filter(call => call.kind === "chat")).toHaveLength(0);
+    expect(controlCalls().filter(call => call.kind === "health")).toHaveLength(0);
+  });
   const providers: Planned[] = ["venice", "fireworks", "deepinfra", "phala-ai"];
   const models = (provider: string) => Array.from({ length: 6 }, (_, index) => `${provider}-model-${index}`);
 
@@ -1165,6 +1183,7 @@ describe("health probes share one budget across the pool (S6)", () => {
     for (const report of reports) {
       const provider = report.body!.provider as string;
       expect(report.bearerOf).toBe(provider);
+      expect(report.body!.healthProbeLeaseId).toBe("11".repeat(16));
       expect((report.body!.healthChecks as Array<{ externalModelId: string }>).map((check) => check.externalModelId).sort())
         .toEqual(models(provider).sort());
       for (const call of providerCalls().filter((entry) => entry.kind === "chat" && (entry.body?.model as string).startsWith(`${provider}-model-`))) {
